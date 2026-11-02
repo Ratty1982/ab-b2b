@@ -15,6 +15,7 @@ export function Microsoft365Panel({
   onCalendarSync,
   onAllowCalendar,
   onRetryOutbound,
+  onRetryCalendarOutbound,
   onRecheckUncertain,
   onApproveUncertainCreate,
   onRequestInboundCheck,
@@ -33,6 +34,7 @@ export function Microsoft365Panel({
   onCalendarSync: (value: boolean) => void;
   onAllowCalendar: () => void;
   onRetryOutbound: () => void;
+  onRetryCalendarOutbound: () => void;
   onRecheckUncertain: (jobId: string) => void;
   onApproveUncertainCreate: (jobId: string) => void;
   onRequestInboundCheck: () => void;
@@ -209,6 +211,67 @@ export function Microsoft365Panel({
             Allow Outlook Calendar
           </button>
         ) : null}
+        <p className="mt-3 text-[12px] text-steel">
+          Calendar synchronisation only applies to CRM appointments that you explicitly add to Outlook. Ordinary tasks
+          never become calendar events. The calendar engine stays off until an administrator sets
+          MICROSOFT_365_CALENDAR_SYNC_ENABLED.
+        </p>
+      </section>
+
+      <section className="rounded-md border border-border p-4">
+        <h2 className="font-display text-sm font-semibold uppercase tracking-tight">Outlook Calendar jobs</h2>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-steel">Calendar engine</dt>
+            <dd>{status.calendar?.engineEnabled ? "Enabled" : "Off"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Calendar permission</dt>
+            <dd>{connection?.calendarConsented ? "Granted" : "Not granted"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Outbound waiting</dt>
+            <dd>{status.calendar?.outboundPending ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Outbound failed</dt>
+            <dd>{status.calendar?.outboundFailed ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Needs review</dt>
+            <dd>{status.calendar?.outboundNeedsReview ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Inbound waiting</dt>
+            <dd>{status.calendar?.inboundPending ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Conflicts</dt>
+            <dd>{status.calendar?.conflicts ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Calendar baseline</dt>
+            <dd>
+              {status.calendar?.calendarInboundBaselineAt
+                ? formatWhen(status.calendar.calendarInboundBaselineAt)
+                : "Not completed"}
+            </dd>
+          </div>
+        </dl>
+        <button
+          type="button"
+          disabled={
+            busy ||
+            !status.canConnect ||
+            !status.calendar?.engineEnabled ||
+            ((status.calendar?.outboundFailed ?? 0) === 0 &&
+              (status.calendar?.outboundNeedsReview ?? 0) === 0)
+          }
+          onClick={onRetryCalendarOutbound}
+          className="mt-3 h-10 rounded-md border border-border px-4 text-[13px] font-bold disabled:opacity-50"
+        >
+          Retry failed calendar sync
+        </button>
       </section>
 
       <section className="rounded-md border border-border p-4">

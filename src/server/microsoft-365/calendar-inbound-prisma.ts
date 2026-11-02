@@ -510,4 +510,37 @@ export async function enqueueCalendarInboundForEligibleConnections(): Promise<nu
   return queued;
 }
 
+export async function calendarInboundCounts(userId: string): Promise<{
+  pending: number;
+  failed: number;
+  conflicts: number;
+  removed: number;
+  lastCalendarInboundSyncAt: string | null;
+  calendarInboundBaselineAt: string | null;
+}> {
+  const connection = await prisma.microsoftAccountConnection.findUnique({ where: { userId } });
+  const [pending, failed, conflicts, removed] = await Promise.all([
+    prisma.microsoftSyncJob.count({
+      where: { userId, kind: MICROSOFT_CALENDAR_INBOUND_JOB_KIND, status: { in: ["QUEUED", "RUNNING"] } },
+    }),
+    prisma.microsoftSyncJob.count({
+      where: { userId, kind: MICROSOFT_CALENDAR_INBOUND_JOB_KIND, status: "FAILED" },
+    }),
+    prisma.microsoftCalendarMapping.count({
+      where: { userId, syncStatus: "CONFLICT", deletedAt: null },
+    }),
+    prisma.microsoftCalendarMapping.count({
+      where: { userId, syncStatus: "REMOVED" },
+    }),
+  ]);
+  return {
+    pending,
+    failed,
+    conflicts,
+    removed,
+    lastCalendarInboundSyncAt: connection?.lastCalendarInboundSyncAt?.toISOString() ?? null,
+    calendarInboundBaselineAt: connection?.calendarInboundBaselineAt?.toISOString() ?? null,
+  };
+}
+
 export { inboundCursorResource };

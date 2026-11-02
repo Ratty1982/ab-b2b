@@ -175,7 +175,7 @@ function graphOf(
   const calls: Array<{ method: string; path: string; body: unknown; headers?: Record<string, string> }> = [];
   const graph: CalendarOutboundGraph = {
     async request({ method, path, body, headers }) {
-      calls.push({ method, path, body: body ?? null, headers });
+      calls.push({ method, path, body: body ?? null, ...(headers ? { headers } : {}) });
       const result = handler(method, path, body ?? null, headers);
       return {
         status: result.status,
@@ -281,7 +281,7 @@ describe("outbound Microsoft Calendar sync", () => {
     expect(body.body.content).not.toContain("ABC123");
     expect(body.body.content).toContain(crmAppointmentReference("appt-1"));
     expect(body.transactionId).toBe("txn-1");
-    expect(created?.headers?.Prefer).toContain("ImmutableId");
+    expect(created?.headers?.["Prefer"]).toContain("ImmutableId");
     expect(state.mapping?.microsoftEventId).toBe("ms-1");
     expect(state.mapping?.transactionId).toBe("txn-1");
     expect(state.jobs[0]?.status).toBe("SUCCEEDED");

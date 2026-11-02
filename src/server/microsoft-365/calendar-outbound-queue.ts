@@ -71,13 +71,8 @@ export async function notifyCrmAppointmentOutbound(
     if (!ready(connection)) return;
     const mapped = await deps.hasActiveMapping(connection.userId, input.appointmentId);
     const explicit = input.reason === "explicit" || input.reason === "assigned";
-    const eligible =
-      explicit ||
-      mapped ||
-      input.syncToOutlook === true ||
-      (connection.calendarOutboundEnabledAt != null &&
-        input.createdAt.getTime() >= connection.calendarOutboundEnabledAt.getTime() &&
-        input.syncToOutlook === true);
+    // Opt-in only. calendarOutboundEnabledAt never auto-exports CRM-only appointments.
+    const eligible = explicit || mapped || input.syncToOutlook === true;
     if (!eligible) return;
     await deps.enqueue({
       connection,

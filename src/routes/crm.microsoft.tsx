@@ -13,6 +13,7 @@ import {
   recheckMicrosoftTodoUncertainFn,
   recreateMicrosoftTodoInboundMappingFn,
   requestMicrosoftTodoInboundCheckFn,
+  retryMicrosoftCalendarOutboundFn,
   retryMicrosoftTodoOutboundFn,
   unlinkMicrosoftTodoInboundMappingFn,
   updateMicrosoft365PreferencesFn,
@@ -133,6 +134,14 @@ function CrmMicrosoftPage() {
           onRetryOutbound={() => {
             setBusy(true);
             void retryMicrosoftTodoOutboundFn().then((result) => {
+              setBusy(false);
+              if (!result.ok) setError(result.error);
+              load();
+            });
+          }}
+          onRetryCalendarOutbound={() => {
+            setBusy(true);
+            void retryMicrosoftCalendarOutboundFn().then((result) => {
               setBusy(false);
               if (!result.ok) setError(result.error);
               load();

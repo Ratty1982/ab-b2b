@@ -77,7 +77,7 @@ CRM → Microsoft 365, for internal users with `tasks.view`. Connecting requires
 
 - Connect Microsoft 365 starts the authorisation-code flow with PKCE. The browser returns to the fixed callback. It is not an open redirect.
 - The page shows the Microsoft display name, email, and connection status. It does not show tokens.
-- Task synchronisation is a preference. It exports tasks only when outbound sync is also enabled. See `docs/microsoft-todo-outbound.md`. Calendar synchronisation still does not create appointments.
+- Task synchronisation is a preference. It exports tasks only when outbound sync is also enabled. See `docs/microsoft-todo-outbound.md`. Calendar synchronisation creates Outlook events only for opted-in `CrmAppointment` rows when `MICROSOFT_365_CALENDAR_SYNC_ENABLED` is also on. See `docs/microsoft-outlook-calendar.md`.
 - Outlook Calendar permission is requested only when the user opts in.
 - Disconnect deletes the stored tokens and marks the row revoked. It does not sign the user out of Microsoft 365.
 - Administrators with `admin.access` or `crm.manage` see connection health: staff email, Microsoft email, status, flags, and the last error. Task titles and descriptions are not included.

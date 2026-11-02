@@ -70,6 +70,7 @@ export const ROUTES = {
   crmApplications: "/crm/applications",
   crmManager: "/crm/manager",
   crmTasks: "/crm/tasks",
+  crmAppointments: "/crm/appointments",
   crmMicrosoft: "/crm/microsoft",
 
   portal: "/portal",
@@ -149,6 +150,7 @@ export type NavIconName =
   | "briefcase"
   | "activity"
   | "list-todo"
+  | "calendar"
   | "globe"
   | "file-pen"
   | "image"
@@ -364,6 +366,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         to: ROUTES.crmTasks,
         matchPrefixes: [ROUTES.crmTasks],
         permission: "tasks.view",
+        implemented: true,
+      },
+      {
+        id: "appointments",
+        label: "Appointments",
+        icon: "calendar",
+        to: ROUTES.crmAppointments,
+        matchPrefixes: [ROUTES.crmAppointments],
+        permission: ["crm.activities.view", "crm.activities.create"],
         implemented: true,
       },
       {

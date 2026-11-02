@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import {
   MICROSOFT_CALENDAR_OUTBOUND_JOB_KIND,
+  ordinaryRetryIncludesJob,
   type CalendarSyncedSnapshot,
 } from "@/domain/microsoft-calendar";
 import {
@@ -452,4 +453,49 @@ export async function cancelQueuedCalendarOutboundJobs(userId: string): Promise<
       lastError: "Microsoft 365 account disconnected",
     },
   });
+}
+
+export async function calendarOutboundCounts(
+  userId: string,
+): Promise<{ pending: number; failed: number; needsReview: number }> {
+  const [pending, failed, needsReview] = await Promise.all([
+    prisma.microsoftSyncJob.count({
+      where: { userId, kind: MICROSOFT_CALENDAR_OUTBOUND_JOB_KIND, status: { in: ["QUEUED", "RUNNING"] } },
+    }),
+    prisma.microsoftSyncJob.count({
+      where: { userId, kind: MICROSOFT_CALENDAR_OUTBOUND_JOB_KIND, status: "FAILED" },
+    }),
+    prisma.microsoftSyncJob.count({
+      where: { userId, kind: MICROSOFT_CALENDAR_OUTBOUND_JOB_KIND, status: "NEEDS_REVIEW" },
+    }),
+  ]);
+  return { pending, failed, needsReview };
+}
+
+export async function retryCalendarOutboundJobs(userId: string): Promise<number> {
+  const rows = await prisma.microsoftSyncJob.findMany({
+    where: {
+      userId,
+      kind: MICROSOFT_CALENDAR_OUTBOUND_JOB_KIND,
+      status: { in: ["FAILED", "NEEDS_REVIEW"] },
+    },
+  });
+  let retried = 0;
+  for (const row of rows) {
+    const payload = asPayload(row.payload);
+    if (!ordinaryRetryIncludesJob({ status: row.status, createUncertain: payload.createUncertain })) continue;
+    await prisma.microsoftSyncJob.update({
+      where: { id: row.id },
+      data: {
+        status: "QUEUED",
+        runAfter: new Date(),
+        leaseOwner: null,
+        leaseUntil: null,
+        lastError: null,
+        payload: { ...payload, reviewed: true, authorizeCreateOnce: false },
+      },
+    });
+    retried += 1;
+  }
+  return retried;
 }

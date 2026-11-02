@@ -77,6 +77,7 @@ const handlers = {
   onCalendarSync: () => undefined,
   onAllowCalendar: () => undefined,
   onRetryOutbound: () => undefined,
+  onRetryCalendarOutbound: () => undefined,
   onRecheckUncertain: () => undefined,
   onApproveUncertainCreate: () => undefined,
   onRequestInboundCheck: () => undefined,

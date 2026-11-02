@@ -12,6 +12,7 @@ import {
   microsoft365RecheckUncertainOutbound,
   microsoft365RecreateInboundMapping,
   microsoft365RequestInboundCheck,
+  microsoft365RetryCalendarOutbound,
   microsoft365RetryOutbound,
   microsoft365StatusFor,
   microsoft365UnlinkInboundMapping,
@@ -67,6 +68,15 @@ export const retryMicrosoftTodoOutboundFn = createServerFn({ method: "POST" }).h
   try {
     const userId = await requireUserId();
     return { ok: true as const, data: await microsoft365RetryOutbound(userId) };
+  } catch (error) {
+    return toError(error);
+  }
+});
+
+export const retryMicrosoftCalendarOutboundFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await microsoft365RetryCalendarOutbound(userId) };
   } catch (error) {
     return toError(error);
   }

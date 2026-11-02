@@ -49,6 +49,7 @@ import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
 import { Route as CrmActivitiesRouteImport } from './routes/crm.activities'
 import { Route as CrmApplicationsRouteImport } from './routes/crm.applications'
+import { Route as CrmAppointmentsRouteImport } from './routes/crm.appointments'
 import { Route as CrmLeadsRouteImport } from './routes/crm.leads'
 import { Route as CrmManagerRouteImport } from './routes/crm.manager'
 import { Route as CrmMicrosoftRouteImport } from './routes/crm.microsoft'
@@ -346,6 +347,11 @@ const CrmActivitiesRoute = CrmActivitiesRouteImport.update({
 const CrmApplicationsRoute = CrmApplicationsRouteImport.update({
   id: '/applications',
   path: '/applications',
+  getParentRoute: () => CrmRoute,
+} as any)
+const CrmAppointmentsRoute = CrmAppointmentsRouteImport.update({
+  id: '/appointments',
+  path: '/appointments',
   getParentRoute: () => CrmRoute,
 } as any)
 const CrmLeadsRoute = CrmLeadsRouteImport.update({
@@ -890,6 +896,7 @@ export interface FileRoutesByFullPath {
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/activities': typeof CrmActivitiesRoute
   '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/appointments': typeof CrmAppointmentsRoute
   '/crm/leads': typeof CrmLeadsRoute
   '/crm/manager': typeof CrmManagerRoute
   '/crm/microsoft': typeof CrmMicrosoftRoute
@@ -1018,6 +1025,7 @@ export interface FileRoutesByTo {
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/activities': typeof CrmActivitiesRoute
   '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/appointments': typeof CrmAppointmentsRoute
   '/crm/leads': typeof CrmLeadsRoute
   '/crm/manager': typeof CrmManagerRoute
   '/crm/microsoft': typeof CrmMicrosoftRoute
@@ -1150,6 +1158,7 @@ export interface FileRoutesById {
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/activities': typeof CrmActivitiesRoute
   '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/appointments': typeof CrmAppointmentsRoute
   '/crm/leads': typeof CrmLeadsRoute
   '/crm/manager': typeof CrmManagerRoute
   '/crm/microsoft': typeof CrmMicrosoftRoute
@@ -1290,6 +1299,7 @@ export interface FileRouteTypes {
     | '/brands/$slug'
     | '/crm/activities'
     | '/crm/applications'
+    | '/crm/appointments'
     | '/crm/leads'
     | '/crm/manager'
     | '/crm/microsoft'
@@ -1418,6 +1428,7 @@ export interface FileRouteTypes {
     | '/brands/$slug'
     | '/crm/activities'
     | '/crm/applications'
+    | '/crm/appointments'
     | '/crm/leads'
     | '/crm/manager'
     | '/crm/microsoft'
@@ -1549,6 +1560,7 @@ export interface FileRouteTypes {
     | '/brands/$slug'
     | '/crm/activities'
     | '/crm/applications'
+    | '/crm/appointments'
     | '/crm/leads'
     | '/crm/manager'
     | '/crm/microsoft'
@@ -1970,6 +1982,13 @@ declare module '@tanstack/react-router' {
       path: '/applications'
       fullPath: '/crm/applications'
       preLoaderRoute: typeof CrmApplicationsRouteImport
+      parentRoute: typeof CrmRoute
+    }
+    '/crm/appointments': {
+      id: '/crm/appointments'
+      path: '/appointments'
+      fullPath: '/crm/appointments'
+      preLoaderRoute: typeof CrmAppointmentsRouteImport
       parentRoute: typeof CrmRoute
     }
     '/crm/leads': {
@@ -2818,6 +2837,7 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 interface CrmRouteChildren {
   CrmActivitiesRoute: typeof CrmActivitiesRoute
   CrmApplicationsRoute: typeof CrmApplicationsRoute
+  CrmAppointmentsRoute: typeof CrmAppointmentsRoute
   CrmLeadsRoute: typeof CrmLeadsRoute
   CrmManagerRoute: typeof CrmManagerRoute
   CrmMicrosoftRoute: typeof CrmMicrosoftRoute
@@ -2829,6 +2849,7 @@ interface CrmRouteChildren {
 const CrmRouteChildren: CrmRouteChildren = {
   CrmActivitiesRoute: CrmActivitiesRoute,
   CrmApplicationsRoute: CrmApplicationsRoute,
+  CrmAppointmentsRoute: CrmAppointmentsRoute,
   CrmLeadsRoute: CrmLeadsRoute,
   CrmManagerRoute: CrmManagerRoute,
   CrmMicrosoftRoute: CrmMicrosoftRoute,

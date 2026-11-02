@@ -245,7 +245,13 @@ async function callGraph(
   assertCalendarGraphUrl(input.path);
   let result: CalendarGraphResult;
   try {
-    result = await runtime.graph.request({ ...input, token });
+    result = await runtime.graph.request({
+      method: input.method,
+      path: input.path,
+      token,
+      ...(input.body !== undefined ? { body: input.body } : {}),
+      ...(input.headers ? { headers: input.headers } : {}),
+    });
   } catch {
     result = { status: 0, json: null, retryAfter: null, networkError: true };
   }
@@ -785,6 +791,7 @@ export async function processCalendarOutboundJob(
         mode === "cancel" || mode === "release"
           ? { ...body, showAs: "free", isCancelled: true }
           : body;
+      const matchHeaders = ifMatchHeaders(mapping);
       const patched = await callGraph(
         runtime,
         latest,
@@ -792,7 +799,7 @@ export async function processCalendarOutboundJob(
           method: "PATCH",
           path: `/me/events/${encodeURIComponent(microsoftEventId)}`,
           body: patchBody,
-          headers: ifMatchHeaders(mapping),
+          ...(matchHeaders ? { headers: matchHeaders } : {}),
         },
         token,
         false,

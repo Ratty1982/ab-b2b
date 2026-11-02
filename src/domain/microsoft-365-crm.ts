@@ -526,6 +526,18 @@ export type Microsoft365Status = {
     }>;
     syncedFields: string[];
   };
+  calendar?: {
+    engineEnabled: boolean;
+    outboundPending: number;
+    outboundFailed: number;
+    outboundNeedsReview: number;
+    inboundPending: number;
+    inboundFailed: number;
+    conflicts: number;
+    removed: number;
+    lastCalendarInboundSyncAt: string | null;
+    calendarInboundBaselineAt: string | null;
+  };
 };
 
 const RETURN_NOTICES: Record<Microsoft365ReturnReason, string> = {

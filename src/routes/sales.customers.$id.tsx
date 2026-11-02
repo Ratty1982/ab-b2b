@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { LogActivityDrawer } from "@/components/crm/LogActivityDrawer";
+import { ScheduleAppointmentDrawer } from "@/components/crm/ScheduleAppointmentDrawer";
 import { COMPANY_STATUS_LABEL } from "@/domain/company";
 import { activityTypeLabel, formatGbpExact, formatOpportunityValue } from "@/domain/crm";
 import { ROUTES } from "@/lib/app-nav";
@@ -75,6 +76,7 @@ function SalesCustomer() {
   >([]);
   const [error, setError] = useState<string | null>(null);
   const [logType, setLogType] = useState<"CALL" | "EMAIL" | "MEETING" | "NOTE" | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   useEffect(() => {
     void getCompanyWorkspaceFn({ data: { id } }).then((r) => {
@@ -231,6 +233,7 @@ function SalesCustomer() {
                 <QuickBtn label="Log call" onClick={() => setLogType("CALL")} />
                 <QuickBtn label="Log email" onClick={() => setLogType("EMAIL")} />
                 <QuickBtn label="Log meeting" onClick={() => setLogType("MEETING")} />
+                <QuickBtn label="Schedule appointment" onClick={() => setScheduleOpen(true)} />
                 <QuickBtn label="Add note" onClick={() => setLogType("NOTE")} />
                 <QuickBtn
                   label="Create task"
@@ -402,6 +405,13 @@ function SalesCustomer() {
             if (r.ok) setCrm(r.data);
           });
         }}
+      />
+      <ScheduleAppointmentDrawer
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        companyId={id}
+        companyName={company.name}
+        defaultTitle={`Meeting — ${company.name}`}
       />
     </div>
   );
