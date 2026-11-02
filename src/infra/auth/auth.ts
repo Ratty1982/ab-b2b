@@ -59,9 +59,12 @@ function createAuth() {
       modelName: "authSession",
       expiresIn: 60 * 60 * 24 * 7, // 7 days
       updateAge: 60 * 60 * 24, // refresh expiry daily when active
+      // Disabled so a deleted session (deactivation, password reset) stops
+      // working on the next request. A short cookie cache would keep a
+      // revoked session alive until maxAge. Rollback: set enabled back to
+      // true only if the extra session lookup is unacceptable.
       cookieCache: {
-        enabled: true,
-        maxAge: 60 * 5,
+        enabled: false,
       },
     },
     account: {
@@ -72,8 +75,13 @@ function createAuth() {
     },
     emailAndPassword: {
       enabled: true,
+      // Accounts are created by staff invitation or an approved trade application.
+      // The public Better Auth sign-up route must not create a user.
+      disableSignUp: true,
       minPasswordLength: 10,
       maxPasswordLength: 128,
+      // Better Auth leaves other sessions signed in unless this is set.
+      revokeSessionsOnPasswordReset: true,
       requireEmailVerification: false,
       sendResetPassword: async ({ user, url }) => {
         // Wire through transactional outbox (same SMTP + shell as all other mail).

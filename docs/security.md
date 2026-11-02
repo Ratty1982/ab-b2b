@@ -1,5 +1,7 @@
 # Automotive Brands B2B — Security Overview
 
+The November 2026 directors' review, evidence register, and infrastructure checklists are in [docs/security/](security/directors-security-report.md). This file remains the engineering overview. A control is described as live in production only where that has actually been checked.
+
 Suitable for internal engineering and external IT/security review (Maximum Networks).
 
 **Document reflects controls that are actually implemented.** Where a control is optional or pending cutover, that is stated explicitly.

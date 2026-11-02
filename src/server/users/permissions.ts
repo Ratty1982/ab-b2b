@@ -23,6 +23,7 @@ import {
 } from "@/domain/user-permissions";
 import { previewBackOfficeNavigation } from "@/lib/app-nav";
 import { recordAuditEvent } from "@/server/audit/record";
+import { publishSecurityAlert } from "@/server/security/alerts";
 import { AuthError, requireAuthenticatedUser } from "@/server/rbac/guards";
 
 const saveSchema = z.object({
@@ -302,6 +303,17 @@ export async function saveStaffUserPermissions(actorUserId: string, raw: unknown
     after: { overrides: nextStored },
   });
 
+  if (sensitive.length > 0) {
+    await publishSecurityAlert({
+      kind: "PRIVILEGE_CHANGE",
+      dedupeKey: `perms:${user.id}`,
+      summary: "Sensitive staff permissions were changed.",
+      actorUserId,
+      targetUserId: user.id,
+      metadata: { changeCount: sensitive.length },
+    });
+  }
+
   const refreshed = await loadStaffPermissionTarget(user.id);
   return editorFromUser(refreshed);
 }
@@ -518,6 +530,16 @@ export async function applyBulkStaffPermissions(actorUserId: string, raw: unknow
       targetUserId: plan.user.id,
       before: { overrides: plan.beforeStored },
       after: { overrides: plan.afterStored },
+    });
+  }
+
+  if (preview.sensitive) {
+    await publishSecurityAlert({
+      kind: "PRIVILEGE_CHANGE",
+      dedupeKey: `perms-bulk:${actorUserId}`,
+      summary: "Sensitive staff permissions were changed for more than one account.",
+      actorUserId,
+      metadata: { accountCount: plans.length },
     });
   }
 

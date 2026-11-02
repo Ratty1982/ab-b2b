@@ -16,6 +16,9 @@ describe("auth and transport security configuration", () => {
     expect(source).not.toContain("domain:");
     expect(source).toContain("twoFactor");
     expect(source).toContain("Automotive Brands");
+    expect(source).toContain("disableSignUp: true");
+    expect(source).toContain("revokeSessionsOnPasswordReset: true");
+    expect(source).toMatch(/cookieCache:\s*\{[^}]*enabled:\s*false/);
   });
 
   it("keeps CSRF middleware active for server functions", () => {
