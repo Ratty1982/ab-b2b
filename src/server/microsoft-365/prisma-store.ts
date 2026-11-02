@@ -36,6 +36,10 @@ function mapConnection(row: {
   taskInboundEnabledAt: Date | null;
   lastInboundSyncAt: Date | null;
   inboundBaselineAt: Date | null;
+  calendarOutboundEnabledAt: Date | null;
+  calendarInboundEnabledAt: Date | null;
+  lastCalendarInboundSyncAt: Date | null;
+  calendarInboundBaselineAt: Date | null;
   connectedAt: Date | null;
   disconnectedAt: Date | null;
 }): StoredConnection {

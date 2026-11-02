@@ -98,6 +98,22 @@ function ensureStockScheduler() {
         error: error instanceof Error ? error.message : error,
       });
     });
+  void import("./server/microsoft-365/calendar-outbound-scheduler")
+    .then((mod) => mod.startMicrosoftCalendarOutboundScheduler())
+    .catch((error) => {
+      console.error("[ab:microsoft-calendar]", {
+        event: "OUTBOUND_SCHEDULER_START_FAILED",
+        error: error instanceof Error ? error.message : error,
+      });
+    });
+  void import("./server/microsoft-365/calendar-inbound-scheduler")
+    .then((mod) => mod.startMicrosoftCalendarInboundScheduler())
+    .catch((error) => {
+      console.error("[ab:microsoft-calendar-inbound]", {
+        event: "INBOUND_SCHEDULER_START_FAILED",
+        error: error instanceof Error ? error.message : error,
+      });
+    });
 }
 
 ensureStockScheduler();

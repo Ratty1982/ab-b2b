@@ -68,6 +68,8 @@ const envSchema = z.object({
   MICROSOFT_365_TASK_OUTBOUND_ENABLED: z.string().optional(),
   /** Inbound Microsoft To Do → CRM. Off unless true/1/on/yes, and only when the main Microsoft flag is also on. Does not enable outbound. */
   MICROSOFT_365_TASK_INBOUND_ENABLED: z.string().optional(),
+  /** Outlook Calendar sync (both directions). Off unless true/1/on/yes, and only when the main Microsoft flag is also on. Independent of task sync flags. */
+  MICROSOFT_365_CALENDAR_SYNC_ENABLED: z.string().optional(),
 });
 
 export type ServerEnv = z.infer<typeof envSchema>;

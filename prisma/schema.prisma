@@ -643,6 +643,21 @@ enum MicrosoftSyncJobStatus {
   NEEDS_REVIEW
 }
 
+/// CRM appointment (distinct from Task). Outlook sync is opt-in per appointment.
+enum AppointmentType {
+  MEETING
+  CALL
+  CUSTOMER_VISIT
+  FOLLOW_UP
+  OTHER
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
 enum DocumentVisibility {
   PUBLIC
   TRADE
@@ -766,6 +781,7 @@ model User {
   productsSdsRequirementUpdated Product[] @relation("ProductSdsRequirementUpdatedBy")
   ownedLeads         Lead[]
   ownedOpportunities Opportunity[]
+  ownedAppointments  CrmAppointment[]  @relation("AppointmentOwner")
   sessions           AuthSession[]
   accounts           AuthAccount[]
   actingContexts     ActingContext[]   @relation("ActingActor")
@@ -1006,6 +1022,7 @@ model Company {
   opportunities  Opportunity[]
   activities     Activity[]
   tasks          Task[]
+  crmAppointments CrmAppointment[]
   notesList       Note[]
   documents       Document[]
   auditEvents     AuditEvent[]
@@ -1061,7 +1078,8 @@ model Contact {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company       Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  appointments  CrmAppointment[]
 
   @@index([companyId])
   @@index([email])
@@ -3716,6 +3734,7 @@ model Opportunity {
   owner        User?        @relation(fields: [ownerId], references: [id])
   activities   Activity[]
   quotes       Quote[]
+  appointments CrmAppointment[]
 
   @@index([companyId, stage])
   @@index([ownerId])
@@ -3779,7 +3798,8 @@ model Task {
   createdBy User?    @relation("TaskCreator", fields: [createdById], references: [id])
   product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   microsoftTaskMappings MicrosoftTaskMapping[]
-  microsoftCalendarMappings MicrosoftCalendarMapping[]
+  /// Optional related appointments. Calendar sync never creates Outlook events from tasks.
+  relatedAppointments CrmAppointment[]
 
   @@index([assigneeId, status])
   @@index([companyId, status])
@@ -3788,6 +3808,55 @@ model Task {
   @@index([productId])
   @@index([dueAt, status])
   @@index([taskType, status])
+}
+
+/// CRM appointment / meeting. Distinct from Task. Outlook sync is never automatic.
+model CrmAppointment {
+  id               String            @id @default(cuid())
+  title            String
+  description      String?
+  type             AppointmentType   @default(MEETING)
+  status           AppointmentStatus @default(SCHEDULED)
+  /// UTC instant of the appointment start.
+  startAt          DateTime
+  /// UTC instant of the appointment end. Must be after startAt.
+  endAt            DateTime
+  /// IANA timezone the organiser intended (default Europe/London).
+  timeZone         String            @default("Europe/London")
+  location         String?
+  ownerId          String
+  companyId        String?
+  contactId        String?
+  opportunityId    String?
+  /// Optional related CRM task. Never implies Outlook sync.
+  relatedTaskId    String?
+  /// Minutes before start for a local reminder hint. Outlook reminders are set only when syncing.
+  reminderMinutes  Int?
+  /// JSON array of { email, name?, type: required|optional }. Empty by default for the pilot.
+  attendees        Json?
+  /// Explicit per-appointment Outlook opt-in. Default off. Tasks never set this.
+  syncToOutlook    Boolean           @default(false)
+  /// Reserved for a later Teams meeting phase. Always false in this release.
+  teamsMeetingEnabled Boolean        @default(false)
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  owner       User         @relation("AppointmentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  company     Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contact     Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  relatedTask Task?        @relation(fields: [relatedTaskId], references: [id], onDelete: SetNull)
+  microsoftCalendarMappings MicrosoftCalendarMapping[]
+
+  @@index([ownerId, startAt])
+  @@index([companyId, startAt])
+  @@index([status, startAt])
+  @@index([type, startAt])
+  @@index([opportunityId])
+  @@index([relatedTaskId])
+  @@index([syncToOutlook, status])
 }
 
 /// One Microsoft 365 work account per CRM user. Refresh tokens are encrypted.
@@ -3821,6 +3890,14 @@ model MicrosoftAccountConnection {
   lastInboundSyncAt       DateTime?
   /// When the inbound baseline finished without applying historical Microsoft edits to CRM.
   inboundBaselineAt       DateTime?
+  /// When the user last turned calendar sync on. Does not export existing appointments automatically.
+  calendarOutboundEnabledAt DateTime?
+  /// When inbound Outlook → CRM calendar processing became eligible for this connection.
+  calendarInboundEnabledAt  DateTime?
+  /// Last successful calendar inbound round (baseline or incremental).
+  lastCalendarInboundSyncAt DateTime?
+  /// When the calendar inbound baseline finished without applying historical Outlook edits to CRM.
+  calendarInboundBaselineAt DateTime?
   connectedAt             DateTime?
   disconnectedAt          DateTime?
   createdAt               DateTime                  @default(now())
@@ -3940,13 +4017,26 @@ model MicrosoftSyncEvent {
   @@index([connectionId, createdAt])
 }
 
-/// Optional Outlook event linked to a CRM task. Creation is never automatic.
+/// Optional Outlook event linked to a CRM appointment. Creation is never automatic from tasks.
 model MicrosoftCalendarMapping {
   id                 String              @id @default(cuid())
-  taskId             String?
+  /// CRM appointment this Outlook event mirrors. Required for new mappings.
+  appointmentId      String?
   userId             String
   connectionId       String
   microsoftEventId   String
+  /// Immutable Outlook id when Prefer: IdType="ImmutableId" was honoured.
+  immutableEventId   String?
+  iCalUId            String?
+  changeKey          String?
+  remoteEtag         String?
+  /// CRM CrmAppointment.updatedAt ISO when this mapping last agreed with both sides.
+  lastCrmRevision    String?
+  /// Comparable field snapshot for inbound conflict detection and echo suppression.
+  syncedSnapshot     Json?
+  /// Graph create transactionId used for safer create retries.
+  transactionId      String?
+  outlookWebLink     String?
   syncStatus         MicrosoftSyncStatus @default(PENDING)
   externalAttendees  Boolean             @default(false)
   lastError          String?
@@ -3955,13 +4045,14 @@ model MicrosoftCalendarMapping {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
-  task       Task?                      @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  user       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connection MicrosoftAccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  appointment CrmAppointment?            @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  user        User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection  MicrosoftAccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
   @@unique([connectionId, microsoftEventId])
-  @@unique([userId, taskId])
+  @@unique([userId, appointmentId])
   @@index([connectionId, syncStatus])
+  @@index([appointmentId])
 }
 
 model Note {
