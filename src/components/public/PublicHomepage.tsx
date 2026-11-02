@@ -5,6 +5,7 @@ import { AvailabilityBadge, availabilityClass } from "@/components/ab/Availabili
 import { TradePrice } from "@/components/ab/Price";
 import { ProductImage } from "@/components/public/ProductImage";
 import { MotorsportFeatureSection } from "@/components/public/MotorsportFeatureSection";
+import { HomepageCertificationsSection } from "@/components/public/PublicCertifications";
 import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { featuredBrandsIntro } from "@/domain/featured-brands";
@@ -807,6 +808,14 @@ export function PublicHomepage({ data }: { data: PublicHomepageData }) {
     }
     if (type === "BENEFITS_GRID") {
       nodes.push(<BenefitsSection key={section.id} config={config} />);
+      if ((data.certifications?.length ?? 0) > 0) {
+        nodes.push(
+          <HomepageCertificationsSection
+            key="homepage-certifications"
+            certifications={data.certifications}
+          />,
+        );
+      }
       continue;
     }
     if (type === "RESOURCES") {
@@ -834,6 +843,19 @@ export function PublicHomepage({ data }: { data: PublicHomepageData }) {
       continue;
     }
     nodes.push(<GenericFallback key={section.id} section={section} />);
+  }
+
+  const alreadyShown = nodes.some((node) => {
+    if (node == null || typeof node !== "object") return false;
+    return "key" in node && node.key === "homepage-certifications";
+  });
+  if (!alreadyShown && (data.certifications?.length ?? 0) > 0) {
+    nodes.push(
+      <HomepageCertificationsSection
+        key="homepage-certifications"
+        certifications={data.certifications}
+      />,
+    );
   }
 
   return <>{nodes}</>;

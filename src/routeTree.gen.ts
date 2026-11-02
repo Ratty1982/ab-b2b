@@ -82,6 +82,7 @@ import { Route as SalesSalesIntelligenceRouteImport } from './routes/sales.sales
 import { Route as AdminApplicationsIndexRouteImport } from './routes/admin.applications.index'
 import { Route as AdminContentIndexRouteImport } from './routes/admin.content.index'
 import { Route as AdminContentSlugRouteImport } from './routes/admin.content.$slug'
+import { Route as AdminContentCertificationsRouteImport } from './routes/admin.content.certifications'
 import { Route as AdminContentMediaRouteImport } from './routes/admin.content.media'
 import { Route as AdminContentTeamRouteImport } from './routes/admin.content.team'
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
@@ -142,6 +143,7 @@ import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.pr
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
 import { Route as ApiAutopartImportsProspectExceptionsCsvRouteImport } from './routes/api/autopart-imports/prospect-exceptions.csv'
 import { Route as ApiAutopartImportsReconciliationCsvRouteImport } from './routes/api/autopart-imports/reconciliation.csv'
+import { Route as ApiCertificationsIdCertificateRouteImport } from './routes/api/certifications/$id.certificate'
 import { Route as PortalOrdersOrderIdIndexRouteImport } from './routes/portal.orders.$orderId.index'
 import { Route as PortalOrdersOrderIdConfirmationRouteImport } from './routes/portal.orders.$orderId.confirmation'
 import { Route as AdminProductsStockProductSkuRouteImport } from './routes/admin.products.stock.product.$sku'
@@ -513,6 +515,12 @@ const AdminContentSlugRoute = AdminContentSlugRouteImport.update({
   path: '/$slug',
   getParentRoute: () => AdminContentRoute,
 } as any)
+const AdminContentCertificationsRoute =
+  AdminContentCertificationsRouteImport.update({
+    id: '/certifications',
+    path: '/certifications',
+    getParentRoute: () => AdminContentRoute,
+  } as any)
 const AdminContentMediaRoute = AdminContentMediaRouteImport.update({
   id: '/media',
   path: '/media',
@@ -833,6 +841,12 @@ const ApiAutopartImportsReconciliationCsvRoute =
     path: '/api/autopart-imports/reconciliation/csv',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiCertificationsIdCertificateRoute =
+  ApiCertificationsIdCertificateRouteImport.update({
+    id: '/api/certifications/$id/certificate',
+    path: '/api/certifications/$id/certificate',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const PortalOrdersOrderIdIndexRoute =
   PortalOrdersOrderIdIndexRouteImport.update({
     id: '/',
@@ -924,6 +938,7 @@ export interface FileRoutesByFullPath {
   '/purchasing/': typeof PurchasingIndexRoute
   '/sales/': typeof SalesIndexRoute
   '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
+  '/admin/content/certifications': typeof AdminContentCertificationsRoute
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
@@ -984,6 +999,7 @@ export interface FileRoutesByFullPath {
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
+  '/api/certifications/$id/certificate': typeof ApiCertificationsIdCertificateRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
@@ -1047,6 +1063,7 @@ export interface FileRoutesByTo {
   '/purchasing': typeof PurchasingIndexRoute
   '/sales': typeof SalesIndexRoute
   '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
+  '/admin/content/certifications': typeof AdminContentCertificationsRoute
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
@@ -1105,6 +1122,7 @@ export interface FileRoutesByTo {
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
+  '/api/certifications/$id/certificate': typeof ApiCertificationsIdCertificateRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/customers/groups': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports': typeof AdminProductsImportsIndexRoute
@@ -1184,6 +1202,7 @@ export interface FileRoutesById {
   '/purchasing/': typeof PurchasingIndexRoute
   '/sales/': typeof SalesIndexRoute
   '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
+  '/admin/content/certifications': typeof AdminContentCertificationsRoute
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
@@ -1244,6 +1263,7 @@ export interface FileRoutesById {
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
+  '/api/certifications/$id/certificate': typeof ApiCertificationsIdCertificateRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
@@ -1324,6 +1344,7 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/sales/'
     | '/admin/content/$slug'
+    | '/admin/content/certifications'
     | '/admin/content/media'
     | '/admin/content/team'
     | '/admin/customers/$id'
@@ -1384,6 +1405,7 @@ export interface FileRouteTypes {
     | '/admin/products/imports/$id'
     | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
+    | '/api/certifications/$id/certificate'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/customers/groups/'
     | '/admin/products/imports/'
@@ -1447,6 +1469,7 @@ export interface FileRouteTypes {
     | '/purchasing'
     | '/sales'
     | '/admin/content/$slug'
+    | '/admin/content/certifications'
     | '/admin/content/media'
     | '/admin/content/team'
     | '/admin/customers/$id'
@@ -1505,6 +1528,7 @@ export interface FileRouteTypes {
     | '/admin/products/imports/$id'
     | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
+    | '/api/certifications/$id/certificate'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/customers/groups'
     | '/admin/products/imports'
@@ -1583,6 +1607,7 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/sales/'
     | '/admin/content/$slug'
+    | '/admin/content/certifications'
     | '/admin/content/media'
     | '/admin/content/team'
     | '/admin/customers/$id'
@@ -1643,6 +1668,7 @@ export interface FileRouteTypes {
     | '/admin/products/imports/$id'
     | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
+    | '/api/certifications/$id/certificate'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/customers/groups/'
     | '/admin/products/imports/'
@@ -1688,6 +1714,7 @@ export interface RootRouteChildren {
   ProductsCategorySlugRoute: typeof ProductsCategorySlugRoute
   ApiAutopartImportsProspectExceptionsCsvRoute: typeof ApiAutopartImportsProspectExceptionsCsvRoute
   ApiAutopartImportsReconciliationCsvRoute: typeof ApiAutopartImportsReconciliationCsvRoute
+  ApiCertificationsIdCertificateRoute: typeof ApiCertificationsIdCertificateRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -2203,6 +2230,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminContentSlugRouteImport
       parentRoute: typeof AdminContentRoute
     }
+    '/admin/content/certifications': {
+      id: '/admin/content/certifications'
+      path: '/certifications'
+      fullPath: '/admin/content/certifications'
+      preLoaderRoute: typeof AdminContentCertificationsRouteImport
+      parentRoute: typeof AdminContentRoute
+    }
     '/admin/content/media': {
       id: '/admin/content/media'
       path: '/media'
@@ -2623,6 +2657,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAutopartImportsReconciliationCsvRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/certifications/$id/certificate': {
+      id: '/api/certifications/$id/certificate'
+      path: '/api/certifications/$id/certificate'
+      fullPath: '/api/certifications/$id/certificate'
+      preLoaderRoute: typeof ApiCertificationsIdCertificateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/portal/orders/$orderId/': {
       id: '/portal/orders/$orderId/'
       path: '/'
@@ -2660,6 +2701,7 @@ const AdminContentSlugRouteWithChildren =
 
 interface AdminContentRouteChildren {
   AdminContentSlugRoute: typeof AdminContentSlugRouteWithChildren
+  AdminContentCertificationsRoute: typeof AdminContentCertificationsRoute
   AdminContentMediaRoute: typeof AdminContentMediaRoute
   AdminContentTeamRoute: typeof AdminContentTeamRoute
   AdminContentIndexRoute: typeof AdminContentIndexRoute
@@ -2667,6 +2709,7 @@ interface AdminContentRouteChildren {
 
 const AdminContentRouteChildren: AdminContentRouteChildren = {
   AdminContentSlugRoute: AdminContentSlugRouteWithChildren,
+  AdminContentCertificationsRoute: AdminContentCertificationsRoute,
   AdminContentMediaRoute: AdminContentMediaRoute,
   AdminContentTeamRoute: AdminContentTeamRoute,
   AdminContentIndexRoute: AdminContentIndexRoute,
@@ -3065,6 +3108,7 @@ const rootRouteChildren: RootRouteChildren = {
     ApiAutopartImportsProspectExceptionsCsvRoute,
   ApiAutopartImportsReconciliationCsvRoute:
     ApiAutopartImportsReconciliationCsvRoute,
+  ApiCertificationsIdCertificateRoute: ApiCertificationsIdCertificateRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

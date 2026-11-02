@@ -46,6 +46,8 @@ export const IMPLIED_BY: Readonly<Record<string, readonly PermissionKey[]>> = {
   "cms.homepage.edit": ["cms.page.edit", "cms.edit"],
   "cms.team.view": ["cms.page.read", "cms.view"],
   "cms.team.edit": ["cms.page.edit", "cms.edit"],
+  "cms.certifications.view": ["cms.page.read", "cms.view"],
+  "cms.certifications.edit": ["cms.page.edit", "cms.edit"],
 
   "sales.team.view": [
     "sales.view_team_accounts",
@@ -293,6 +295,11 @@ export const STAFF_PERMISSION_TREE: readonly PermissionTreeCategory[] = [
         actions: ["cms.homepage.view", "cms.homepage.edit"],
       },
       { id: "website-team", label: "Team", actions: ["cms.team.view", "cms.team.edit"] },
+      {
+        id: "website-certifications",
+        label: "Certifications",
+        actions: ["cms.certifications.view", "cms.certifications.edit"],
+      },
       { id: "website-media", label: "Media", actions: ["cms.media.read", "cms.media.manage"] },
     ],
   },
@@ -387,6 +394,8 @@ const DEDICATED_ADMIN_UNLOCK: ReadonlyArray<readonly [PermissionKey, PermissionK
   ["cms.homepage.edit", "cms.page.edit"],
   ["cms.team.view", "cms.page.read"],
   ["cms.team.edit", "cms.page.edit"],
+  ["cms.certifications.view", "cms.page.read"],
+  ["cms.certifications.edit", "cms.page.edit"],
 ];
 
 export function dedicatedAdminSectionUnlock(permissions: ReadonlySet<string>): boolean {

@@ -21,6 +21,7 @@ const EMPTY_HOMEPAGE: PublicHomepageData = {
   productsBySku: {},
   recentProducts: [],
   featuredProducts: [],
+  certifications: [],
   cmsError: "Homepage content could not be loaded",
 };
 

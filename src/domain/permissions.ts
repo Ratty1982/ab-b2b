@@ -171,6 +171,8 @@ export const PERMISSIONS = [
   "cms.homepage.edit",
   "cms.team.view",
   "cms.team.edit",
+  "cms.certifications.view",
+  "cms.certifications.edit",
 
   "sales.team.view",
   "sales.team.manage",

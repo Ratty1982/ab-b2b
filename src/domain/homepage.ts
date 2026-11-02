@@ -1,4 +1,5 @@
 import type { PublicAvailability } from "@/domain/availability";
+import type { PublicCertification } from "@/domain/certifications";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import type { DisplayPrice } from "@/server/pricing/trade-price";
 
@@ -54,6 +55,8 @@ export type PublicHomepageData = {
   recentProducts: HomepageProduct[];
   /** Featured catalogue lines used when FEATURED_PRODUCTS has no explicit SKUs. */
   featuredProducts: HomepageProduct[];
+  /** Published certifications flagged for homepage display. Empty hides the section. */
+  certifications: PublicCertification[];
   cmsError: string | null;
 };
 

@@ -5,10 +5,13 @@ import { Logo } from "./Logo";
 import { BasketNavBadge } from "./BasketNavBadge";
 import { PublicAccountMenu } from "./PublicAccountMenu";
 import { PublicHeaderSearch } from "./PublicHeaderSearch";
+import { FooterCertifications } from "@/components/public/PublicCertifications";
+import type { PublicCertification } from "@/domain/certifications";
 import { cn } from "@/lib/utils";
 import { canViewBasketSession, RequestSessionProvider, useSession } from "@/lib/session";
 import { publicHeaderAccountLinks } from "@/lib/public-header-account";
 import { signOutCurrent, type ClientSession } from "@/server/auth/session";
+import { listPublicCertificationsFn } from "@/server/phase2/fns";
 
 /** Concise launch navigation — Resources stays routable but off the public chrome. */
 const primaryNav = [
@@ -265,6 +268,19 @@ function footerHost(publicOrigin: string | undefined): string | null {
 export function PublicFooter() {
   const { publicOrigin } = useRouteContext({ from: "__root__" });
   const host = footerHost(publicOrigin);
+  const [certifications, setCertifications] = useState<PublicCertification[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listPublicCertificationsFn({ data: { placement: "footer" } }).then((result) => {
+      if (cancelled || !result.ok) return;
+      setCertifications(result.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <footer className="border-t border-border/60 bg-ink">
       <div className="mx-auto max-w-[1400px] px-4 py-12 sm:px-6 lg:px-10">
@@ -274,6 +290,7 @@ export function PublicFooter() {
             <p className="mt-4 max-w-xs text-[13px] leading-relaxed text-steel">
               Power Maxed and Steel Seal — professional automotive products for UK trade customers.
             </p>
+            <FooterCertifications certifications={certifications} />
           </div>
           <FooterColumn title="Shop" links={footerShop} />
           <FooterColumn title="Trade" links={footerTrade} />

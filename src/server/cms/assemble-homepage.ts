@@ -60,6 +60,15 @@ export async function loadPublicHomepage(userId: string | null): Promise<PublicH
       : fallbackSections();
 
   const catalogue = await loadCatalogue(userId, sections);
+  let certifications: Awaited<
+    ReturnType<typeof import("@/server/certifications/service").listPublicCertifications>
+  > = [];
+  try {
+    const certs = await import("@/server/certifications/service");
+    certifications = await certs.listPublicCertifications("homepage");
+  } catch (error) {
+    console.error("[ab:homepage] certifications load failed", error);
+  }
 
   return {
     seoTitle: published?.seoTitle || DEFAULT_SEO_TITLE,
@@ -67,6 +76,7 @@ export async function loadPublicHomepage(userId: string | null): Promise<PublicH
     ogImageSrc: published?.ogImageSrc ?? null,
     sections,
     ...catalogue,
+    certifications,
     cmsError,
   };
 }
@@ -132,6 +142,7 @@ export async function assembleHomepagePreview(
     ogImageSrc: null,
     sections,
     ...catalogue,
+    certifications: [],
     cmsError: null,
   };
 }
