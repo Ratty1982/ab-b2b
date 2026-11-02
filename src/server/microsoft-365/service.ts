@@ -42,7 +42,14 @@ import { readInboundFlags } from "@/server/microsoft-365/inbound-runtime";
 import { createPrismaMicrosoft365Store } from "@/server/microsoft-365/prisma-store";
 import { outboundGraphAllowed } from "@/domain/microsoft-todo-outbound";
 import { inboundGraphAllowed } from "@/domain/microsoft-todo-inbound";
+import { calendarGraphAllowed } from "@/domain/microsoft-calendar";
 import { notifyCrmTaskOutboundSafely } from "@/server/microsoft-365/outbound-queue";
+import {
+  calendarOutboundCounts,
+  cancelQueuedCalendarOutboundJobs,
+  retryCalendarOutboundJobs,
+} from "@/server/microsoft-365/calendar-outbound-prisma";
+import { calendarInboundCounts } from "@/server/microsoft-365/calendar-inbound-prisma";
 
 const store = createPrismaMicrosoft365Store();
 
@@ -97,6 +104,8 @@ export async function microsoft365StatusFor(userId: string) {
     const uncertainJobs = await listUncertainOutboundJobs(userId);
     const inbound = await inboundCounts(userId);
     const conflictsList = await listInboundConflicts(userId);
+    const calendarOut = await calendarOutboundCounts(userId);
+    const calendarIn = await calendarInboundCounts(userId);
     return {
       ...status,
       outbound: {
@@ -125,6 +134,21 @@ export async function microsoft365StatusFor(userId: string) {
         conflictsList,
         syncedFields: ["status (complete/reopen)", "due date", "priority", "title", "description"],
       },
+      calendar: {
+        engineEnabled: calendarGraphAllowed({
+          crmFlag: process.env["MICROSOFT_365_CRM_ENABLED"],
+          calendarFlag: process.env["MICROSOFT_365_CALENDAR_SYNC_ENABLED"],
+        }),
+        outboundPending: calendarOut.pending,
+        outboundFailed: calendarOut.failed,
+        outboundNeedsReview: calendarOut.needsReview,
+        inboundPending: calendarIn.pending,
+        inboundFailed: calendarIn.failed,
+        conflicts: calendarIn.conflicts,
+        removed: calendarIn.removed,
+        lastCalendarInboundSyncAt: calendarIn.lastCalendarInboundSyncAt,
+        calendarInboundBaselineAt: calendarIn.calendarInboundBaselineAt,
+      },
     };
   } catch (error) {
     asAuth(error);
@@ -145,6 +169,7 @@ export async function microsoft365Disconnect(userId: string) {
     const actor = await actorFromProfile(userId);
     const status = await disconnectMicrosoftAccount(actor, currentMicrosoft365Gate(), { store });
     await cancelQueuedOutboundJobs(userId);
+    await cancelQueuedCalendarOutboundJobs(userId);
     return status;
   } catch (error) {
     asAuth(error);
@@ -158,6 +183,20 @@ export async function microsoft365RetryOutbound(userId: string) {
       throw new AuthError("Not permitted to retry Microsoft To Do sync", "FORBIDDEN", 403);
     }
     const retried = await retryOutboundJobs(userId);
+    const status = await microsoft365StatusFor(userId);
+    return { retried, status };
+  } catch (error) {
+    asAuth(error);
+  }
+}
+
+export async function microsoft365RetryCalendarOutbound(userId: string) {
+  try {
+    const actor = await actorFromProfile(userId);
+    if (!actor.canConnect) {
+      throw new AuthError("Not permitted to retry Outlook Calendar sync", "FORBIDDEN", 403);
+    }
+    const retried = await retryCalendarOutboundJobs(userId);
     const status = await microsoft365StatusFor(userId);
     return { retried, status };
   } catch (error) {

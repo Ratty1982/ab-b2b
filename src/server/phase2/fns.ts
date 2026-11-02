@@ -4919,6 +4919,81 @@ export const createCrmTaskFn = createServerFn({ method: "POST" })
     }
   });
 
+export const listCrmAppointmentsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const appointments = await import("@/server/crm/appointments");
+      return { ok: true as const, data: await appointments.listCrmAppointments(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCrmAppointmentFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const appointments = await import("@/server/crm/appointments");
+      return { ok: true as const, data: await appointments.getCrmAppointment(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createCrmAppointmentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const appointments = await import("@/server/crm/appointments");
+      return { ok: true as const, data: await appointments.createCrmAppointment(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateCrmAppointmentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const appointments = await import("@/server/crm/appointments");
+      return { ok: true as const, data: await appointments.updateCrmAppointment(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const cancelCrmAppointmentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const appointments = await import("@/server/crm/appointments");
+      return { ok: true as const, data: await appointments.cancelCrmAppointment(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const retryCrmAppointmentCalendarSyncFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const appointments = await import("@/server/crm/appointments");
+      return {
+        ok: true as const,
+        data: await appointments.retryCrmAppointmentCalendarSync(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getCompanyCrmWorkspaceFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

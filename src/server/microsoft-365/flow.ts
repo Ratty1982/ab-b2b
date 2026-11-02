@@ -328,6 +328,10 @@ export async function completeMicrosoftCallback(
     taskInboundEnabledAt: existing?.taskInboundEnabledAt ?? null,
     lastInboundSyncAt: existing?.lastInboundSyncAt ?? null,
     inboundBaselineAt: existing?.inboundBaselineAt ?? null,
+    calendarOutboundEnabledAt: existing?.calendarOutboundEnabledAt ?? null,
+    calendarInboundEnabledAt: existing?.calendarInboundEnabledAt ?? null,
+    lastCalendarInboundSyncAt: existing?.lastCalendarInboundSyncAt ?? null,
+    calendarInboundBaselineAt: existing?.calendarInboundBaselineAt ?? null,
     connectedAt: existing?.connectedAt ?? current,
     disconnectedAt: null,
   };
@@ -395,12 +399,19 @@ export async function updateMicrosoft365Preferences(
   }
   const current = now();
   const enablingTasks = inputPrefs.taskSyncEnabled && !existing.taskSyncEnabled;
+  const enablingCalendar = inputPrefs.calendarSyncEnabled && !existing.calendarSyncEnabled;
   await store.saveConnection({
     ...existing,
     taskSyncEnabled: inputPrefs.taskSyncEnabled,
     calendarSyncEnabled: inputPrefs.calendarSyncEnabled,
     taskOutboundEnabledAt: enablingTasks ? current : existing.taskOutboundEnabledAt,
     taskInboundEnabledAt: enablingTasks ? current : existing.taskInboundEnabledAt,
+    calendarOutboundEnabledAt: enablingCalendar
+      ? (existing.calendarOutboundEnabledAt ?? current)
+      : existing.calendarOutboundEnabledAt,
+    calendarInboundEnabledAt: enablingCalendar
+      ? (existing.calendarInboundEnabledAt ?? current)
+      : existing.calendarInboundEnabledAt,
     lastError: null,
   });
   await record(store, current, actor.userId, existing.id, "PREFERENCES_UPDATED", "Microsoft sync preferences updated");
