@@ -80,10 +80,11 @@ export async function loadAccessProfile(userId: string): Promise<LoadedAccessPro
         include: { company: { select: { id: true, name: true, accountNumber: true } } },
       },
       salesRep: { select: { id: true, managerId: true, active: true } },
+      securityHold: { select: { active: true } },
     },
   });
 
-  if (!user || user.status === "DISABLED") return null;
+  if (!user || user.status === "DISABLED" || user.securityHold?.active) return null;
 
   const rolePermissions = new Set<PermissionKey>();
   const systemRoles: string[] = [];

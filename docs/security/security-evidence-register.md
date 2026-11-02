@@ -79,14 +79,23 @@ Owners are roles, not named people.
 - **Outstanding:** not live until release
 - **Owner:** Development
 
-### Sign-in rate limit on the real page
+### Confirmed password failures
 
-- **Threat:** password guessing
-- **Evidence:** login page calls `signInWithPassword` (`src/routes/login.tsx`). Better Auth's limiter runs in the HTTP router (`dist/api/index.mjs` `onRequest`), which that server function does not use. Application limit is 10 attempts per account in 15 minutes (`src/server/security/policy.ts`, `src/server/security/attempts.ts`). It does not use a forwarding header
-- **Verification:** `src/server/security/controls.test.ts`. Changing `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For` does not create a new allowance. Library file read on 2 November 2026
+- **Threat:** password guessing against one account, including across more than one copy of the website
+- **Evidence:** the sign-in page calls `signInWithPassword` (`src/routes/login.tsx`). Better Auth's HTTP limiter does not cover that server function. Five confirmed incorrect passwords inside 15 minutes pause password sign-in for 15 minutes (`src/server/security/password-failure.ts`, `src/server/security/password-failure-store.ts`). The row is `AuthPasswordFailure`. The email address is not stored. A completed sign-in clears the row. An authenticator challenge does not. Unknown addresses are not stored. The visitor message is always "Invalid email or password". The fifth failure writes one `SECURITY_ALERT` (`REPEATED_SIGN_IN_FAILURE`) and attempts mail when `SECURITY_ALERT_EMAIL` and SMTP are already set. The account status is not changed. The database transaction uses `FOR UPDATE` and a 1.5 second `statement_timeout`. A counter error fails open. Redis is not called. The defined Redis rule, before it could be used, is a 200 millisecond timeout, no retries, and fail-open (`REDIS_SIGN_IN_POLICY`)
+- **Verification:** `src/server/security/password-failure.test.ts` on 2 November 2026 (Europe/London). The PostgreSQL counter was not run against a database in this environment
 - **Status:** Confirmed in code
-- **Outstanding:** each process has its own counter and a restart clears it. Redis was not added. `REDIS_URL` is unused. Cloudflare must limit sign-in volume across all copies. A guess spread across many accounts is not stopped here
-- **Owner:** Development for the application limit; hosting administrator for Cloudflare
+- **Outstanding:** migration `20261102220000_password_failure_lock` must be applied by the normal Coolify start before the counter exists. A guess spread across many addresses is not stopped here. Timing differences inside Better Auth remain. Cloudflare must still limit sign-in volume. `SECURITY_ALERT_EMAIL` is unset unless an administrator sets it
+- **Owner:** Development for the application; hosting administrator for the migration and for Cloudflare
+
+### Administrator security hold
+
+- **Threat:** a repeated attack that should be stopped by a person, without using ordinary account deactivation and without an automatic permanent disable
+- **Evidence:** `applySecurityHold` and `releaseSecurityHold` in `src/server/users/service.ts`, guarded by `users.manage`. The screen is Users, roles & permissions. The row is `UserSecurityHold`. Sessions are deleted on apply. `loadAccessProfile` and the session hook refuse a held account. `User.status` is not changed. Audit actions are `SECURITY_HOLD_APPLIED` and `SECURITY_HOLD_RELEASED`. Five password failures do not create a hold
+- **Verification:** `src/server/security/security-hold.test.ts`. The buttons were not clicked in a browser. No database integration run
+- **Status:** Confirmed in code
+- **Outstanding:** a trade account can be held by the same server action, but the staff screen lists internal users. Lifting a hold does not turn a disabled account back on
+- **Owner:** Development; a director decides who may use `users.manage`
 
 ### Client address headers
 
@@ -281,14 +290,18 @@ Owners are roles, not named people.
 
 ## Tests run on 2 November 2026 (Europe/London)
 
-Commands, from the security branch:
+Commands, from the earlier security branch:
 
 - `bunx vitest run` on `src/server/security/controls.test.ts`, `src/infra/auth/auth.security.test.ts`, `src/domain/microsoft-graph-security.test.ts`, `src/server/microsoft-365/flow.test.ts`, `src/server/microsoft-365/token-cipher.test.ts`, `src/server/microsoft-365/signing-keys.test.ts`, `src/domain/product-documents.test.ts` and `src/server/rbac/permissions.test.ts` — 8 files, 67 tests, passed on 2 November 2026 (Europe/London). This run includes forged, conflicting and missing forwarding headers, a proxy-shaped header set, and separate public-form identities.
+
+Commands, from the password-lock branch, the same evening:
+
+- `bunx vitest run` on `src/server/security/password-failure.test.ts`, `src/server/security/security-hold.test.ts`, `src/server/security/controls.test.ts` and `src/infra/auth/auth.security.test.ts` — 4 files, 24 tests, passed on 2 November 2026 (Europe/London). This run covers five confirmed failures, pause expiry, a completed sign-in, an authenticator challenge, one notice under concurrent failures, and the generic visitor sentence.
 - `NODE_OPTIONS='--max-old-space-size=6144' bunx tsc --noEmit` — passed
 - `NODE_OPTIONS='--max-old-space-size=6144' bun run build` — passed (`vite build` / Nitro output)
 
-Not run: the database integration suite, a browser pass, and any request to the live website.
+Not run: the database integration suite, a browser pass, and any request to the live website. The administrator hold buttons were not clicked.
 
 ## Deployment note
 
-No migration. Optional `SECURITY_ALERT_EMAIL`. Rollback is documented in `docs/security/directors-security-report.md`.
+Migration `20261102220000_password_failure_lock` adds `AuthPasswordFailure` and `UserSecurityHold`. It does not change existing account rows. Optional `SECURITY_ALERT_EMAIL`. Redis is not required. Rollback is documented in `docs/security/directors-security-report.md`. Do not deploy until that migration has been applied by the normal release.

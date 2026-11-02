@@ -143,7 +143,7 @@ The repository describes Coolify and a reverse proxy. It does not name that prox
 
 The limits are:
 
-- 10 sign-in attempts per account in 15 minutes
+- Confirmed incorrect passwords are counted separately. See the next section. They are not part of this in-memory list
 - 10 authenticator attempts in 10 minutes for the same sign-in cookie
 - 5 password-reset requests per account in an hour
 - 10 attempts to finish one reset link in an hour
@@ -161,9 +161,27 @@ The counters are in `src/server/security/policy.ts`, `src/server/security/attemp
 
 **Test.** `src/server/security/controls.test.ts` covers forged and conflicting forwarding headers, a missing address, a header set shaped like a proxy, and two different senders who do not share an allowance.
 
-**Limitation.** The counters live in the memory of each running copy of the website. A restart clears them. Two copies do not share them, so each copy has its own allowance. Redis is declared as an optional unused setting (`REDIS_URL` in `src/server/env.ts`) and is not used here. Putting Redis on the sign-in path would need a timeout and a clear rule for when Redis is down. That design is not in this repository, so it was not added.
+**Limitation.** Authenticator, password-reset, and public-form counters live in the memory of each running copy of the website. A restart clears them. Two copies do not share them. Redis is an optional unused setting (`REDIS_URL` in `src/server/env.ts`). It is not used for these counters or for password failures. A Redis counter would need a 200 millisecond command timeout, no retries, and a fail-open result when Redis times out or cannot be reached, so a Redis fault does not stop sign-in and does not clear a failure count. That client was not added. Password failures use PostgreSQL instead, which sign-in already requires.
 
 Someone who uses a new email address for every enquiry is not stopped by these counters. That is a job for Cloudflare rate limiting and bot protection, which this review could not see. The required rules are in `docs/security/cloudflare-checklist.md`. The proxy configuration that would be required before this application could trust a visitor address is in `docs/security/coolify-infrastructure-checklist.md`.
+
+### 4A. Five confirmed wrong passwords pause sign-in for 15 minutes
+
+**What changed.** Password guessing on the sign-in page is no longer the old in-memory count of ten attempts, and it no longer says "too many sign-in attempts". The page now counts a wrong password only when that account exists and has a password. Five such failures inside 15 minutes pause password sign-in for that account for 15 minutes. When the pause ends, the count starts again. A finished sign-in, including a finished authenticator check, clears the count immediately. Opening the authenticator step does not.
+
+The visitor always sees "Invalid email or password". That same sentence is used for an unknown address, a wrong password, a pause, a disabled account, and an administrator security hold. The page does not say how many tries are left, and it does not say whether the address belongs to an account.
+
+The fifth confirmed failure writes one `SECURITY_ALERT` and, when `SECURITY_ALERT_EMAIL` is a single address and mail already works, tries to send one email. A burst of failures at the same moment produces one notice. The email does not contain the address. The account is not switched off. `User.status` stays as it was.
+
+The count is one row per account in PostgreSQL (`AuthPasswordFailure`), locked with `SELECT … FOR UPDATE` so two copies of the website share it. That transaction times out after 1.5 seconds. If the counter cannot be read or written, sign-in continues and the visitor still sees the generic sentence. The account is not disabled because the counter failed. Redis is not on this path. The rule, if Redis is ever added, is a 200 millisecond timeout, no retries, and fail-open. A Redis error must not count as a successful sign-in and must not clear the counter.
+
+**Attack this helps stop.** Repeated password guessing against one known account, including when more than one copy of the website is running.
+
+**Test.** `src/server/security/password-failure.test.ts` covers five failures, the window and the pause expiring, a completed sign-in clearing the count, an authenticator challenge leaving the count in place, one notice when many failures arrive together, and the generic visitor sentence.
+
+**Limitation.** An address that is not an account is not counted, so a guess spread across many invented addresses is not stopped here. A correct password and a wrong password can still take different amounts of time inside Better Auth. While a pause is in force the application does a similar slow hash before answering, so the answer is not instantly different, but a careful timer may still learn something. That slow hash also means a flood against one paused account uses processor time. Cloudflare remains the control for volume. The counter database was not exercised in this run. A password reset still completes during a pause, but password sign-in stays paused until the 15 minutes end.
+
+**Separate administrator hold.** Repeated attacks can also be stopped by a person, not by the five-failure rule. An administrator with `users.manage` can put a security hold on an account from Users, roles & permissions. The hold removes current sessions and blocks new ones. It does not change `User.status`, the company, orders, or prices. Lifting the hold is a second protected action. Both write an audit row (`SECURITY_HOLD_APPLIED`, `SECURITY_HOLD_RELEASED`) and attempt the same security email. An administrator cannot hold their own account or the last working Super Admin. Five wrong passwords never create this hold. A held account still sees "Invalid email or password" on the sign-in page.
 
 ### 5. Serious events can raise a notice, without flooding the inbox
 
@@ -173,7 +191,8 @@ Someone who uses a new email address for every enquiry is not stopped by these c
 
 Notices cover:
 
-- sign-in attempts blocked by the new limit
+- the fifth confirmed incorrect password on one account, which pauses sign-in for 15 minutes
+- an administrator applying or lifting a security hold
 - authenticator attempts blocked by the new limit
 - password-reset requests blocked by the new limit
 - a new Super Admin, or the Super Admin role being granted
@@ -298,7 +317,7 @@ Those checks are in the infrastructure checklist. They need someone with server 
 | This pull request is not released | The live site still allows the public account route, can keep a switched-off session for up to five minutes, and does not apply the new sign-in limits. |
 | Authenticator codes are not compulsory for Super Admin and Accounts | A stolen staff password is enough to enter the administration area, unless production has already set `MFA_ENFORCE_PRIVILEGED` to true. This review could not see that setting. |
 | Cloudflare and the server firewall were not inspected | A large share of attacks against a public website are stopped at the edge, or are not. The business cannot yet show a director that this layer exists. |
-| Sign-in and form limits are inside each running copy of the website | A restart clears them. A second copy has its own allowance. Redis was not added, because the application does not use it and a failed Redis call must not take sign-in down. Cloudflare should limit sign-in and the public forms. That Cloudflare configuration was not seen. |
+| Authenticator, reset, and form limits are inside each running copy of the website | A restart clears those counters. A second copy has its own allowance. Password failures are the exception: they are stored in PostgreSQL and shared. Redis is still unused. If it were added it would need a 200 millisecond timeout and a fail-open result. Cloudflare should still limit sign-in volume across many accounts. That Cloudflare configuration was not seen. |
 | Backups and restore have not been demonstrated from this repository | If the database were damaged, this review cannot say how quickly, or how completely, it could be recovered. |
 
 ### Medium
@@ -371,12 +390,14 @@ Those checks are in the infrastructure checklist. They need someone with server 
 
 ## Deployment and rollback
 
-**Deploy.** Merge this pull request into `production/phase-1-auth-rbac` only when the business is ready, then use the existing Coolify deployment. There is no database migration. No environment variable is required for the site to start. `SECURITY_ALERT_EMAIL` is optional.
+**Deploy.** Merge the password-lock pull request into `production/phase-1-auth-rbac` only when the business is ready, then use the existing Coolify deployment. The migration `20261102220000_password_failure_lock` adds `AuthPasswordFailure` and `UserSecurityHold`. It does not change existing rows. No new environment variable is required. `SECURITY_ALERT_EMAIL` stays optional. Do not set a Redis address for this control. Do not turn on `MFA_ENFORCE_PRIVILEGED`.
 
 **What staff and customers will notice.**
 
-- Forgotten-password resets sign the person out of other browsers.
-- Ten wrong passwords on one account in 15 minutes produces "Too many sign-in attempts. Please wait and try again."
+- Forgotten-password resets still sign the person out of other browsers.
+- Five confirmed wrong passwords on one real account inside 15 minutes pause password sign-in for 15 minutes. The sentence on the page stays "Invalid email or password". The account is not disabled.
+- A finished sign-in clears that count. Being asked for an authenticator code does not.
+- An administrator can apply or lift a security hold from the user screen. That is separate from Deactivate user.
 - The same email or telephone submitting a public form too often produces "Please wait a few minutes before sending another message." A different sender is not blocked by that.
 - Everyday ordering, pricing, Autopart import, and Microsoft synchronisation behaviour are unchanged. Microsoft synchronisation is not switched on by this release.
 

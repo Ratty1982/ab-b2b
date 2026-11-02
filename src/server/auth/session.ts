@@ -1,12 +1,26 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
+import { hashPassword } from "better-auth/crypto";
 import { z } from "zod";
 
 import { auth } from "@/infra/auth";
+import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { resolvePostLoginPath, safeReturnPath } from "@/server/auth/redirects";
 import { assessAttempt } from "@/server/security/attempts";
 import { publishSecurityAlert } from "@/server/security/alerts";
+import { securityAccountKey, securityPepper } from "@/server/security/account-key";
+import {
+  PASSWORD_LOCK_ALERT_KIND,
+  PASSWORD_LOCK_ALERT_SUMMARY,
+  UNAUTHENTICATED_SIGN_IN_ERROR,
+  classifyPasswordSignInError,
+  passwordAuthRestricted,
+  passwordLockDedupeKey,
+  settlePasswordAttempt,
+  shouldCountPasswordFailure,
+} from "@/server/security/password-failure";
+import { passwordFailureStore } from "@/server/security/password-failure-store";
 import {
   clientMetaFromRequestHeaders,
   resolveRequestClientSession,
@@ -34,6 +48,55 @@ const loginSchema = z.object({
   password: z.string().min(1).max(128),
 });
 
+async function credentialAccountExists(email: string): Promise<boolean> {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: {
+        accounts: {
+          where: { providerId: "credential" },
+          select: { password: true },
+          take: 1,
+        },
+      },
+    });
+    return Boolean(user?.accounts.some((account) => account.password));
+  } catch (error) {
+    console.error("[ab:security] credential lookup failed", {
+      error: error instanceof Error ? error.name : "unknown",
+    });
+    return false;
+  }
+}
+
+async function passwordSignInPaused(accountKey: string, nowMs: number): Promise<boolean> {
+  try {
+    const state = await passwordFailureStore.read(accountKey, nowMs);
+    return passwordAuthRestricted(state, nowMs);
+  } catch (error) {
+    console.error("[ab:security] sign-in lock could not be read", {
+      error: error instanceof Error ? error.name : "unknown",
+    });
+    return false;
+  }
+}
+
+async function revokePasswordSignIn(headers: Headers, userId: string | null): Promise<void> {
+  try {
+    await auth.api.signOut({ headers });
+  } catch {
+    // The session row is removed below when the user id is known.
+  }
+  if (!userId) return;
+  try {
+    await prisma.authSession.deleteMany({ where: { userId } });
+  } catch (error) {
+    console.error("[ab:security] sign-in session was not removed", {
+      error: error instanceof Error ? error.name : "unknown",
+    });
+  }
+}
+
 export const signInWithPassword = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => loginSchema.parse(data))
   .handler(
@@ -44,64 +107,106 @@ export const signInWithPassword = createServerFn({ method: "POST" })
     > => {
       const headers = getRequestHeaders();
       const meta = clientMetaFromRequestHeaders(headers);
-      const attempt = assessAttempt({ scope: "login", headers, subject: data.email });
-      if (!attempt.allowed) {
-        await publishSecurityAlert({
-          kind: "REPEATED_LOGIN_FAILURE",
-          dedupeKey: `login:${attempt.accountKey ?? "unknown-account"}`,
-          summary: "Repeated sign-in attempts were blocked before the password was checked.",
-          metadata: { trustedAddress: attempt.trustedAddress },
-        });
-        return {
-          ok: false,
-          error: "Too many sign-in attempts. Please wait and try again.",
-        };
+      const email = data.email.toLowerCase().trim();
+      const accountKey = securityAccountKey(email, securityPepper());
+      const nowMs = Date.now();
+
+      if (await passwordSignInPaused(accountKey, nowMs)) {
+        try {
+          await hashPassword(data.password);
+        } catch {
+          // The visitor message stays generic even if the equalising hash fails.
+        }
+        return { ok: false, error: UNAUTHENTICATED_SIGN_IN_ERROR };
       }
+
+      const hasCredentialAccount = await credentialAccountExists(email);
 
       try {
         const result = await auth.api.signInEmail({
           body: {
-            email: data.email.toLowerCase().trim(),
+            email,
             password: data.password,
           },
           headers,
         });
 
-        // Better Auth two-factor: password OK, TOTP/backup still required.
-        if (
+        const mfaChallenge = Boolean(
           result &&
-          typeof result === "object" &&
-          "twoFactorRedirect" in result &&
-          (result as { twoFactorRedirect?: boolean }).twoFactorRedirect
-        ) {
+            typeof result === "object" &&
+            "twoFactorRedirect" in result &&
+            (result as { twoFactorRedirect?: boolean }).twoFactorRedirect,
+        );
+        const userId = (result as { user?: { id?: string } } | null)?.user?.id ?? null;
+        let settled: { result: "success" | "mfa" | "invalid" };
+        try {
+          settled = await settlePasswordAttempt({
+            store: passwordFailureStore,
+            accountKey,
+            nowMs: Date.now(),
+            outcome: mfaChallenge ? "mfa-challenge" : "complete",
+          });
+        } catch (storeError) {
+          console.error("[ab:security] sign-in lock was not cleared", {
+            error: storeError instanceof Error ? storeError.name : "unknown",
+          });
+          settled = { result: mfaChallenge ? "mfa" : "success" };
+        }
+
+        if (settled.result === "invalid") {
+          await revokePasswordSignIn(headers, userId);
+          return { ok: false, error: UNAUTHENTICATED_SIGN_IN_ERROR };
+        }
+        if (settled.result === "mfa") {
           return { ok: false, error: "Enter your authenticator code", needsTwoFactor: true };
         }
 
-        const userId = (result as { user?: { id?: string } } | null)?.user?.id;
         await recordAuditEvent({
           action: "LOGIN_SUCCESS",
           entityType: "User",
-          entityId: userId ?? null,
-          actorUserId: userId ?? null,
+          entityId: userId,
+          actorUserId: userId,
           ipAddress: meta.ipAddress,
           userAgent: meta.userAgent,
         });
 
         return { ok: true };
-      } catch {
+      } catch (error) {
+        const classification = classifyPasswordSignInError(error);
+        if (shouldCountPasswordFailure({ hasCredentialAccount, classification })) {
+          try {
+            await settlePasswordAttempt({
+              store: passwordFailureStore,
+              accountKey,
+              nowMs: Date.now(),
+              outcome: "confirmed-incorrect",
+              onJustLocked: async (lockedUntilMs) => {
+                await publishSecurityAlert({
+                  kind: PASSWORD_LOCK_ALERT_KIND,
+                  dedupeKey: passwordLockDedupeKey(accountKey, lockedUntilMs),
+                  summary: PASSWORD_LOCK_ALERT_SUMMARY,
+                  metadata: { accountKey },
+                });
+              },
+            });
+          } catch (storeError) {
+            console.error("[ab:security] sign-in lock was not recorded", {
+              error: storeError instanceof Error ? storeError.name : "unknown",
+            });
+          }
+        }
         await recordAuditEvent({
           action: "LOGIN_FAILED",
           entityType: "User",
           entityId: null,
           metadata: {
-            emailDomain: data.email.split("@")[1]?.toLowerCase() ?? null,
-            accountKey: attempt.accountKey,
+            emailDomain: email.split("@")[1]?.toLowerCase() ?? null,
+            accountKey,
           },
           ipAddress: meta.ipAddress,
           userAgent: meta.userAgent,
         });
-        // Generic message — avoid user enumeration
-        return { ok: false, error: "Invalid email or password" };
+        return { ok: false, error: UNAUTHENTICATED_SIGN_IN_ERROR };
       }
     },
   );
@@ -142,6 +247,26 @@ export const verifyTwoFactorLogin = createServerFn({ method: "POST" })
       }
       const session = await auth.api.getSession({ headers });
       const userId = session?.user?.id ?? null;
+      const email = session?.user?.email?.toLowerCase().trim();
+      if (email) {
+        const accountKey = securityAccountKey(email, securityPepper());
+        try {
+          const settled = await settlePasswordAttempt({
+            store: passwordFailureStore,
+            accountKey,
+            nowMs: Date.now(),
+            outcome: "complete",
+          });
+          if (settled.result !== "success") {
+            await revokePasswordSignIn(headers, userId);
+            return { ok: false, error: "Invalid authentication code" };
+          }
+        } catch (storeError) {
+          console.error("[ab:security] sign-in lock was not cleared", {
+            error: storeError instanceof Error ? storeError.name : "unknown",
+          });
+        }
+      }
       await recordAuditEvent({
         action: "LOGIN_MFA_SUCCESS",
         entityType: "User",

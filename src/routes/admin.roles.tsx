@@ -9,11 +9,13 @@ import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { STAFF_ROLE_OPTIONS, type StaffUserStatus } from "@/domain/users";
 import type { SystemRoleKey } from "@/domain/permissions";
 import {
+  applySecurityHoldFn,
   createStaffUserFn,
   deactivateStaffUserFn,
   deleteStaffUserFn,
   listStaffUsersFn,
   reactivateStaffUserFn,
+  releaseSecurityHoldFn,
   resendStaffInvitationFn,
   resetStaffUserPasswordFn,
   sendUserPasswordResetEmailFn,
@@ -90,6 +92,8 @@ type StaffUserRow = {
   deletionReasons?: string[];
   canResendInvitation?: boolean;
   canSendPasswordReset?: boolean;
+  securityHoldActive?: boolean;
+  securityHoldReason?: string | null;
   lastLoginAt?: string | null;
   lastActiveAt?: string | null;
   lastLoginLabel?: string | null;
@@ -671,6 +675,8 @@ function ManageUserDrawer({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [transferToUserId, setTransferToUserId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [holdReason, setHoldReason] = useState("");
+  const [holding, setHolding] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"details" | "permissions" | "activity">("details");
 
   useEffect(() => {
@@ -688,6 +694,8 @@ function ManageUserDrawer({
       setDeleteOpen(false);
       setTransferToUserId("");
       setBusy(false);
+      setHoldReason("");
+      setHolding(false);
       setDrawerTab("details");
     }
   }, [user]);
@@ -897,6 +905,77 @@ function ManageUserDrawer({
           >
             {sendingReset ? "Sending…" : "Send password reset email"}
           </button>
+        </div>
+      ) : null}
+
+      {!isSelf ? (
+        <div className="mt-6 grid gap-3 border-t border-border pt-5">
+          <p className="text-[13px] font-semibold">Security hold</p>
+          <p className="text-[12px] text-steel">
+            Pauses sign-in and removes current sessions. The account status, company, orders and prices
+            stay as they are. This is a manual action for a repeated attack. It is separate from
+            deactivation.
+          </p>
+          {user.securityHoldActive ? (
+            <>
+              <p className="text-[12px] text-foreground">
+                Hold active{user.securityHoldReason ? `: ${user.securityHoldReason}` : ""}.
+              </p>
+              <button
+                type="button"
+                disabled={holding || busy}
+                className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+                onClick={() => {
+                  void (async () => {
+                    setHolding(true);
+                    const result = await releaseSecurityHoldFn({ data: { id: user.id } });
+                    setHolding(false);
+                    if (!result.ok) {
+                      toast.error(result.error);
+                      return;
+                    }
+                    toast.success("Security hold lifted");
+                    await onSaved();
+                  })();
+                }}
+              >
+                {holding ? "Saving…" : "Lift security hold"}
+              </button>
+            </>
+          ) : (
+            <>
+              <textarea
+                value={holdReason}
+                onChange={(event) => setHoldReason(event.target.value)}
+                maxLength={300}
+                rows={3}
+                placeholder="Why this account should be held"
+                className={inputClass}
+              />
+              <button
+                type="button"
+                disabled={holding || busy || holdReason.trim().length < 3}
+                className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+                onClick={() => {
+                  void (async () => {
+                    setHolding(true);
+                    const result = await applySecurityHoldFn({
+                      data: { id: user.id, reason: holdReason.trim() },
+                    });
+                    setHolding(false);
+                    if (!result.ok) {
+                      toast.error(result.error);
+                      return;
+                    }
+                    toast.success("Security hold applied");
+                    await onSaved();
+                  })();
+                }}
+              >
+                {holding ? "Saving…" : "Apply security hold"}
+              </button>
+            </>
+          )}
         </div>
       ) : null}
 
