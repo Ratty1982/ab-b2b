@@ -4,12 +4,12 @@
  * Baseline rounds never mutate CRM task data.
  */
 import {
+  absorbDeltaPage,
   assertTodoDeltaGraphUrl,
+  coalesceDeltaItems,
   inboundCursorResource,
-  inboundDueAtFromMicrosoft,
   inboundGraphAllowed,
   inboundRetryDelayMs,
-  mapMicrosoftImportance,
   mapMicrosoftStatusToCrm,
   microsoftFieldsToSnapshot,
   planInboundFieldUpdates,
@@ -28,8 +28,10 @@ export type InboundJobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "
 
 export type InboundJobPayload = {
   listId?: string;
-  /** Staged page items awaiting apply before the delta cursor advances. */
+  /** Coalesced delta items awaiting apply before the delta cursor advances. */
   staged?: MicrosoftTodoInboundFields[];
+  /** Microsoft task ids already applied in this round; skipped on resume for idempotency. */
+  appliedIds?: string[];
   nextLink?: string | null;
   pendingDeltaLink?: string | null;
   baseline?: boolean;
@@ -151,6 +153,18 @@ export type InboundStore = {
   /** Persist only after the round's staged changes were applied. */
   saveCursor: (connectionId: string, resource: string, deltaLink: string | null) => Promise<void>;
   clearCursor: (connectionId: string, resource: string) => Promise<void>;
+  /**
+   * Atomically commit the deltaLink, refresh inbound timestamps, and mark the job SUCCEEDED.
+   * Prevents advancing the cursor without durable completion, and vice versa.
+   */
+  finalizeInboundRound: (input: {
+    job: InboundJob;
+    requireLeaseOwner: string;
+    connection: InboundConnection;
+    resource: string;
+    deltaLink: string;
+    now: Date;
+  }) => Promise<boolean>;
   appendEvent: (input: {
     userId: string;
     connectionId: string;
@@ -208,6 +222,7 @@ export function parseMicrosoftTodoDeltaItem(raw: unknown): MicrosoftTodoInboundF
       completed && typeof completed["dateTime"] === "string" && typeof completed["timeZone"] === "string"
         ? { dateTime: completed["dateTime"], timeZone: completed["timeZone"] }
         : null,
+    lastModifiedDateTime: typeof row["lastModifiedDateTime"] === "string" ? row["lastModifiedDateTime"] : null,
     removed,
   };
 }
@@ -710,6 +725,35 @@ async function applyMappedChange(
   });
 }
 
+function connectionStillEligible(
+  expected: InboundConnection,
+  live: InboundConnection | null,
+): live is InboundConnection {
+  return Boolean(
+    live &&
+      live.id === expected.id &&
+      live.status === "CONNECTED" &&
+      live.taskSyncEnabled &&
+      live.todoListId === expected.todoListId &&
+      hasTasksReadWrite(live.scopes),
+  );
+}
+
+async function resetExpiredDelta(
+  runtime: InboundRuntime,
+  connection: InboundConnection,
+  resource: string,
+  clearList: boolean,
+): Promise<void> {
+  await runtime.store.clearCursor(connection.id, resource);
+  const live = (await runtime.store.findConnection(connection.userId)) ?? connection;
+  await runtime.store.saveConnection({
+    ...live,
+    inboundBaselineAt: null,
+    todoListId: clearList ? null : live.todoListId,
+  });
+}
+
 export async function processInboundJob(job: InboundJob, runtime: InboundRuntime): Promise<void> {
   const now = runtime.now();
   const leaseOwner = job.leaseOwner;
@@ -720,7 +764,7 @@ export async function processInboundJob(job: InboundJob, runtime: InboundRuntime
     await finish({ ...job, status: "QUEUED", leaseOwner: null, leaseUntil: null, updatedAt: now });
     return;
   }
-  const connection = await runtime.store.findConnection(job.userId);
+  let connection = await runtime.store.findConnection(job.userId);
   if (!connection || connection.status !== "CONNECTED" || !connection.taskSyncEnabled) {
     await finish(requeue(job, now, "Microsoft 365 task sync is not connected", null, "CANCELLED"));
     return;
@@ -738,6 +782,12 @@ export async function processInboundJob(job: InboundJob, runtime: InboundRuntime
     await finish(requeue(job, now, "Microsoft To Do list is not ready", null, "QUEUED"));
     return;
   }
+  if (job.payload.listId && job.payload.listId !== listId) {
+    await finish(
+      requeue(job, now, "Microsoft To Do list changed during inbound sync", null, "CANCELLED"),
+    );
+    return;
+  }
 
   const tokenResult = await runtime.tokenFor(connection);
   if (!tokenResult.ok) {
@@ -748,10 +798,44 @@ export async function processInboundJob(job: InboundJob, runtime: InboundRuntime
   const resource = inboundCursorResource(listId);
   const baseline = !connection.inboundBaselineAt || job.payload.baseline === true;
   let token = tokenResult.accessToken;
-  let staged = [...(job.payload.staged ?? [])];
+  let staged = coalesceDeltaItems(job.payload.staged ?? []);
+  let appliedIds = [...(job.payload.appliedIds ?? [])];
   let nextLink = job.payload.nextLink ?? null;
   let pendingDeltaLink = job.payload.pendingDeltaLink ?? null;
-  const seen = new Set(staged.map((item) => item.id));
+
+  const persistProgress = async (extra?: Partial<InboundJob>) => {
+    await finish({
+      ...job,
+      status: "RUNNING",
+      leaseOwner,
+      updatedAt: runtime.now(),
+      ...extra,
+      payload: {
+        listId,
+        staged,
+        appliedIds,
+        nextLink,
+        pendingDeltaLink,
+        baseline,
+      },
+    });
+  };
+
+  const handleDeltaFailure = async (hold: InboundJob) => {
+    const expired = hold.lastError?.includes("delta cursor expired") || hold.lastError?.includes("list was not found");
+    if (expired) {
+      await resetExpiredDelta(runtime, connection!, resource, Boolean(hold.lastError?.includes("list was not found")));
+      await finish({
+        ...requeue(job, runtime.now(), hold.lastError ?? "Microsoft To Do delta failed", null, "QUEUED"),
+        payload: { listId, baseline: true },
+      });
+      return;
+    }
+    await finish({
+      ...requeue(job, runtime.now(), hold.lastError ?? "Microsoft To Do delta failed", null, hold.status === "FAILED" ? "FAILED" : "QUEUED"),
+      payload: { listId, staged, appliedIds, nextLink, pendingDeltaLink, baseline },
+    });
+  };
 
   if (staged.length === 0 && !nextLink && !pendingDeltaLink) {
     const existing = await runtime.store.getCursor(connection.id, resource);
@@ -761,66 +845,72 @@ export async function processInboundJob(job: InboundJob, runtime: InboundRuntime
         : `/me/todo/lists/${encodeURIComponent(listId)}/tasks/delta?$top=${MICROSOFT_TODO_INBOUND_PAGE_SIZE}`;
     const page = await fetchDeltaPage(runtime, connection, listId, start, token);
     if (!page.ok) {
-      if (page.hold.lastError?.includes("delta cursor expired") || page.hold.lastError?.includes("list was not found")) {
-        await runtime.store.clearCursor(connection.id, resource);
-        await runtime.store.saveConnection({
-          ...connection,
-          inboundBaselineAt: null,
-          todoListId: page.hold.lastError.includes("list was not found") ? null : connection.todoListId,
-        });
-      }
-      await finish(requeue(job, now, page.hold.lastError ?? "Microsoft To Do delta failed", null, page.hold.status));
+      await handleDeltaFailure(page.hold);
       return;
     }
     token = page.token;
-    for (const item of page.items) {
-      if (seen.has(item.id)) continue;
-      seen.add(item.id);
-      staged.push(item);
-    }
+    staged = absorbDeltaPage(staged, page.items);
     nextLink = page.nextLink;
     pendingDeltaLink = page.deltaLink;
+    await persistProgress();
   }
 
   while (nextLink) {
+    const live = await runtime.store.findConnection(job.userId);
+    if (!connectionStillEligible(connection, live)) {
+      await finish(requeue(job, runtime.now(), "Microsoft connection changed during inbound sync", null, "CANCELLED"));
+      return;
+    }
+    connection = live;
     const page = await fetchDeltaPage(runtime, connection, listId, nextLink, token);
     if (!page.ok) {
-      await finish({
-        ...requeue(job, now, page.hold.lastError ?? "Microsoft To Do delta page failed", null, page.hold.status === "FAILED" ? "FAILED" : "QUEUED"),
-        payload: { listId, staged, nextLink, pendingDeltaLink, baseline },
-      });
+      await handleDeltaFailure(page.hold);
       return;
     }
     token = page.token;
-    for (const item of page.items) {
-      if (seen.has(item.id)) continue;
-      seen.add(item.id);
-      staged.push(item);
-    }
+    staged = absorbDeltaPage(staged, page.items);
     nextLink = page.nextLink;
     if (page.deltaLink) pendingDeltaLink = page.deltaLink;
-    await finish({
-      ...job,
-      status: "RUNNING",
-      leaseOwner,
-      updatedAt: runtime.now(),
-      payload: { listId, staged, nextLink, pendingDeltaLink, baseline },
-    });
+    await persistProgress();
   }
 
+  staged = coalesceDeltaItems(staged);
+  const appliedSet = new Set(appliedIds);
   let deferred = false;
   let applied = 0;
   let conflicts = 0;
-  const remaining: MicrosoftTodoInboundFields[] = [];
   for (const item of staged) {
+    if (appliedSet.has(item.id)) continue;
+    const live = await runtime.store.findConnection(job.userId);
+    if (!connectionStillEligible(connection, live)) {
+      await finish({
+        ...requeue(job, runtime.now(), "Microsoft connection changed during inbound sync", null, "CANCELLED"),
+        payload: { listId, staged, appliedIds, nextLink: null, pendingDeltaLink, baseline },
+      });
+      return;
+    }
+    connection = live;
+    if (!runtime.graphAllowed()) {
+      await finish({
+        ...job,
+        status: "QUEUED",
+        leaseOwner: null,
+        leaseUntil: null,
+        updatedAt: runtime.now(),
+        payload: { listId, staged, appliedIds, nextLink: null, pendingDeltaLink, baseline },
+      });
+      return;
+    }
     const result = await applyMappedChange(runtime, connection, item, baseline);
     if (result === "deferred") {
       deferred = true;
-      remaining.push(item);
       continue;
     }
+    appliedIds = [...appliedIds, item.id];
+    appliedSet.add(item.id);
     if (result === "applied") applied += 1;
     if (result === "conflict" || result === "removed") conflicts += 1;
+    await persistProgress();
   }
 
   if (deferred) {
@@ -833,7 +923,15 @@ export async function processInboundJob(job: InboundJob, runtime: InboundRuntime
       leaseUntil: null,
       lastError: "Waiting for outbound Microsoft sync on the same task to finish",
       updatedAt: runtime.now(),
-      payload: { listId, staged: remaining, nextLink: null, pendingDeltaLink, baseline },
+      payload: {
+        listId,
+        // Keep the full coalesced stage; appliedIds makes resume idempotent.
+        staged,
+        appliedIds,
+        nextLink: null,
+        pendingDeltaLink,
+        baseline,
+      },
     });
     return;
   }
@@ -843,27 +941,51 @@ export async function processInboundJob(job: InboundJob, runtime: InboundRuntime
     return;
   }
 
-  await runtime.store.saveCursor(connection.id, resource, pendingDeltaLink);
-  const latest = (await runtime.store.findConnection(connection.userId)) ?? connection;
-  await runtime.store.saveConnection({
-    ...latest,
-    lastInboundSyncAt: runtime.now(),
-    inboundBaselineAt: latest.inboundBaselineAt ?? runtime.now(),
-    taskInboundEnabledAt: latest.taskInboundEnabledAt ?? runtime.now(),
-    lastError: null,
+  const latest = await runtime.store.findConnection(job.userId);
+  if (!connectionStillEligible(connection, latest)) {
+    await finish({
+      ...requeue(job, runtime.now(), "Microsoft connection changed before inbound cursor commit", null, "CANCELLED"),
+      payload: { listId, staged, appliedIds, nextLink: null, pendingDeltaLink, baseline },
+    });
+    return;
+  }
+
+  if (!leaseOwner) {
+    await finish(requeue(job, runtime.now(), "Inbound lease was missing at cursor commit", null, "QUEUED"));
+    return;
+  }
+
+  const finalized = await runtime.store.finalizeInboundRound({
+    job: {
+      ...job,
+      status: "SUCCEEDED",
+      attempt: job.attempt,
+      runAfter: runtime.now(),
+      leaseOwner: null,
+      leaseUntil: null,
+      lastError: null,
+      updatedAt: runtime.now(),
+      payload: { listId, baseline: false },
+    },
+    requireLeaseOwner: leaseOwner,
+    connection: {
+      ...latest,
+      lastInboundSyncAt: runtime.now(),
+      inboundBaselineAt: latest.inboundBaselineAt ?? runtime.now(),
+      taskInboundEnabledAt: latest.taskInboundEnabledAt ?? runtime.now(),
+      lastError: null,
+    },
+    resource,
+    deltaLink: pendingDeltaLink,
+    now: runtime.now(),
   });
-  await finish({
-    ...job,
-    status: "SUCCEEDED",
-    leaseOwner: null,
-    leaseUntil: null,
-    lastError: null,
-    updatedAt: runtime.now(),
-    payload: { listId, baseline: false },
-  });
+  if (!finalized) {
+    // Lease lost — another worker owns the job. Do not advance cursor from this worker.
+    return;
+  }
   await runtime.store.appendEvent({
-    userId: connection.userId,
-    connectionId: connection.id,
+    userId: latest.userId,
+    connectionId: latest.id,
     kind: baseline ? "TODO_INBOUND_BASELINE" : "TODO_INBOUND_SYNCED",
     message: baseline
       ? `Inbound baseline stored ${staged.length} Microsoft changes without applying historical CRM edits`
@@ -908,8 +1030,8 @@ export function inboundGraphAllowedFromEnv(): boolean {
 
 /** Helpers exported for tests. */
 export const inboundTestHooks = {
-  mapMicrosoftImportance,
-  inboundDueAtFromMicrosoft,
+  absorbDeltaPage,
+  coalesceDeltaItems,
   planInboundFieldUpdates,
   snapshotsEqual,
 };

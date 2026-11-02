@@ -24,6 +24,8 @@ function asPayload(value: Prisma.JsonValue | null): InboundJobPayload {
   const row = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   const stagedRaw = Array.isArray(row["staged"]) ? row["staged"] : [];
   const staged = stagedRaw.filter((item) => item && typeof item === "object") as NonNullable<InboundJobPayload["staged"]>;
+  const appliedRaw = Array.isArray(row["appliedIds"]) ? row["appliedIds"] : [];
+  const appliedIds = appliedRaw.filter((item): item is string => typeof item === "string");
   const payload: InboundJobPayload = {};
   if (typeof row["listId"] === "string") payload.listId = row["listId"];
   if (typeof row["nextLink"] === "string" || row["nextLink"] === null) payload.nextLink = row["nextLink"] as string | null;
@@ -33,6 +35,7 @@ function asPayload(value: Prisma.JsonValue | null): InboundJobPayload {
   if (row["baseline"] === true) payload.baseline = true;
   if (row["forceCheck"] === true) payload.forceCheck = true;
   if (staged.length) payload.staged = staged;
+  if (appliedIds.length) payload.appliedIds = appliedIds;
   return payload;
 }
 
@@ -367,6 +370,48 @@ export function createPrismaInboundStore(): InboundStore {
     },
     async clearCursor(connectionId, resource) {
       await prisma.microsoftSyncCursor.deleteMany({ where: { connectionId, resource } });
+    },
+    async finalizeInboundRound(input) {
+      const encrypted = encryptMicrosoftToken(input.deltaLink);
+      return prisma.$transaction(async (tx) => {
+        const leased = await tx.microsoftSyncJob.updateMany({
+          where: {
+            id: input.job.id,
+            leaseOwner: input.requireLeaseOwner,
+            status: "RUNNING",
+          },
+          data: {
+            status: "SUCCEEDED",
+            attempt: input.job.attempt,
+            runAfter: input.job.runAfter,
+            leaseOwner: null,
+            leaseUntil: null,
+            lastError: null,
+            payload: input.job.payload as Prisma.InputJsonValue,
+          },
+        });
+        if (leased.count !== 1) return false;
+        await tx.microsoftSyncCursor.upsert({
+          where: { connectionId_resource: { connectionId: input.connection.id, resource: input.resource } },
+          create: {
+            connectionId: input.connection.id,
+            resource: input.resource,
+            deltaLinkEncrypted: encrypted,
+          },
+          update: { deltaLinkEncrypted: encrypted },
+        });
+        await tx.microsoftAccountConnection.update({
+          where: { id: input.connection.id },
+          data: {
+            lastInboundSyncAt: input.connection.lastInboundSyncAt,
+            inboundBaselineAt: input.connection.inboundBaselineAt,
+            taskInboundEnabledAt: input.connection.taskInboundEnabledAt,
+            lastError: null,
+            // Never write stale list/token fields from a long-running worker.
+          },
+        });
+        return true;
+      });
     },
     async appendEvent(input) {
       await prisma.microsoftSyncEvent.create({

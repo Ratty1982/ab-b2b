@@ -78,6 +78,14 @@ If Graph reports `@removed` for a mapped task:
 
 Kind `TODO_INBOUND`, dedupe key `todo-inbound:{connectionId}`. The existing one-minute process timer also starts the inbound scheduler. Flag off → no claim, no Graph, no CRM write.
 
+### Delta aggregation
+
+Microsoft Graph may return the same todoTask more than once in a round and does not guarantee order. Inbound coalesces by Microsoft task id while following `@odata.nextLink` page order: later occurrences overlay earlier partials; `@removed` replaces prior updates; a later non-removed item after `@removed` is treated as a restore. When Graph includes `lastModifiedDateTime`, the newer timestamp wins over an older partial that appears later in the page.
+
+### Crash recovery
+
+Staged coalesced items, `appliedIds`, `nextLink`, and `pendingDeltaLink` are persisted on the job while the lease is held. Already-applied Microsoft ids are skipped on resume. The deltaLink, inbound timestamps, and job `SUCCEEDED` status are written in one lease-guarded transaction (`finalizeInboundRound`). A lost lease does not advance the cursor. An expired delta token (`410`) discards incomplete staged work, clears the cursor, and forces a fresh baseline rather than applying a partial round.
+
 ## Environment
 
 ```

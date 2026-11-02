@@ -114,6 +114,10 @@ function memory(options?: {
     events: [] as string[],
     outboundRunning: options?.outboundRunning ?? false,
     updates: 0,
+    failSaveJobAfter: null as null | number,
+    saveJobCount: 0,
+    failFinalize: false,
+    rejectLeaseOnFinalize: false,
   };
   const store: InboundStore = {
     async findConnection() {
@@ -125,11 +129,21 @@ function memory(options?: {
     async claimInboundJobs() {
       return state.jobs.filter((item) => item.status === "QUEUED").slice(0, 5).map((item) => ({
         ...item,
-        status: "RUNNING",
+        status: "RUNNING" as const,
         leaseOwner: "worker-1",
       }));
     },
-    async saveJob(next) {
+    async saveJob(next, opts) {
+      state.saveJobCount += 1;
+      if (state.failSaveJobAfter != null && state.saveJobCount > state.failSaveJobAfter) {
+        throw new Error("injected saveJob failure");
+      }
+      if (opts?.requireLeaseOwner) {
+        const current = state.jobs.find((item) => item.id === next.id);
+        if (!current || current.status !== "RUNNING" || current.leaseOwner !== opts.requireLeaseOwner) {
+          return false;
+        }
+      }
       const idx = state.jobs.findIndex((item) => item.id === next.id);
       if (idx >= 0) state.jobs[idx] = next;
       else state.jobs.push(next);
@@ -173,6 +187,19 @@ function memory(options?: {
     },
     async clearCursor() {
       state.cursor = null;
+    },
+    async finalizeInboundRound(input) {
+      if (state.failFinalize) throw new Error("injected finalize failure");
+      if (state.rejectLeaseOnFinalize) return false;
+      const current = state.jobs.find((item) => item.id === input.job.id);
+      if (!current || current.status !== "RUNNING" || current.leaseOwner !== input.requireLeaseOwner) {
+        return false;
+      }
+      state.cursor = input.deltaLink;
+      state.connection = input.connection;
+      const idx = state.jobs.findIndex((item) => item.id === input.job.id);
+      if (idx >= 0) state.jobs[idx] = input.job;
+      return true;
     },
     async appendEvent(input) {
       state.events.push(input.kind);
@@ -524,5 +551,224 @@ describe("Microsoft To Do inbound sync", () => {
       id: "ms-1",
       removed: true,
     });
+  });
+
+  it("keeps the latest repeated Microsoft task across paginated delta pages", async () => {
+    const { state, store } = memory({
+      connection: connection({ inboundBaselineAt: NOW }),
+      mapping: mapping({
+        lastCrmRevision: "2026-10-15T00:00:00.000Z",
+        syncedSnapshot: {
+          title: "Call the buyer",
+          description: "Bring samples",
+          status: "OPEN",
+          priority: "NORMAL",
+          dueAt: "2026-11-02T12:00:00.000Z",
+          completedAt: null,
+        },
+      }),
+      cursor: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$deltatoken=start`,
+    });
+    state.jobs = [job()];
+    const graph = graphOf((path) => {
+      if (path.includes("$skiptoken=1")) {
+        return deltaPage(
+          [{ id: "ms-1", title: "Final title", status: "completed", lastModifiedDateTime: "2026-11-01T12:30:00Z" }],
+          { delta: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$deltatoken=done` },
+        );
+      }
+      return deltaPage(
+        [{ id: "ms-1", title: "First title", status: "notStarted", lastModifiedDateTime: "2026-11-01T12:00:00Z" }],
+        { next: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$skiptoken=1` },
+      );
+    });
+    await processInboundJob(job(), runtime(store, graph));
+    expect(state.task?.title).toBe("Final title");
+    expect(state.task?.status).toBe("DONE");
+    expect(state.jobs[0]?.status).toBe("SUCCEEDED");
+  });
+
+  it("applies deletion when a task is updated then removed later in the round", async () => {
+    const { state, store } = memory({
+      connection: connection({ inboundBaselineAt: NOW }),
+      mapping: mapping({
+        lastCrmRevision: "2026-10-15T00:00:00.000Z",
+        syncedSnapshot: {
+          title: "Call the buyer",
+          description: "Bring samples",
+          status: "OPEN",
+          priority: "NORMAL",
+          dueAt: "2026-11-02T12:00:00.000Z",
+          completedAt: null,
+        },
+      }),
+      cursor: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$deltatoken=start`,
+    });
+    state.jobs = [job()];
+    await processInboundJob(
+      job(),
+      runtime(
+        store,
+        graphOf(() =>
+          deltaPage(
+            [
+              { id: "ms-1", title: "Updated", status: "completed" },
+              { id: "ms-1", "@removed": { reason: "deleted" } },
+            ],
+            { delta: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$deltatoken=done` },
+          ),
+        ),
+      ),
+    );
+    expect(state.updates).toBe(0);
+    expect(state.task?.id).toBe("task-1");
+    expect(state.mapping?.syncStatus).toBe("REMOVED");
+  });
+
+  it("resumes after a crash mid-apply without duplicating CRM writes", async () => {
+    const { state, store } = memory({
+      connection: connection({ inboundBaselineAt: NOW }),
+      mapping: mapping({
+        lastCrmRevision: "2026-10-15T00:00:00.000Z",
+        syncedSnapshot: {
+          title: "Call the buyer",
+          description: "Bring samples",
+          status: "OPEN",
+          priority: "NORMAL",
+          dueAt: "2026-11-02T12:00:00.000Z",
+          completedAt: null,
+        },
+      }),
+    });
+    const stagedPayload = {
+      listId: LIST_ID,
+      staged: [
+        {
+          id: "ms-1",
+          etag: "e2",
+          title: "Call the buyer today",
+          bodyContent: "Updated notes",
+          status: "completed" as const,
+          importance: "high" as const,
+          dueDateTime: { dateTime: "2026-11-04T00:00:00", timeZone: "UTC" },
+          completedDateTime: { dateTime: "2026-11-01T12:00:00", timeZone: "UTC" },
+          lastModifiedDateTime: "2026-11-01T12:00:00Z",
+          removed: false,
+        },
+      ],
+      appliedIds: ["ms-1"],
+      nextLink: null,
+      pendingDeltaLink: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$deltatoken=done`,
+      baseline: false,
+    };
+    state.jobs = [job({ payload: stagedPayload })];
+    await processInboundJob(job({ payload: stagedPayload }), runtime(store, graphOf(() => ({ status: 500, json: null }))));
+    expect(state.updates).toBe(0);
+    expect(state.jobs[0]?.status).toBe("SUCCEEDED");
+    expect(state.cursor).toContain("$deltatoken=done");
+  });
+
+  it("does not advance the cursor when finalize loses the lease", async () => {
+    const { state, store } = memory({
+      connection: connection({ inboundBaselineAt: NOW }),
+      cursor: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$deltatoken=start`,
+    });
+    state.rejectLeaseOnFinalize = true;
+    state.mapping = null;
+    state.jobs = [job()];
+    const before = state.cursor;
+    await processInboundJob(
+      job(),
+      runtime(
+        store,
+        graphOf(() =>
+          deltaPage([], {
+            delta: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$deltatoken=done`,
+          }),
+        ),
+      ),
+    );
+    expect(state.cursor).toBe(before);
+    expect(state.jobs[0]?.status).toBe("RUNNING");
+  });
+
+  it("cancels when the connection is revoked during processing", async () => {
+    const { state, store } = memory({
+      connection: connection({ inboundBaselineAt: NOW }),
+      cursor: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$deltatoken=start`,
+      mapping: mapping({
+        lastCrmRevision: "2026-10-15T00:00:00.000Z",
+        syncedSnapshot: {
+          title: "Call the buyer",
+          description: "Bring samples",
+          status: "OPEN",
+          priority: "NORMAL",
+          dueAt: "2026-11-02T12:00:00.000Z",
+          completedAt: null,
+        },
+      }),
+    });
+    state.jobs = [job()];
+    const originalFind = store.findConnection.bind(store);
+    let checks = 0;
+    store.findConnection = async () => {
+      checks += 1;
+      if (checks > 1) {
+        return connection({ status: "REVOKED", inboundBaselineAt: NOW });
+      }
+      return originalFind("user-a");
+    };
+    await processInboundJob(
+      job(),
+      runtime(
+        store,
+        graphOf(() =>
+          deltaPage([{ id: "ms-1", title: "X", status: "completed" }], {
+            delta: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$deltatoken=done`,
+          }),
+        ),
+      ),
+    );
+    expect(state.updates).toBe(0);
+    expect(state.jobs[0]?.status).toBe("CANCELLED");
+  });
+
+  it("discards incomplete staged work when the delta cursor expires mid-round", async () => {
+    const { state, store } = memory({
+      connection: connection({ inboundBaselineAt: NOW }),
+    });
+    const payload = {
+      listId: LIST_ID,
+      staged: [
+        {
+          id: "ms-1",
+          etag: null,
+          title: "Partial",
+          bodyContent: null,
+          status: "completed" as const,
+          importance: null,
+          dueDateTime: null,
+          completedDateTime: null,
+          lastModifiedDateTime: null,
+          removed: false,
+        },
+      ],
+      nextLink: `https://graph.microsoft.com/v1.0/me/todo/lists/${LIST_ID}/tasks/delta?$skiptoken=1`,
+      pendingDeltaLink: null,
+      baseline: false,
+    };
+    state.jobs = [job({ payload })];
+    await processInboundJob(
+      job({ payload }),
+      runtime(
+        store,
+        graphOf(() => ({ status: 410, json: {} })),
+      ),
+    );
+    expect(state.cursor).toBeNull();
+    expect(state.connection?.inboundBaselineAt).toBeNull();
+    expect(state.jobs[0]?.payload.staged).toBeUndefined();
+    expect(state.jobs[0]?.payload.baseline).toBe(true);
+    expect(state.updates).toBe(0);
   });
 });

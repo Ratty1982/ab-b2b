@@ -51,8 +51,69 @@ export type MicrosoftTodoInboundFields = {
   importance: "low" | "normal" | "high" | null;
   dueDateTime: { dateTime: string; timeZone: string } | null;
   completedDateTime: { dateTime: string; timeZone: string } | null;
+  /** Present when Graph includes lastModifiedDateTime; used to prefer newer partials. */
+  lastModifiedDateTime: string | null;
   removed: boolean;
 };
+
+function parseModifiedAt(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Merge one Graph delta occurrence into the accumulated state for that task id.
+ * Microsoft may return the same entity multiple times and may omit unchanged fields.
+ * Removals replace prior updates. A later non-removed item after @removed is a restore.
+ * When both sides are updates, prefer the newer lastModifiedDateTime when present;
+ * otherwise overlay the later sequence occurrence onto the earlier one.
+ */
+export function mergeDeltaOccurrence(
+  previous: MicrosoftTodoInboundFields | undefined,
+  incoming: MicrosoftTodoInboundFields,
+): MicrosoftTodoInboundFields {
+  if (incoming.removed) return { ...incoming };
+  if (!previous || previous.removed) return { ...incoming };
+
+  const prevMs = parseModifiedAt(previous.lastModifiedDateTime);
+  const nextMs = parseModifiedAt(incoming.lastModifiedDateTime);
+  const incomingIsOlder = prevMs != null && nextMs != null && nextMs < prevMs;
+  const base = incomingIsOlder ? incoming : previous;
+  const overlay = incomingIsOlder ? previous : incoming;
+  return {
+    id: overlay.id,
+    removed: false,
+    etag: overlay.etag ?? base.etag,
+    title: overlay.title ?? base.title,
+    bodyContent: overlay.bodyContent ?? base.bodyContent,
+    status: overlay.status ?? base.status,
+    importance: overlay.importance ?? base.importance,
+    dueDateTime: overlay.dueDateTime ?? base.dueDateTime,
+    completedDateTime: overlay.completedDateTime ?? base.completedDateTime,
+    lastModifiedDateTime: overlay.lastModifiedDateTime ?? base.lastModifiedDateTime,
+  };
+}
+
+/**
+ * Fold a delta page stream into one record per Microsoft task id.
+ * Callers must feed pages in nextLink order; duplicates within or across pages are coalesced.
+ */
+export function coalesceDeltaItems(items: readonly MicrosoftTodoInboundFields[]): MicrosoftTodoInboundFields[] {
+  const byId = new Map<string, MicrosoftTodoInboundFields>();
+  for (const item of items) {
+    byId.set(item.id, mergeDeltaOccurrence(byId.get(item.id), item));
+  }
+  return [...byId.values()];
+}
+
+/** Append page items into an existing coalesced list without dropping newer duplicates. */
+export function absorbDeltaPage(
+  staged: readonly MicrosoftTodoInboundFields[],
+  pageItems: readonly MicrosoftTodoInboundFields[],
+): MicrosoftTodoInboundFields[] {
+  return coalesceDeltaItems([...staged, ...pageItems]);
+}
 
 export function mapMicrosoftImportance(importance: MicrosoftTodoInboundFields["importance"]): "LOW" | "NORMAL" | "HIGH" | null {
   if (importance === "low") return "LOW";

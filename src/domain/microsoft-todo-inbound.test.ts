@@ -3,16 +3,35 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  absorbDeltaPage,
   assertTodoDeltaGraphUrl,
+  coalesceDeltaItems,
   inboundCursorResource,
   inboundDueAtFromMicrosoft,
   inboundGraphAllowed,
   isMicrosoftTodoInboundEnabled,
   mapMicrosoftStatusToCrm,
+  mergeDeltaOccurrence,
   microsoftInboundSyncIndicator,
   planInboundFieldUpdates,
   snapshotFromCrmTask,
+  type MicrosoftTodoInboundFields,
 } from "@/domain/microsoft-todo-inbound";
+
+function deltaItem(partial: Partial<MicrosoftTodoInboundFields> & Pick<MicrosoftTodoInboundFields, "id">): MicrosoftTodoInboundFields {
+  return {
+    etag: null,
+    title: null,
+    bodyContent: null,
+    status: null,
+    importance: null,
+    dueDateTime: null,
+    completedDateTime: null,
+    lastModifiedDateTime: null,
+    removed: false,
+    ...partial,
+  };
+}
 
 describe("Microsoft To Do inbound flags", () => {
   it("stays off unless both flags are explicitly enabled and never implies outbound", () => {
@@ -117,6 +136,45 @@ describe("Microsoft To Do inbound mapping policy", () => {
         syncStatus: "REMOVED",
       }),
     ).toBe("Removed");
+  });
+
+  it("coalesces repeated Microsoft task ids without dropping newer updates or removals", () => {
+    const updatedTwice = coalesceDeltaItems([
+      deltaItem({ id: "ms-1", title: "First", status: "notStarted", lastModifiedDateTime: "2026-11-01T10:00:00Z" }),
+      deltaItem({ id: "ms-1", title: "Second", status: "inProgress", lastModifiedDateTime: "2026-11-01T11:00:00Z" }),
+    ]);
+    expect(updatedTwice).toHaveLength(1);
+    expect(updatedTwice[0]).toMatchObject({ title: "Second", status: "inProgress" });
+
+    const updatedThenDeleted = coalesceDeltaItems([
+      deltaItem({ id: "ms-1", title: "Live", status: "notStarted" }),
+      deltaItem({ id: "ms-1", removed: true }),
+    ]);
+    expect(updatedThenDeleted[0]?.removed).toBe(true);
+
+    const deletedThenReturned = coalesceDeltaItems([
+      deltaItem({ id: "ms-1", removed: true }),
+      deltaItem({ id: "ms-1", title: "Restored", status: "notStarted" }),
+    ]);
+    expect(deletedThenReturned[0]).toMatchObject({ removed: false, title: "Restored" });
+
+    const unchangedRepeat = coalesceDeltaItems([
+      deltaItem({ id: "ms-1", title: "Same", status: "notStarted", etag: "e1" }),
+      deltaItem({ id: "ms-1", title: "Same", status: "notStarted", etag: "e1" }),
+    ]);
+    expect(unchangedRepeat).toHaveLength(1);
+
+    const acrossPages = absorbDeltaPage(
+      [deltaItem({ id: "ms-1", title: "Page1", status: "notStarted" })],
+      [deltaItem({ id: "ms-1", status: "completed" })],
+    );
+    expect(acrossPages[0]).toMatchObject({ title: "Page1", status: "completed" });
+
+    const olderLastModifiedLater = mergeDeltaOccurrence(
+      deltaItem({ id: "ms-1", title: "Newer", status: "completed", lastModifiedDateTime: "2026-11-01T12:00:00Z" }),
+      deltaItem({ id: "ms-1", title: "Older", status: "notStarted", lastModifiedDateTime: "2026-11-01T11:00:00Z" }),
+    );
+    expect(olderLastModifiedLater).toMatchObject({ title: "Newer", status: "completed" });
   });
 
   it("keeps the inbound migration additive", () => {
