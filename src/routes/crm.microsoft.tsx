@@ -11,7 +11,10 @@ import {
   disconnectMicrosoft365Fn,
   getMicrosoft365StatusFn,
   recheckMicrosoftTodoUncertainFn,
+  recreateMicrosoftTodoInboundMappingFn,
+  requestMicrosoftTodoInboundCheckFn,
   retryMicrosoftTodoOutboundFn,
+  unlinkMicrosoftTodoInboundMappingFn,
   updateMicrosoft365PreferencesFn,
 } from "@/server/microsoft-365/fns";
 
@@ -148,6 +151,30 @@ function CrmMicrosoftPage() {
             void approveMicrosoftTodoUncertainCreateFn({
               data: { jobId, acknowledgedDuplicateRisk: true },
             }).then((result) => {
+              setBusy(false);
+              if (!result.ok) setError(result.error);
+              load();
+            });
+          }}
+          onRequestInboundCheck={() => {
+            setBusy(true);
+            void requestMicrosoftTodoInboundCheckFn().then((result) => {
+              setBusy(false);
+              if (!result.ok) setError(result.error);
+              load();
+            });
+          }}
+          onUnlinkInboundMapping={(mappingId) => {
+            setBusy(true);
+            void unlinkMicrosoftTodoInboundMappingFn({ data: { mappingId } }).then((result) => {
+              setBusy(false);
+              if (!result.ok) setError(result.error);
+              load();
+            });
+          }}
+          onRecreateInboundMapping={(mappingId) => {
+            setBusy(true);
+            void recreateMicrosoftTodoInboundMappingFn({ data: { mappingId } }).then((result) => {
               setBusy(false);
               if (!result.ok) setError(result.error);
               load();

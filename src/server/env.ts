@@ -66,6 +66,8 @@ const envSchema = z.object({
   MICROSOFT_365_ENCRYPTION_KEY: z.string().optional(),
   /** Outbound CRM → Microsoft To Do. Off unless true/1/on/yes, and only when the main Microsoft flag is also on. */
   MICROSOFT_365_TASK_OUTBOUND_ENABLED: z.string().optional(),
+  /** Inbound Microsoft To Do → CRM. Off unless true/1/on/yes, and only when the main Microsoft flag is also on. Does not enable outbound. */
+  MICROSOFT_365_TASK_INBOUND_ENABLED: z.string().optional(),
 });
 
 export type ServerEnv = z.infer<typeof envSchema>;

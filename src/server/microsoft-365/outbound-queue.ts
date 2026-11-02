@@ -6,6 +6,7 @@ import { hasTasksReadWrite, outboundGraphAllowed } from "@/domain/microsoft-todo
 import { sanitizeMicrosoftMessage } from "@/domain/microsoft-365-crm";
 import { prisma } from "@/infra/database/client";
 import { createPrismaOutboundStore, enqueueOutboundJob, prepareReleaseJob } from "@/server/microsoft-365/outbound-prisma";
+import { isOutboundSuppressed } from "@/server/microsoft-365/outbound-suppress";
 import { processOutboundJob, type OutboundRuntime } from "@/server/microsoft-365/outbound-sync";
 import { productionOutboundRuntime, readOutboundFlags } from "@/server/microsoft-365/outbound-runtime";
 import type { OutboundConnection } from "@/server/microsoft-365/outbound-sync";
@@ -38,6 +39,7 @@ function ready(connection: OutboundConnection | null): connection is OutboundCon
 }
 
 export async function notifyCrmTaskOutbound(input: OutboundNotice, deps: QueueDeps = defaultQueueDeps()): Promise<void> {
+  if (isOutboundSuppressed()) return;
   if (!deps.graphAllowed()) return;
   try {
     const taskRevision = input.updatedAt?.toISOString();

@@ -301,12 +301,13 @@ export function microsoftSyncIndicator(input: {
   viewerId: string;
   assigneeId: string | null;
   canSeeOthers: boolean;
-  syncStatus: "PENDING" | "SYNCED" | "FAILED" | "CONFLICT" | "SKIPPED" | "TOMBSTONED" | null;
-}): "Pending" | "Synced" | "Failed" | "Review" | null {
+  syncStatus: "PENDING" | "SYNCED" | "FAILED" | "CONFLICT" | "SKIPPED" | "TOMBSTONED" | "REMOVED" | null;
+}): "Pending" | "Synced" | "Failed" | "Review" | "Removed" | null {
   const allowed = input.assigneeId === input.viewerId || input.canSeeOthers;
   if (!allowed || !input.syncStatus || input.syncStatus === "TOMBSTONED" || input.syncStatus === "SKIPPED") return null;
   if (input.syncStatus === "SYNCED") return "Synced";
   if (input.syncStatus === "CONFLICT") return "Review";
+  if (input.syncStatus === "REMOVED") return "Removed";
   if (input.syncStatus === "FAILED") return "Failed";
   return "Pending";
 }

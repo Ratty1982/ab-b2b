@@ -17,6 +17,9 @@ export function Microsoft365Panel({
   onRetryOutbound,
   onRecheckUncertain,
   onApproveUncertainCreate,
+  onRequestInboundCheck,
+  onUnlinkInboundMapping,
+  onRecreateInboundMapping,
 }: {
   status: Microsoft365Status;
   noticeCode?: string | undefined;
@@ -32,6 +35,9 @@ export function Microsoft365Panel({
   onRetryOutbound: () => void;
   onRecheckUncertain: (jobId: string) => void;
   onApproveUncertainCreate: (jobId: string) => void;
+  onRequestInboundCheck: () => void;
+  onUnlinkInboundMapping: (mappingId: string) => void;
+  onRecreateInboundMapping: (mappingId: string) => void;
 }) {
   const notice = microsoft365ReturnNotice(noticeCode);
   const connection = status.connection;
@@ -141,16 +147,24 @@ export function Microsoft365Panel({
             <dd>{status.outbound?.engineEnabled ? "Enabled" : "Off"}</dd>
           </div>
           <div>
-            <dt className="text-steel">Waiting</dt>
+            <dt className="text-steel">Inbound engine</dt>
+            <dd>{status.inbound?.engineEnabled ? "Enabled" : "Off"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Outbound waiting</dt>
             <dd>{status.outbound?.pending ?? 0}</dd>
           </div>
           <div>
-            <dt className="text-steel">Failed</dt>
+            <dt className="text-steel">Outbound failed</dt>
             <dd>{status.outbound?.failed ?? 0}</dd>
           </div>
           <div>
-            <dt className="text-steel">Needs review</dt>
+            <dt className="text-steel">Outbound needs review</dt>
             <dd>{status.outbound?.needsReview ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Last inbound sync</dt>
+            <dd>{status.inbound?.lastInboundSyncAt ? formatWhen(status.inbound.lastInboundSyncAt) : "Not run"}</dd>
           </div>
         </dl>
         {ordinaryRetryAvailable ? (
@@ -194,6 +208,93 @@ export function Microsoft365Panel({
           >
             Allow Outlook Calendar
           </button>
+        ) : null}
+      </section>
+
+      <section className="rounded-md border border-border p-4">
+        <h2 className="font-display text-sm font-semibold uppercase tracking-tight">Inbound from Microsoft To Do</h2>
+        <p className="mt-2 text-[12px] text-steel">
+          When inbound is enabled, changes in the Automotive Brands CRM list can update completion, due date, priority,
+          title, and description on mapped CRM tasks. CRM ownership, cancellation, customers, and opportunities stay in
+          Automotive Brands. The first inbound run only baselines mappings and does not rewrite CRM history.
+        </p>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-steel">Inbound waiting</dt>
+            <dd>{status.inbound?.pending ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Inbound failed</dt>
+            <dd>{status.inbound?.failed ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Conflicts</dt>
+            <dd>{status.inbound?.conflicts ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Missing Microsoft tasks</dt>
+            <dd>{status.inbound?.removed ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Baseline</dt>
+            <dd>{status.inbound?.inboundBaselineAt ? formatWhen(status.inbound.inboundBaselineAt) : "Not completed"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Synced fields</dt>
+            <dd>{(status.inbound?.syncedFields ?? []).join(", ") || "—"}</dd>
+          </div>
+        </dl>
+        <button
+          type="button"
+          disabled={busy || !status.canConnect || !status.inbound?.engineEnabled || !connected}
+          onClick={onRequestInboundCheck}
+          className="mt-3 h-10 rounded-md border border-border px-4 text-[13px] font-bold disabled:opacity-50"
+        >
+          Request inbound sync check
+        </button>
+        {(status.inbound?.conflictsList?.length ?? 0) > 0 ? (
+          <ul className="mt-4 space-y-3">
+            {status.inbound!.conflictsList.map((row) => (
+              <li key={row.mappingId} className="rounded-md border border-border p-3 text-sm">
+                <dl className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-steel">CRM task</dt>
+                    <dd>{row.taskTitle || row.taskId || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-steel">Status</dt>
+                    <dd>{row.syncStatus}</dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-steel">Detail</dt>
+                    <dd>{row.lastError || "Needs reconciliation"}</dd>
+                  </div>
+                </dl>
+                {status.inbound?.canReconcile ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onUnlinkInboundMapping(row.mappingId)}
+                      className="h-10 rounded-md border border-border px-4 text-[13px] font-bold"
+                    >
+                      Unlink mapping
+                    </button>
+                    {row.syncStatus === "REMOVED" ? (
+                      <button
+                        type="button"
+                        disabled={busy || !status.outbound?.engineEnabled}
+                        onClick={() => onRecreateInboundMapping(row.mappingId)}
+                        className="h-10 rounded-md border border-border px-4 text-[13px] font-bold disabled:opacity-50"
+                      >
+                        Recreate in Microsoft To Do
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         ) : null}
       </section>
 
