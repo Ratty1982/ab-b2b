@@ -81,7 +81,7 @@ export function AutopartRecentSales({
       <h3 className="font-display text-base font-semibold uppercase">Import recent sales</h3>
       <p className="mt-2 max-w-3xl text-[13px] text-steel">
         Invoice and credit reports, or product-sales reports, for the verified account shown here.
-        Automatic mailbox collection stays off.
+        This is not part of sales setup. Picknotes after the historical import are collected automatically.
       </p>
       {accountCode ? (
         <p className="mt-3 text-[13px]">

@@ -5,14 +5,13 @@
 
 export type AutopartStageState = "COMPLETE" | "ACTION_REQUIRED" | "UNDER_REVIEW" | "NOT_STARTED";
 
-export type AutopartStageId = "verify" | "history" | "exceptions" | "current" | "enquiry";
+export type AutopartStageId = "verify" | "history" | "exceptions" | "enquiry";
 
 export type AutopartPrimaryAction =
   | "verify"
   | "activate"
   | "import-history"
   | "review-exceptions"
-  | "import-current"
   | "view-enquiry";
 
 export type CustomerAutopartStageInput = {
@@ -21,7 +20,6 @@ export type CustomerAutopartStageInput = {
   hasAccountCode: boolean;
   ownershipAmbiguous: boolean;
   historyStatus: "NOT_STARTED" | "REVIEW" | "COMPLETE";
-  ongoingImportCount: number;
 };
 
 export type CustomerAutopartStage = {
@@ -34,7 +32,6 @@ const STAGE_LABEL: Record<AutopartStageId, string> = {
   verify: "Verify the Autopart account",
   history: "Establish historical sales",
   exceptions: "Resolve import exceptions",
-  current: "Import current sales",
   enquiry: "View Sales Enquiry",
 };
 
@@ -64,21 +61,12 @@ export function customerAutopartStages(input: CustomerAutopartStageInput): Custo
         ? "COMPLETE"
         : "NOT_STARTED";
 
-  const current: AutopartStageState =
-    input.historyStatus !== "COMPLETE" || input.companyStatus !== "ACTIVE"
-      ? "NOT_STARTED"
-      : input.ongoingImportCount > 0
-        ? "COMPLETE"
-        : "ACTION_REQUIRED";
-
-  const enquiry: AutopartStageState =
-    input.historyStatus === "COMPLETE" || input.ongoingImportCount > 0 ? "COMPLETE" : "NOT_STARTED";
+  const enquiry: AutopartStageState = input.historyStatus === "COMPLETE" ? "COMPLETE" : "NOT_STARTED";
 
   const states: Record<AutopartStageId, AutopartStageState> = {
     verify,
     history,
     exceptions,
-    current,
     enquiry,
   };
   return (Object.keys(STAGE_LABEL) as AutopartStageId[]).map((id) => ({
@@ -93,7 +81,6 @@ export function customerAutopartPrimaryAction(input: CustomerAutopartStageInput)
   if (input.companyStatus !== "ACTIVE") return "activate";
   if (input.historyStatus === "REVIEW") return "review-exceptions";
   if (input.historyStatus === "NOT_STARTED") return "import-history";
-  if (input.ongoingImportCount === 0) return "import-current";
   return "view-enquiry";
 }
 
@@ -120,8 +107,6 @@ export function autopartPrimaryActionLabel(action: AutopartPrimaryAction): strin
       return "Import sales history";
     case "review-exceptions":
       return "Review exceptions";
-    case "import-current":
-      return "Import current sales";
     case "view-enquiry":
       return "View Sales Enquiry";
   }

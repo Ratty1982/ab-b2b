@@ -112,7 +112,6 @@ export async function getCustomerAutopartWorkspace(actorUserId: string, companyI
     hasAccountCode: Boolean(code),
     ownershipAmbiguous,
     historyStatus: storedHistory,
-    ongoingImportCount,
   };
 
   return {

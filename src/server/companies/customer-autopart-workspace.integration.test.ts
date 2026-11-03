@@ -64,7 +64,7 @@ describe("customer Autopart workspace", () => {
     expect(snapshot.coverage.productLineCount).toBe(0);
   });
 
-  it("keeps exception review ahead of current sales and scopes import details", async () => {
+  it("keeps exception review ahead of Sales Enquiry and scopes import details", async () => {
     const adminId = await ensureUser(`autopart.workspace.${stamp}@example.invalid`, ["SUPER_ADMIN"]);
     const other = await prisma.company.create({
       data: {
@@ -77,7 +77,8 @@ describe("customer Autopart workspace", () => {
     });
     const snapshot = await getCustomerAutopartWorkspace(adminId, other.id);
     expect(snapshot.primaryAction).toBe("review-exceptions");
-    expect(snapshot.stages.find((stage) => stage.id === "current")?.state).toBe("NOT_STARTED");
+    expect(snapshot.stages.map((stage) => stage.id)).not.toContain("current");
+    expect(snapshot.stages.find((stage) => stage.id === "enquiry")?.state).toBe("NOT_STARTED");
     const run = await prisma.autopartCustomerImportRun.create({
       data: { companyId: other.id, type: "ONGOING_504", status: "COMMITTED", dryRun: false, filename: "recent.txt" },
     });
