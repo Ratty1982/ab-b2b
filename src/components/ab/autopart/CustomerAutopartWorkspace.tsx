@@ -41,9 +41,7 @@ function scrollToAction(action: AutopartPrimaryAction) {
       ? "autopart-account"
       : action === "import-history" || action === "review-exceptions"
         ? "autopart-history"
-        : action === "import-current"
-          ? "autopart-current"
-          : "autopart-enquiry";
+        : "autopart-enquiry";
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -166,7 +164,7 @@ export function CustomerAutopartWorkspace({
             </button>
           )}
         </div>
-        <ol className="mt-4 grid gap-2 lg:grid-cols-5">
+        <ol className="mt-4 grid gap-2 lg:grid-cols-4">
           {workspace.stages.map((stage, index) => (
             <li key={stage.id} className="rounded-md border border-border px-3 py-2">
               <div className="text-[11px] text-steel">{index + 1}</div>

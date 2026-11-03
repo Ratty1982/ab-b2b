@@ -112,7 +112,7 @@ export function AutopartHistoryImport({
   function savedMessage(current: HistoryJob) {
     const names = jobFileNames(current) || "Sales history";
     return current.historyStatus === "REVIEW"
-      ? `${names} saved. New ${current.rowsStored}, already imported ${current.duplicates}. Rejected rows still need review before current sales can be imported.`
+      ? `${names} saved. New ${current.rowsStored}, already imported ${current.duplicates}. Rejected rows still need review.`
       : `${names} saved. New ${current.rowsStored}, already imported ${current.duplicates}.`;
   }
 
@@ -300,7 +300,7 @@ export function AutopartHistoryImport({
 
       {locked ? (
         <div className="mt-4 rounded-md border border-warn/40 bg-warn/10 px-3 py-3 text-[13px]">
-          <p>Some rows were rejected. Review them before importing current sales.</p>
+          <p>Some rows were rejected. Review them to finish the historical position.</p>
           {canImport ? (
             <button
               type="button"
@@ -648,7 +648,7 @@ export function AutopartHistoryImport({
             : confirm === "baseline"
               ? "This records that sales start from a new point. It does not claim the customer never bought before. It does not import a file, and it will not replace a completed history import."
               : confirm === "review"
-                ? "Rejected rows stay rejected. Accepting them completes the historical position so current sales can be imported. It does not delete the rejected rows or invent sales."
+                ? "Rejected rows stay rejected. Accepting them completes the historical position. Later picknotes are collected automatically. It does not delete the rejected rows or invent sales."
                   : recorded
                   ? "This starts the import on this page. History stays as it is until every required row is published. It replaces the current no-history or new-baseline record only after publication. Rejected rows are not saved as sales."
                   : "This starts the import on this page. You do not need to keep one request open for the whole file. Customer history stays as it is until the job finishes. Rejected rows are not saved as sales, and automatic importing stays off."

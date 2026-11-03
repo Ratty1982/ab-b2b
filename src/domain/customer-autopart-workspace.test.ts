@@ -11,7 +11,6 @@ const ready = {
   hasAccountCode: true,
   ownershipAmbiguous: false,
   historyStatus: "NOT_STARTED" as const,
-  ongoingImportCount: 0,
 };
 
 describe("customer Autopart workspace stages", () => {
@@ -33,19 +32,29 @@ describe("customer Autopart workspace stages", () => {
     expect(customerAutopartStages(ready).find((stage) => stage.id === "history")?.state).toBe("ACTION_REQUIRED");
   });
 
-  it("blocks current sales and points at exception review", () => {
+  it("points at exception review and does not ask for a current-sales import", () => {
     const input = { ...ready, historyStatus: "REVIEW" as const };
     const stages = customerAutopartStages(input);
+    expect(stages.map((stage) => stage.id)).toEqual(["verify", "history", "exceptions", "enquiry"]);
     expect(stages.find((stage) => stage.id === "exceptions")?.state).toBe("ACTION_REQUIRED");
-    expect(stages.find((stage) => stage.id === "current")?.state).toBe("NOT_STARTED");
+    expect(stages.find((stage) => stage.id === "enquiry")?.state).toBe("NOT_STARTED");
     expect(customerAutopartPrimaryAction(input)).toBe("review-exceptions");
   });
 
-  it("opens current sales after a completed cutover, then Sales Enquiry after an import", () => {
+  it("treats a completed historical position as ready for Sales Enquiry", () => {
     const complete = { ...ready, historyStatus: "COMPLETE" as const };
-    expect(customerAutopartPrimaryAction(complete)).toBe("import-current");
-    expect(customerAutopartStages(complete).find((stage) => stage.id === "enquiry")?.state).toBe("COMPLETE");
-    expect(customerAutopartPrimaryAction({ ...complete, ongoingImportCount: 2 })).toBe("view-enquiry");
+    const stages = customerAutopartStages(complete);
+    expect(stages.map((stage) => stage.label)).toEqual([
+      "Verify the Autopart account",
+      "Establish historical sales",
+      "Resolve import exceptions",
+      "View Sales Enquiry",
+    ]);
+    expect(stages.find((stage) => stage.id === "verify")?.state).toBe("COMPLETE");
+    expect(stages.find((stage) => stage.id === "history")?.state).toBe("COMPLETE");
+    expect(stages.find((stage) => stage.id === "exceptions")?.state).toBe("COMPLETE");
+    expect(stages.find((stage) => stage.id === "enquiry")?.state).toBe("COMPLETE");
+    expect(customerAutopartPrimaryAction(complete)).toBe("view-enquiry");
   });
 
   it("asks for activation before history when the account is verified but not active", () => {
