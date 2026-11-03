@@ -338,13 +338,36 @@ Browser, against `http://localhost:43128` with `DATABASE_URL` pointed at the tes
 
 Credential forms on login, account security, forgot password, and reset password now use `method="post"`, so a submit before the page has hydrated cannot place the password in the query string. The setup screen shows the rejected-code message once. Sign-out on Account security still goes to login if the server call throws.
 
-The Vite dev server logs an unhandled `PrismaClient` error because the browser evaluates `betterAuth()` from `src/infra/auth/auth.ts`. The transformed module served for that file did not contain the test `AUTH_SECRET`. Sign-in, enrolment, and sign-out still completed. This was not re-checked in a production bundle in this run.
+## Final release check, 3 November 2026 (Europe/London)
 
-Not run: the live website, a real SMTP mailbox, a second operating-system process for the cookie rate limit (the database lock was checked from a second cookie jar), expiry of a trusted browser by waiting 30 days, or a merge with PR #76.
+Production `origin/production/phase-1-auth-rbac` is `628547d` (PR #78 merged). `git merge-tree --write-tree` of this branch into that commit completed with no conflicts. This branch adds no files under `prisma/migrations`.
+
+The browser Prisma error came from Vite’s client environment evaluating `betterAuth()` in `src/infra/auth/auth.ts`. The route tree statically imports API routes and server-function modules, and those modules import `@/infra/auth`, `@/server/env`, and `@/infra/database/client`. A Vite plugin now resolves those modules, and `@prisma/client`, to browser stubs only when the environment name is `client`. SSR and the Nitro server still load the real modules. `getPublicOrigin` loads `@/server/env` with a dynamic import inside the server handler so the client compiler does not keep that import.
+
+Tests passed at 13:33 Europe/London. Typecheck and the production build passed in the following run:
+
+- `bunx vitest run` on `src/server/auth/mfa.integration.test.ts`, `src/domain/mfa-policy.test.ts`, `src/domain/totp-window.test.ts`, `src/infra/auth/auth.security.test.ts`, `src/infra/auth/client-boundary.test.ts`, and `src/server/security/controls.test.ts` — 6 files, 40 tests, passed. `TEST_DATABASE_URL` was `automotive_brands_mfa_test`.
+- `bunx tsc --noEmit` passed.
+- `bun run build` passed. The public client assets contain none of `AUTH_SECRET`, `DATABASE_URL`, `postgresql://`, the development auth-secret default, `MICROSOFT_365_CLIENT_SECRET`, `MICROSOFT_365_ENCRYPTION_KEY`, `betterAuth(`, or `trustDeviceMaxAge`. The server file `.output/server/_ssr/auth-ohKhPQOD.mjs` still contains `betterAuth(`, `trustDeviceMaxAge`, `disableSignUp`, and encrypted backup-code storage. Backup codes use `AUTH_SECRET` inside Better Auth. There is no separate MFA encryption variable.
+- Dev requests for `/src/infra/auth/auth.ts`, `/src/server/env.ts`, and `/src/infra/database/client.ts` return the stubs.
+- With the three enforcement variables unset, `mfa.unenrolled.existing@example.invalid` signed in on `http://127.0.0.1:43128` and reached `/admin` with no authenticator challenge. A reload showed the dashboard. The console had no Prisma or secret errors, and the network panel had no HTTP 500. Application database counts stayed at 215 companies, 4758 `AutopartSalesLine`, 1015 `AutopartSalesDocument`, and 91 `AutopartCustomerImportRun`.
+
+The first cold compile of `src/server/phase2/fns.ts` in that dev server logged `Cannot read properties of undefined (reading 'method')` while Vite was still transforming the file. After the module had compiled, the same server function returned its normal unauthenticated result, and the browser pass above had no 500. That is a development first-compile race, not a client bundle of the auth server.
+
+Not run: the live website, a real SMTP mailbox, a second operating-system process for the cookie rate limit, or waiting 30 days for a trusted browser to expire.
 
 ### PR #76
 
-PR #76 (`cursor/password-failure-lock-c11b`) was not merged. `git merge-tree --write-tree` of that branch into this one conflicts in `docs/security/security-evidence-register.md`, `src/domain/users.ts`, `src/routes/admin.roles.tsx`, and `src/server/users/service.ts`. `src/infra/auth/auth.ts`, `src/server/rbac/access.ts`, and `src/server/phase2/fns.ts` auto-merge. Recommended order, when both are wanted: merge the password-lock PR first, then rebase this branch and keep both the security-hold controls and the authenticator reset. Do not merge them together without that resolution.
+PR #76 (`cursor/password-failure-lock-c11b`) was not merged. Merge this authenticator PR first, with all three enforcement flags unset. PR #76 has migration `20261102220000_password_failure_lock` and is a separate change.
+
+`git merge-tree --write-tree` of PR #76 into this branch still conflicts in four files. Resolve them by keeping both features:
+
+- `docs/security/security-evidence-register.md`: keep the authenticator deployment note and the password-lock migration note.
+- `src/domain/users.ts`: keep `authenticatorResetSchema` and the security-hold schemas.
+- `src/routes/admin.roles.tsx`: keep Reset authenticator and Apply/Lift security hold on the same panel.
+- `src/server/users/service.ts`: the import block conflicts. Keep the authenticator imports (`canResetAnotherUsersAuthenticator`, `sendAuthenticatorResetNotice`, `revokeTrustedDevices`) and the security-hold imports. `applySecurityHold`, `releaseSecurityHold`, `resetUserAuthenticator`, and `revokeTrustedDevices` are otherwise both present.
+
+`src/infra/auth/auth.ts`, `src/infra/auth/auth.security.test.ts`, `src/server/phase2/fns.ts`, `src/server/rbac/access.ts`, and `docs/security/directors-security-report.md` auto-merge. If both changes must land in one step, merge PR #76 first because it contains the migration, then rebase this branch and apply the same four resolutions. Do not merge them together without that resolution.
 
 ### Activation and rollback
 
