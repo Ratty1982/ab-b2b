@@ -83,6 +83,7 @@ function AccountSecurityPage() {
 
         {!status?.twoFactorEnabled && !qrDataUrl ? (
           <form
+            method="post"
             className="mt-6 space-y-3 rounded-lg border border-border bg-surface p-4"
             onSubmit={(event) => {
               event.preventDefault();
@@ -152,6 +153,7 @@ function AccountSecurityPage() {
               </div>
             ) : null}
             <form
+              method="post"
               className="space-y-3"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -219,6 +221,7 @@ function AccountSecurityPage() {
         {status?.twoFactorEnabled ? (
           <div className="mt-6 space-y-6">
             <form
+              method="post"
               className="space-y-3 rounded-lg border border-border bg-surface p-4"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -267,6 +270,7 @@ function AccountSecurityPage() {
               </p>
             ) : (
             <form
+              method="post"
               className="space-y-3 rounded-lg border border-border bg-surface p-4"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -312,7 +316,7 @@ function AccountSecurityPage() {
           </div>
         ) : null}
 
-        {error && (qrDataUrl || status?.twoFactorEnabled) ? (
+        {error && status?.twoFactorEnabled ? (
           <p className="mt-4 text-sm text-warn" role="alert">
             {error}
           </p>
@@ -327,8 +331,11 @@ function AccountSecurityPage() {
             className="font-semibold text-steel hover:text-primary"
             onClick={() => {
               void (async () => {
-                await signOutCurrent();
-                window.location.href = "/login";
+                try {
+                  await signOutCurrent();
+                } finally {
+                  window.location.href = "/login";
+                }
               })();
             }}
           >

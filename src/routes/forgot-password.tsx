@@ -29,6 +29,7 @@ function ForgotPassword() {
           address.
         </p>
         <form
+          method="post"
           className="mt-8 grid gap-4 rounded-lg border border-border bg-surface/60 p-6"
           onSubmit={(e) => {
             e.preventDefault();

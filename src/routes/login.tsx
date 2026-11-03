@@ -70,6 +70,7 @@ function Login() {
 
         {!needsTwoFactor ? (
           <form
+            method="post"
             className="rounded-lg border border-border bg-surface/60 p-6"
             onSubmit={(e) => {
               e.preventDefault();
@@ -154,6 +155,7 @@ function Login() {
           </form>
         ) : (
           <form
+            method="post"
             className="rounded-lg border border-border bg-surface/60 p-6"
             onSubmit={(e) => {
               e.preventDefault();
