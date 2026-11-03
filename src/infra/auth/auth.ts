@@ -165,9 +165,9 @@ function createAuth() {
           before: async (session) => {
             const user = await prisma.user.findUnique({
               where: { id: session.userId },
-              select: { status: true },
+              select: { status: true, securityHold: { select: { active: true } } },
             });
-            if (!user || user.status === "DISABLED") {
+            if (!user || user.status === "DISABLED" || user.securityHold?.active) {
               throw new Error("Account is disabled");
             }
             return { data: session };
@@ -175,9 +175,9 @@ function createAuth() {
           after: async (session) => {
             const user = await prisma.user.findUnique({
               where: { id: session.userId },
-              select: { status: true },
+              select: { status: true, securityHold: { select: { active: true } } },
             });
-            if (!user || user.status === "DISABLED") return;
+            if (!user || user.status === "DISABLED" || user.securityHold?.active) return;
             await prisma.user.update({
               where: { id: session.userId },
               data: {

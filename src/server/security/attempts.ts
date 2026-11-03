@@ -37,12 +37,7 @@ export function assessAttempt(input: {
   const clientKey = cookie ? securityAccountKey(cookie, pepper) : null;
   const checks = [];
 
-  if (input.scope === "login") {
-    if (accountKey) {
-      const rule = SECURITY_POLICY.loginAccount;
-      checks.push(limiter.take(`login:account:${accountKey}`, rule.limit, rule.windowMs));
-    }
-  } else if (input.scope === "mfa") {
+  if (input.scope === "mfa") {
     if (clientKey) {
       const rule = SECURITY_POLICY.mfaCookie;
       checks.push(limiter.take(`mfa:cookie:${clientKey}`, rule.limit, rule.windowMs));

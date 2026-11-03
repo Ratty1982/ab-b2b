@@ -45,6 +45,15 @@ export const staffUserIdSchema = z.object({
   id: z.string().cuid(),
 });
 
+export const securityHoldSchema = z.object({
+  id: z.string().cuid(),
+  reason: z.string().trim().min(3).max(300),
+});
+
+export const securityHoldReleaseSchema = z.object({
+  id: z.string().cuid(),
+});
+
 /** Hard-delete a staff user. When business history exists, transferToUserId is required. */
 export const staffUserDeleteSchema = z.object({
   id: z.string().cuid(),

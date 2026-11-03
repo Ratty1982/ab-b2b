@@ -784,6 +784,7 @@ model User {
   ownedAppointments  CrmAppointment[]  @relation("AppointmentOwner")
   sessions           AuthSession[]
   accounts           AuthAccount[]
+  securityHold       UserSecurityHold?
   actingContexts     ActingContext[]   @relation("ActingActor")
   productImports     ProductImportJob[]
   testBaskets        Basket[]          @relation("AdminTestBasketOwner")
@@ -798,6 +799,32 @@ model User {
   @@index([tradeTestPriceListId])
   @@index([lastLoginAt])
   @@index([lastActiveAt])
+}
+
+/// Shared count of confirmed incorrect passwords. The email address is not stored.
+/// A temporary lock is not a disabled account.
+model AuthPasswordFailure {
+  accountKey      String    @id
+  failureCount    Int
+  windowStartedAt DateTime
+  lockedUntil     DateTime?
+  updatedAt       DateTime  @updatedAt
+}
+
+/// Administrator security suspension. Independent of User.status and of the
+/// automatic 15-minute password lock. Does not change company, pricing, or orders.
+model UserSecurityHold {
+  userId           String    @id
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason           String
+  appliedByUserId  String
+  appliedAt        DateTime  @default(now())
+  releasedByUserId String?
+  releasedAt       DateTime?
+  active           Boolean   @default(true)
+  updatedAt        DateTime  @updatedAt
+
+  @@index([active])
 }
 
 /// Better Auth–compatible session table shape (wired in Phase 1)

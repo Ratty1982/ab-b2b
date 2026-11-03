@@ -9,10 +9,11 @@
  * `X-Forwarded-For`. A site-wide bucket is also omitted: one sender must not
  * be able to use it up for everyone else.
  *
- * The counters are process-local. See `src/server/security/rate-limit.ts`.
+ * Password guessing is not counted here. Confirmed incorrect passwords use
+ * the shared database counter in `src/server/security/password-failure.ts`.
+ * The remaining counters are process-local. See `src/server/security/rate-limit.ts`.
  */
 export const SECURITY_POLICY = {
-  loginAccount: { limit: 10, windowMs: 15 * 60 * 1000 },
   mfaCookie: { limit: 10, windowMs: 10 * 60 * 1000 },
   passwordResetAccount: { limit: 5, windowMs: 60 * 60 * 1000 },
   passwordResetCompleteToken: { limit: 10, windowMs: 60 * 60 * 1000 },
@@ -27,6 +28,6 @@ export const SECURITY_POLICY = {
   alertCooldownMs: 60 * 60 * 1000,
 } as const;
 
-export type AttemptScope = "login" | "mfa" | "password-reset" | "password-reset-complete";
+export type AttemptScope = "mfa" | "password-reset" | "password-reset-complete";
 
 export type PublicFormName = "trade-application" | "callback" | "motorsport";

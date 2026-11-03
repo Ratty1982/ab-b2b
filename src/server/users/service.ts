@@ -13,9 +13,17 @@ import {
   internalUserCreateSchema,
   internalUserPasswordResetSchema,
   internalUserUpdateSchema,
+  securityHoldReleaseSchema,
+  securityHoldSchema,
   staffUserDeleteSchema,
   staffUserIdSchema,
 } from "@/domain/users";
+import {
+  appliedSecurityHold,
+  releasedSecurityHold,
+  securityHoldRefusal,
+  securityHoldRefusalMessage,
+} from "@/server/security/security-hold";
 import { formatDateTime } from "@/lib/datetime";
 
 export type StaffInvitationStatus =
@@ -54,6 +62,9 @@ export type StaffUserRecord = {
   deletionReasons: string[];
   canResendInvitation: boolean;
   canSendPasswordReset: boolean;
+  securityHoldActive: boolean;
+  securityHoldReason: string | null;
+  securityHoldAppliedAt: string | null;
 };
 
 function generateTemporaryPassword(): string {
@@ -122,6 +133,11 @@ function mapUser(
       expiresAt: Date;
       createdAt: Date;
     }>;
+    securityHold?: {
+      active: boolean;
+      reason: string;
+      appliedAt: Date;
+    } | null;
   },
   deletion: { safe: boolean; reasons: string[] },
   activity?: {
@@ -159,6 +175,11 @@ function mapUser(
     deletionReasons: deletion.reasons,
     canResendInvitation: user.status === "INVITED",
     canSendPasswordReset: user.status === "ACTIVE",
+    securityHoldActive: Boolean(user.securityHold?.active),
+    securityHoldReason: user.securityHold?.active ? user.securityHold.reason : null,
+    securityHoldAppliedAt: user.securityHold?.active
+      ? user.securityHold.appliedAt.toISOString()
+      : null,
   };
 }
 
@@ -169,6 +190,7 @@ const staffInclude = {
     orderBy: { createdAt: "desc" as const },
     take: 3,
   },
+  securityHold: true,
 } as const;
 
 async function countEffectiveSuperAdmins(excludeUserId?: string): Promise<number> {
@@ -731,6 +753,118 @@ export async function reactivateStaffUser(actorUserId: string, raw: unknown) {
     kind: "ACCOUNT_REACTIVATED",
     dedupeKey: `reactivate:${existing.id}`,
     summary: "A disabled staff account was switched back on.",
+    actorUserId,
+    targetUserId: existing.id,
+  });
+
+  return mapStaffUser(existing.id);
+}
+
+async function targetIsLastEffectiveSuperAdmin(user: {
+  id: string;
+  status: string;
+  actorType: string;
+  userRoles: Array<{ role: { key: string } }>;
+}): Promise<boolean> {
+  const currentRole = user.userRoles[0]?.role.key;
+  if (currentRole !== "SUPER_ADMIN" || user.status !== "ACTIVE" || user.actorType !== "INTERNAL") {
+    return false;
+  }
+  return (await countEffectiveSuperAdmins(user.id)) === 0;
+}
+
+/**
+ * Pause sign-in for one account without changing User.status, company, prices, or orders.
+ * Requires users.manage. Five wrong passwords do not call this.
+ */
+export async function applySecurityHold(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "users.manage");
+  const input = securityHoldSchema.parse(raw);
+  const existing = await prisma.user.findUnique({
+    where: { id: input.id },
+    include: {
+      userRoles: { include: { role: true } },
+      securityHold: true,
+    },
+  });
+  const refusal = securityHoldRefusal({
+    actorUserId,
+    targetUserId: input.id,
+    targetFound: Boolean(existing),
+    lastEffectiveSuperAdmin: existing ? await targetIsLastEffectiveSuperAdmin(existing) : false,
+  });
+  if (refusal) {
+    const status = refusal === "missing-account" ? 404 : 400;
+    const code = refusal === "missing-account" ? "NOT_FOUND" : "VALIDATION";
+    throw new AuthError(securityHoldRefusalMessage(refusal), code, status);
+  }
+  if (!existing) {
+    throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+
+  const at = new Date();
+  const hold = appliedSecurityHold({ actorUserId, reason: input.reason, at });
+  const alreadyActive = existing.securityHold?.active === true;
+  await prisma.userSecurityHold.upsert({
+    where: { userId: existing.id },
+    create: { userId: existing.id, ...hold, updatedAt: at },
+    update: hold,
+  });
+  await prisma.authSession.deleteMany({ where: { userId: existing.id } });
+
+  if (!alreadyActive) {
+    await recordAuditEvent({
+      action: "SECURITY_HOLD_APPLIED",
+      entityType: "User",
+      entityId: existing.id,
+      actorUserId,
+      targetUserId: existing.id,
+      metadata: { reason: hold.reason },
+    });
+    await publishSecurityAlert({
+      kind: "SECURITY_HOLD_APPLIED",
+      dedupeKey: `security-hold:${existing.id}:${at.getTime()}`,
+      summary: "An administrator paused sign-in for one account after a security decision.",
+      actorUserId,
+      targetUserId: existing.id,
+    });
+  }
+
+  return mapStaffUser(existing.id);
+}
+
+/** Lift an administrator security hold. Does not reactivate a disabled account. */
+export async function releaseSecurityHold(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "users.manage");
+  const input = securityHoldReleaseSchema.parse(raw);
+  const existing = await prisma.user.findUnique({
+    where: { id: input.id },
+    include: { securityHold: true },
+  });
+  if (!existing) {
+    throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+  if (!existing.securityHold?.active) {
+    throw new AuthError("This account is not under a security hold", "VALIDATION", 400);
+  }
+
+  const at = new Date();
+  const released = releasedSecurityHold({ actorUserId, at });
+  await prisma.userSecurityHold.update({
+    where: { userId: existing.id },
+    data: released,
+  });
+  await recordAuditEvent({
+    action: "SECURITY_HOLD_RELEASED",
+    entityType: "User",
+    entityId: existing.id,
+    actorUserId,
+    targetUserId: existing.id,
+  });
+  await publishSecurityAlert({
+    kind: "SECURITY_HOLD_RELEASED",
+    dedupeKey: `security-hold-release:${existing.id}:${at.getTime()}`,
+    summary: "An administrator restored sign-in for an account that was on a security hold.",
     actorUserId,
     targetUserId: existing.id,
   });
