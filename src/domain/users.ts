@@ -45,6 +45,11 @@ export const staffUserIdSchema = z.object({
   id: z.string().cuid(),
 });
 
+export const authenticatorResetSchema = z.object({
+  id: z.string().cuid(),
+  password: z.string().min(1).max(128),
+});
+
 /** Hard-delete a staff user. When business history exists, transferToUserId is required. */
 export const staffUserDeleteSchema = z.object({
   id: z.string().cuid(),

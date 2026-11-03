@@ -35,6 +35,7 @@ function ResetPassword() {
         </h1>
         <p className="mt-3 text-sm text-steel">Choose a new password (minimum 10 characters).</p>
         <form
+          method="post"
           className="mt-8 grid gap-4 rounded-lg border border-border bg-surface/60 p-6"
           onSubmit={(e) => {
             e.preventDefault();

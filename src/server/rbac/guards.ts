@@ -1,4 +1,5 @@
 import type { PermissionKey } from "@/domain/permissions";
+import { mfaEnrollmentRequired } from "@/domain/mfa-policy";
 import { dedicatedAdminSectionUnlock } from "@/domain/permission-sections";
 import { ADMIN_SHELL_PERMISSIONS } from "@/lib/app-nav";
 import { grants, hasPermission, loadAccessProfile, type LoadedAccessProfile } from "@/server/rbac/access";
@@ -25,6 +26,19 @@ export async function requireAuthenticatedUser(
   const profile = await loadAccessProfile(userId);
   if (!profile) {
     throw new AuthError("Authentication required", "UNAUTHENTICATED", 401);
+  }
+  if (
+    mfaEnrollmentRequired({
+      actorType: profile.actorType,
+      systemRoles: profile.systemRoles,
+      twoFactorEnabled: profile.twoFactorEnabled,
+    })
+  ) {
+    throw new AuthError(
+      "Set up an authenticator before continuing",
+      "MFA_ENROLLMENT_REQUIRED",
+      403,
+    );
   }
   return profile;
 }

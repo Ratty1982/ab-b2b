@@ -56,6 +56,12 @@ const envSchema = z.object({
   AUTOPART_STOCK_IMAP_FILENAME_PATTERN: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  /** First authenticator stage for Super Admin and Accounts. Off unless true/1/on. */
+  MFA_ENFORCE_PRIVILEGED: z.string().optional(),
+  /** Later stage for all internal staff, including management. Off unless true/1/on. */
+  MFA_ENFORCE_STAFF: z.string().optional(),
+  /** Customer authenticator requirement. Leave unset. Off unless true/1/on. */
+  MFA_ENFORCE_CUSTOMERS: z.string().optional(),
   /** CRM Microsoft 365. Off unless set to true/1/on/yes. Distinct from the SDS Graph app. */
   MICROSOFT_365_CRM_ENABLED: z.string().optional(),
   MICROSOFT_365_TENANT_ID: z.string().optional(),

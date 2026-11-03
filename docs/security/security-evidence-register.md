@@ -142,14 +142,24 @@ Owners are roles, not named people.
 - **Outstanding:** not every server function was executed. A penetration test should sample cross-customer ids
 - **Owner:** Development; external tester when commissioned
 
-### MFA available, not compulsory
+### Authenticator setup and staged enforcement
 
-- **Threat:** a stolen staff password is enough
-- **Evidence:** Better Auth `twoFactor` plugin in `src/infra/auth/auth.ts`. Enrolment in `src/server/auth/mfa.ts`. `isPrivilegedMfaEnforced` returns false unless `MFA_ENFORCE_PRIVILEGED` is explicitly on (`src/domain/mfa-policy.ts`). Admin shell checks it in `src/server/auth/route-guards.ts`
-- **Verification:** code read; configuration test. Production environment not read
-- **Status:** Gap identified
-- **Outstanding:** enrol Super Admin and Accounts, store recovery codes, then set the flag. Do not set it before enrolment. Rollback is the flag set to false
-- **Owner:** Directors for the decision; Super Admin for enrolment
+- **Threat:** a stolen password is enough to enter staff or customer areas
+- **Evidence:** Better Auth 1.7.4 `twoFactor` plugin in `src/infra/auth/auth.ts`. Enrolment does not set `skipVerificationOnEnable`, so `twoFactorEnabled` stays false until `verifyTOTP` accepts a code. Account security is `/account/security` (`src/routes/account.security.tsx`, `src/server/auth/mfa.ts`). Backup codes are encrypted and replaced as a set when one is used (`backup-codes/index.mjs`). Trusted browsers last 30 days (`trustDeviceMaxAge`). Failed sign-in codes update `twoFactor.failedVerificationCount` and can set `lockedUntil` for 15 minutes after 10 failures. That row is shared by every application copy. A second, process-local limit remains on the sign-in cookie, including setup-code attempts. A password change clears other sessions and trusted browsers. Flags: `MFA_ENFORCE_PRIVILEGED` (Super Admin and Accounts), `MFA_ENFORCE_STAFF` (all internal roles), `MFA_ENFORCE_CUSTOMERS` (trade). All default off (`src/domain/mfa-policy.ts`). `requireAuthenticatedUser` and the route guards refuse business access when a flag applies and setup is unfinished. A Super Admin reset is `resetUserAuthenticator` and does not return secrets. Password reset, disablement, and authenticator disable clear `trust-device-` verification rows
+- **Verification:** unit tests on the morning of 3 November 2026 (Europe/London), then PostgreSQL and browser checks the same afternoon. See “PostgreSQL and browser verification” below. The live website and live user rows were not used
+- **Status:** Confirmed against an isolated database and in the browser. Enforcement flags stay off
+- **Outstanding:** enrol Super Admin and Accounts and store recovery codes before setting `MFA_ENFORCE_PRIVILEGED=true`. Do not set `MFA_ENFORCE_STAFF` until that first stage has been used. Leave `MFA_ENFORCE_CUSTOMERS` unset. Rollback is to set the flag back to false and restart. That does not delete authenticator rows
+- **Owner:** Directors for the decision; Super Admin for enrolment and for lost-phone resets
+
+### Staged activation
+
+1. Release this change with all three flags unset.
+2. Ask each Super Admin and Accounts user to open Account security, scan the code, and store the recovery codes.
+3. Sign in once with a code, once with a recovery code, and once with "Remember this browser".
+4. Set only `MFA_ENFORCE_PRIVILEGED=true` and restart. Confirm a Super Admin who has not enrolled can open Account security and cannot open orders.
+5. After the trade desk is ready, set `MFA_ENFORCE_STAFF=true` for management and the rest of the staff.
+6. Leave customers optional. Do not set `MFA_ENFORCE_CUSTOMERS` in this rollout.
+7. If people are locked out, set the flag to false and restart. Do not delete `twoFactor` rows unless a Super Admin reset is intended.
 
 ### Passkeys
 
@@ -289,6 +299,86 @@ Commands, from the security branch:
 
 Not run: the database integration suite, a browser pass, and any request to the live website.
 
+## Tests run on 3 November 2026 (Europe/London)
+
+Commands, from `cursor/two-factor-completion-c11b`:
+
+- `bunx vitest run` on `src/domain/mfa-policy.test.ts`, `src/domain/totp-window.test.ts`, `src/infra/auth/auth.security.test.ts`, `src/server/security/controls.test.ts`, and `src/server/rbac/permissions.test.ts` — 5 files, 43 tests, passed at 11:03 Europe/London.
+- `NODE_OPTIONS='--max-old-space-size=6144' bunx tsc --noEmit` — passed
+- `NODE_OPTIONS='--max-old-space-size=6144' bun run build` — passed (`vite build` / Nitro output)
+
+The paragraph above is the morning run. The afternoon run is below. Incorrect and expired authenticator codes use the same `@better-auth/utils/otp` helper as Better Auth 1.7.4.
+
+## PostgreSQL and browser verification, 3 November 2026 (Europe/London)
+
+Database: `automotive_brands_mfa_test` on localhost. The name ends in `_test`. The application database `automotive_brands` was not used. Accounts were `mfa.*@example.invalid` created for this run. No production user was changed. Enforcement flags were unset except for one temporary check of `MFA_ENFORCE_PRIVILEGED=true` on that test server, which was turned off again before the end of the run.
+
+`bunx vitest run` on `src/server/auth/mfa.integration.test.ts`, `src/domain/mfa-policy.test.ts`, `src/domain/totp-window.test.ts`, and `src/infra/auth/auth.security.test.ts` — 4 files, 25 tests, passed at 12:17 Europe/London. The integration file covers:
+
+- Flags default off, and a Super Admin password session is accepted.
+- Enrolment stays inactive until the current code is accepted. A wrong code and a code from two periods earlier do not activate it.
+- Sign-in removes the password session until a current code is accepted. Invalid and expired codes leave no session.
+- Recovery codes are replaced as a set. A new code works once. Reuse and an old code fail.
+- Switching the authenticator off removes the factor and trusted browsers. The next password sign-in does not ask for a code.
+- A remembered browser lasts about 30 days, is refreshed on the next sign-in, and is dropped when that record is expired, the password is changed, or the password is reset.
+- Ten failures lock the shared `twoFactor` row for 15 minutes. A second cookie jar, standing in for another application copy, is rejected on a correct code.
+- An existing password session is blocked for Super Admin and Accounts when `MFA_ENFORCE_PRIVILEGED` is on, for other internal roles when `MFA_ENFORCE_STAFF` is on, and for a trade buyer when `MFA_ENFORCE_CUSTOMERS` is on. Account security still has a session. Turning the flags off, or finishing enrolment, restores access.
+- A disabled account cannot sign in. A leftover session is unauthenticated.
+- A Management user with a `users.manage` override cannot reset someone else's authenticator. A Super Admin cannot reset their own. The wrong password is rejected. The right password, from a different Super Admin, deletes the factor, sessions, and trusted browsers, writes `MFA_ADMIN_RESET` with only `{emailSent}`, and sends a notice that does not contain the secret or a recovery code.
+- Two sessions stay active until a password change on one of them removes the other.
+
+Browser, against `http://localhost:43128` with `DATABASE_URL` pointed at the test database:
+
+- Account security stays “Not set up” and says the role is not blocking while the flags are unset.
+- Recovery codes stay hidden until the setup code is accepted. `000000` shows one error. A current code turns the authenticator on and shows 10 codes.
+- Sign-out returns to the login page. The next password sign-in asks for a code. `000000` is rejected. One recovery code signs in.
+- “Remember this browser for 30 days” sets `better-auth.trust_device`. The following password sign-in opens the admin dashboard without another code.
+- At a 390px width, login, forgot password, reset password, and the authenticator challenge fit. The reset request shows the generic sentence and does not include a secret.
+- A Super Admin session created while enforcement was off was sent from `/admin` to Account security after `MFA_ENFORCE_PRIVILEGED=true` and a restart. The page says the role needs the authenticator and still offers sign-out. An enrolled Super Admin still reached `/admin`. The flag was then unset and the test server restarted.
+
+Credential forms on login, account security, forgot password, and reset password now use `method="post"`, so a submit before the page has hydrated cannot place the password in the query string. The setup screen shows the rejected-code message once. Sign-out on Account security still goes to login if the server call throws.
+
+## Final release check, 3 November 2026 (Europe/London)
+
+Production `origin/production/phase-1-auth-rbac` is `628547d` (PR #78 merged). `git merge-tree --write-tree` of this branch into that commit completed with no conflicts. This branch adds no files under `prisma/migrations`.
+
+The browser Prisma error came from Vite’s client environment evaluating `betterAuth()` in `src/infra/auth/auth.ts`. The route tree statically imports API routes and server-function modules, and those modules import `@/infra/auth`, `@/server/env`, and `@/infra/database/client`. A Vite plugin now resolves those modules, and `@prisma/client`, to browser stubs only when the environment name is `client`. SSR and the Nitro server still load the real modules. `getPublicOrigin` loads `@/server/env` with a dynamic import inside the server handler so the client compiler does not keep that import.
+
+Tests passed at 13:33 Europe/London. Typecheck and the production build passed in the following run:
+
+- `bunx vitest run` on `src/server/auth/mfa.integration.test.ts`, `src/domain/mfa-policy.test.ts`, `src/domain/totp-window.test.ts`, `src/infra/auth/auth.security.test.ts`, `src/infra/auth/client-boundary.test.ts`, and `src/server/security/controls.test.ts` — 6 files, 40 tests, passed. `TEST_DATABASE_URL` was `automotive_brands_mfa_test`.
+- `bunx tsc --noEmit` passed.
+- `bun run build` passed. The public client assets contain none of `AUTH_SECRET`, `DATABASE_URL`, `postgresql://`, the development auth-secret default, `MICROSOFT_365_CLIENT_SECRET`, `MICROSOFT_365_ENCRYPTION_KEY`, `betterAuth(`, or `trustDeviceMaxAge`. The server file `.output/server/_ssr/auth-ohKhPQOD.mjs` still contains `betterAuth(`, `trustDeviceMaxAge`, `disableSignUp`, and encrypted backup-code storage. Backup codes use `AUTH_SECRET` inside Better Auth. There is no separate MFA encryption variable.
+- Dev requests for `/src/infra/auth/auth.ts`, `/src/server/env.ts`, and `/src/infra/database/client.ts` return the stubs.
+- With the three enforcement variables unset, `mfa.unenrolled.existing@example.invalid` signed in on `http://127.0.0.1:43128` and reached `/admin` with no authenticator challenge. A reload showed the dashboard. The console had no Prisma or secret errors, and the network panel had no HTTP 500. Application database counts stayed at 215 companies, 4758 `AutopartSalesLine`, 1015 `AutopartSalesDocument`, and 91 `AutopartCustomerImportRun`.
+
+The first cold compile of `src/server/phase2/fns.ts` in that dev server logged `Cannot read properties of undefined (reading 'method')` while Vite was still transforming the file. After the module had compiled, the same server function returned its normal unauthenticated result, and the browser pass above had no 500. That is a development first-compile race, not a client bundle of the auth server.
+
+Not run: the live website, a real SMTP mailbox, a second operating-system process for the cookie rate limit, or waiting 30 days for a trusted browser to expire.
+
+### PR #76
+
+PR #76 (`cursor/password-failure-lock-c11b`) was not merged. Merge this authenticator PR first, with all three enforcement flags unset. PR #76 has migration `20261102220000_password_failure_lock` and is a separate change.
+
+`git merge-tree --write-tree` of PR #76 into this branch still conflicts in four files. Resolve them by keeping both features:
+
+- `docs/security/security-evidence-register.md`: keep the authenticator deployment note and the password-lock migration note.
+- `src/domain/users.ts`: keep `authenticatorResetSchema` and the security-hold schemas.
+- `src/routes/admin.roles.tsx`: keep Reset authenticator and Apply/Lift security hold on the same panel.
+- `src/server/users/service.ts`: the import block conflicts. Keep the authenticator imports (`canResetAnotherUsersAuthenticator`, `sendAuthenticatorResetNotice`, `revokeTrustedDevices`) and the security-hold imports. `applySecurityHold`, `releaseSecurityHold`, `resetUserAuthenticator`, and `revokeTrustedDevices` are otherwise both present.
+
+`src/infra/auth/auth.ts`, `src/infra/auth/auth.security.test.ts`, `src/server/phase2/fns.ts`, `src/server/rbac/access.ts`, and `docs/security/directors-security-report.md` auto-merge. If both changes must land in one step, merge PR #76 first because it contains the migration, then rebase this branch and apply the same four resolutions. Do not merge them together without that resolution.
+
+### Activation and rollback
+
+1. Deploy with `MFA_ENFORCE_PRIVILEGED`, `MFA_ENFORCE_STAFF`, and `MFA_ENFORCE_CUSTOMERS` unset.
+2. Each Super Admin and Accounts user opens Account security, confirms a code, and stores the recovery codes somewhere other than email.
+3. That person signs in once with a code, once with a recovery code, and once with “Remember this browser”.
+4. Set only `MFA_ENFORCE_PRIVILEGED=true` and restart. Confirm an unenrolled Super Admin can open Account security and sign out, and cannot open orders.
+5. Later, set `MFA_ENFORCE_STAFF=true` and restart.
+6. Leave `MFA_ENFORCE_CUSTOMERS` unset for this rollout.
+7. Rollback: set the flag to `false` and restart. Do not delete `twoFactor` rows. A Super Admin reset is a separate action and removes that person’s authenticator, sessions, and remembered browsers.
+
 ## Deployment note
 
-No migration. Optional `SECURITY_ALERT_EMAIL`. Rollback is documented in `docs/security/directors-security-report.md`.
+No new migration for authenticator setup. The existing `twoFactor` table is reused. Optional flags, all off unless set to true, 1, or on: `MFA_ENFORCE_PRIVILEGED`, `MFA_ENFORCE_STAFF`, `MFA_ENFORCE_CUSTOMERS`. Optional `SECURITY_ALERT_EMAIL`. Rollback is to set the flag back to false and restart. That does not delete authenticator rows. See `docs/security/directors-security-report.md`.

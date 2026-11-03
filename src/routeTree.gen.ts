@@ -30,6 +30,7 @@ import { Route as SalesRouteImport } from './routes/sales'
 import { Route as TradeSolutionsRouteImport } from './routes/trade-solutions'
 import { Route as UsIncorporationDocumentsRouteImport } from './routes/us-incorporation-documents'
 import { Route as WhyAutomotiveBrandsRouteImport } from './routes/why-automotive-brands'
+import { Route as AccountSecurityRouteImport } from './routes/account.security'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminBrandsRouteImport } from './routes/admin.brands'
 import { Route as AdminCategoriesRouteImport } from './routes/admin.categories'
@@ -254,6 +255,11 @@ const UsIncorporationDocumentsRoute =
 const WhyAutomotiveBrandsRoute = WhyAutomotiveBrandsRouteImport.update({
   id: '/why-automotive-brands',
   path: '/why-automotive-brands',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountSecurityRoute = AccountSecurityRouteImport.update({
+  id: '/account/security',
+  path: '/account/security',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
@@ -894,6 +900,7 @@ export interface FileRoutesByFullPath {
   '/trade-solutions': typeof TradeSolutionsRoute
   '/us-incorporation-documents': typeof UsIncorporationDocumentsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/account/security': typeof AccountSecurityRoute
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/content': typeof AdminContentRouteWithChildren
@@ -1030,6 +1037,7 @@ export interface FileRoutesByTo {
   '/trade-solutions': typeof TradeSolutionsRoute
   '/us-incorporation-documents': typeof UsIncorporationDocumentsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/account/security': typeof AccountSecurityRoute
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/cost-intelligence': typeof AdminCostIntelligenceRoute
@@ -1160,6 +1168,7 @@ export interface FileRoutesById {
   '/trade-solutions': typeof TradeSolutionsRoute
   '/us-incorporation-documents': typeof UsIncorporationDocumentsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/account/security': typeof AccountSecurityRoute
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/content': typeof AdminContentRouteWithChildren
@@ -1303,6 +1312,7 @@ export interface FileRouteTypes {
     | '/trade-solutions'
     | '/us-incorporation-documents'
     | '/why-automotive-brands'
+    | '/account/security'
     | '/admin/brands'
     | '/admin/categories'
     | '/admin/content'
@@ -1439,6 +1449,7 @@ export interface FileRouteTypes {
     | '/trade-solutions'
     | '/us-incorporation-documents'
     | '/why-automotive-brands'
+    | '/account/security'
     | '/admin/brands'
     | '/admin/categories'
     | '/admin/cost-intelligence'
@@ -1568,6 +1579,7 @@ export interface FileRouteTypes {
     | '/trade-solutions'
     | '/us-incorporation-documents'
     | '/why-automotive-brands'
+    | '/account/security'
     | '/admin/brands'
     | '/admin/categories'
     | '/admin/content'
@@ -1710,6 +1722,7 @@ export interface RootRouteChildren {
   TradeSolutionsRoute: typeof TradeSolutionsRoute
   UsIncorporationDocumentsRoute: typeof UsIncorporationDocumentsRoute
   WhyAutomotiveBrandsRoute: typeof WhyAutomotiveBrandsRoute
+  AccountSecurityRoute: typeof AccountSecurityRoute
   ApiBuildRoute: typeof ApiBuildRoute
   ApiCustomerSalesUploadsRoute: typeof ApiCustomerSalesUploadsRoute
   BrandsSlugRoute: typeof BrandsSlugRoute
@@ -1876,6 +1889,13 @@ declare module '@tanstack/react-router' {
       path: '/why-automotive-brands'
       fullPath: '/why-automotive-brands'
       preLoaderRoute: typeof WhyAutomotiveBrandsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account/security': {
+      id: '/account/security'
+      path: '/account/security'
+      fullPath: '/account/security'
+      preLoaderRoute: typeof AccountSecurityRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/': {
@@ -3111,6 +3131,7 @@ const rootRouteChildren: RootRouteChildren = {
   TradeSolutionsRoute: TradeSolutionsRoute,
   UsIncorporationDocumentsRoute: UsIncorporationDocumentsRoute,
   WhyAutomotiveBrandsRoute: WhyAutomotiveBrandsRoute,
+  AccountSecurityRoute: AccountSecurityRoute,
   ApiBuildRoute: ApiBuildRoute,
   ApiCustomerSalesUploadsRoute: ApiCustomerSalesUploadsRoute,
   BrandsSlugRoute: BrandsSlugRoute,

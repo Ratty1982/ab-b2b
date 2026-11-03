@@ -3,7 +3,7 @@ import { getRequestHeaders } from "@tanstack/react-start/server";
 import { auth } from "@/infra/auth";
 import { formatZodError } from "@/domain/cms";
 import type { HomepageJson } from "@/domain/homepage";
-import { AuthError } from "@/server/rbac/guards";
+import { AuthError, requireAuthenticatedUser } from "@/server/rbac/guards";
 import { resolveOptionalRequestUserId } from "@/server/auth/request-session";
 import * as companies from "@/server/companies/service";
 import * as applications from "@/server/applications/service";
@@ -30,6 +30,7 @@ async function requireUserId(): Promise<string> {
   if (!session?.user?.id) {
     throw new AuthError("Authentication required", "UNAUTHENTICATED", 401);
   }
+  await requireAuthenticatedUser(session.user.id);
   return session.user.id;
 }
 
@@ -1748,6 +1749,18 @@ export const resetStaffUserPasswordFn = createServerFn({ method: "POST" })
     try {
       const userId = await requireUserId();
       const result = await staffUsers.resetStaffUserPassword(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const resetUserAuthenticatorFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await staffUsers.resetUserAuthenticator(userId, data);
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);

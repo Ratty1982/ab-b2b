@@ -65,6 +65,7 @@ export interface LoadedAccessProfile {
   managerSalesRepId: string | null;
   /** Explicit DENY overrides. admin.access must not bypass these. */
   deniedPermissions: Set<PermissionKey>;
+  twoFactorEnabled: boolean;
 }
 
 export async function loadAccessProfile(userId: string): Promise<LoadedAccessProfile | null> {
@@ -139,6 +140,7 @@ export async function loadAccessProfile(userId: string): Promise<LoadedAccessPro
     salesRepId: user.salesRep?.active ? user.salesRep.id : null,
     managerSalesRepId: user.salesRep?.active ? (user.salesRep.managerId ?? null) : null,
     deniedPermissions,
+    twoFactorEnabled: Boolean(user.twoFactorEnabled || user.mfaEnabled),
   };
 }
 

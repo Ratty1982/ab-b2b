@@ -6,6 +6,7 @@ import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { nitro } from "nitro/vite";
+import { clientBoundaryPlugin } from "./vite.client-boundary";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,6 +39,7 @@ export default defineConfig({
     port: 43127,
   },
   plugins: [
+    clientBoundaryPlugin(),
     tsconfigPaths({ projects: ["./tsconfig.json"] }),
     tailwindcss(),
     // Must come before react()
