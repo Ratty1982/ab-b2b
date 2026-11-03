@@ -292,6 +292,15 @@ export function AppShell({
             onClick={() => setWhatsNewHistoryOpen(true)}
           />
         ) : null}
+        <Link
+          to="/account/security"
+          className={cn(
+            "mt-2 block w-full rounded-md border border-sidebar-border px-2 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide text-steel hover:border-steel hover:text-foreground",
+            touch && "min-h-11",
+          )}
+        >
+          {iconMode ? "Security" : "Account security"}
+        </Link>
         <button
           type="button"
           className={cn(

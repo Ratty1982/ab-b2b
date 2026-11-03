@@ -63,11 +63,17 @@ The application adds a check that server functions really came from this site (`
 
 Sign-in success and failure, password reset, role changes, and account closure are written to an `AuditEvent` table. The writer removes values whose names look like passwords, tokens, secrets, or cookies (`src/server/audit/record.ts`). There is no automatic deletion of old audit rows in the code. How long they are kept in backups was not checked.
 
-### Authenticator codes exist, and they are not compulsory
+### Authenticator codes exist, and they are not compulsory yet
 
-Staff can enrol an authenticator app and receive one-time recovery codes (`src/server/auth/mfa.ts`, page `/admin/security/mfa`). The policy names Super Admin and Accounts as the roles that should use this (`src/domain/mfa-policy.ts`). The switch that actually blocks those roles without an authenticator is `MFA_ENFORCE_PRIVILEGED`. If that variable is missing, the code leaves enforcement **off**, so that staff are not locked out before they have enrolled.
+Staff and customers can set up an authenticator from Account security (`/account/security`). The app is not switched on until a 6-digit code is accepted. Recovery codes are single-use and can be replaced after the password is entered again. A browser can be remembered for 30 days. That remember is removed when the password changes, the authenticator is switched off, the account is disabled, or a Super Admin resets the authenticator.
 
-This review did not read the live server's environment, so it cannot say whether production has turned that switch on. From the code alone, authenticator codes are available, not required.
+The first enforcement switch is still `MFA_ENFORCE_PRIVILEGED`. It covers Super Admin and Accounts, and it stays **off** unless it is set to true. A later switch, `MFA_ENFORCE_STAFF`, covers the rest of the internal staff, including management. It also stays off. `MFA_ENFORCE_CUSTOMERS` exists so customers can be required later, and it stays off. Customers may set up an authenticator before that. None of these switches were turned on by this work.
+
+While a switch is on, server-side permission checks refuse business actions until setup is finished. The person can still open Account security and sign out. A password-only step that is waiting for the authenticator code does not create a usable session.
+
+A lost phone is handled with a recovery code, or by a Super Admin who enters their own password and resets the authenticator. The old secret and the old codes are not shown. The account holder is emailed. An ordinary administrator cannot do that reset.
+
+This review did not read the live server's environment, so it cannot say whether production has turned a switch on. From the code alone, authenticator codes are available, not required.
 
 There are no passkeys in this application.
 

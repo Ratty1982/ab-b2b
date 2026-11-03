@@ -14,6 +14,9 @@ export async function guardStaffPage(permission: PermissionKey, href: string, fa
       search: { returnTo: safeReturnPath(href, fallback) },
     });
   }
+  if (result.reason === "mfa_required") {
+    throw redirect({ href: "/account/security" });
+  }
   if (result.session.signedIn) {
     throw redirect({ to: resolvePostLoginPath(result.session) });
   }

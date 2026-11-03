@@ -16,13 +16,7 @@ export const Route = createFileRoute("/admin")({
         });
       }
       if (result.reason === "mfa_required") {
-        // Allow the MFA enrollment page itself while enforcement is active.
-        if (!location.pathname.startsWith("/admin/security/mfa")) {
-          throw redirect({ href: "/admin/security/mfa" });
-        }
-        if (result.session.signedIn) {
-          return { session: result.session };
-        }
+        throw redirect({ href: "/account/security" });
       }
       if (result.session.signedIn) {
         throw redirect({ to: resolvePostLoginPath(result.session) });

@@ -1,11 +1,13 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "@better-auth/prisma-adapter";
+import { createAuthMiddleware, isAPIError } from "better-auth/api";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { twoFactor } from "better-auth/plugins";
 
 import { prisma } from "@/infra/database/client";
 import { getServerEnv } from "@/server/env";
 import { recordAuditEvent } from "@/server/audit/record";
+import { revokeTrustedDevices } from "@/server/auth/trusted-devices";
 
 /**
  * Automotive Brands owns authentication data via Better Auth + PostgreSQL/Prisma.
@@ -116,6 +118,13 @@ function createAuth() {
         }
       },
       onPasswordReset: async ({ user }) => {
+        try {
+          await revokeTrustedDevices(user.id);
+        } catch (error) {
+          console.error("[ab:security] trusted browsers were not cleared", {
+            error: error instanceof Error ? error.name : "unknown",
+          });
+        }
         await recordAuditEvent({
           action: "PASSWORD_RESET_COMPLETED",
           entityType: "User",
@@ -146,6 +155,40 @@ function createAuth() {
         // Let Prisma @default(cuid()) allocate IDs consistently with Phase 0.
         generateId: false,
       },
+    },
+    hooks: {
+      after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/change-password") return;
+        const returned = ctx.context.returned;
+        if (!returned || isAPIError(returned)) return;
+        const userId = ctx.context.session?.user?.id;
+        if (!userId) return;
+        const returnedToken =
+          typeof returned === "object" && returned !== null && "token" in returned
+            ? returned.token
+            : null;
+        const keepToken =
+          typeof returnedToken === "string" && returnedToken.length > 0
+            ? returnedToken
+            : ctx.context.session?.session?.token;
+        try {
+          await revokeTrustedDevices(userId);
+          await prisma.authSession.deleteMany({
+            where: keepToken ? { userId, NOT: { token: keepToken } } : { userId },
+          });
+          await recordAuditEvent({
+            action: "PASSWORD_CHANGED",
+            entityType: "User",
+            entityId: userId,
+            actorUserId: userId,
+            metadata: { trustedBrowsersCleared: true },
+          });
+        } catch (error) {
+          console.error("[ab:security] password change did not clear other sessions", {
+            error: error instanceof Error ? error.name : "unknown",
+          });
+        }
+      }),
     },
     databaseHooks: {
       user: {
@@ -193,6 +236,8 @@ function createAuth() {
     plugins: [
       twoFactor({
         issuer: "Automotive Brands",
+        // A 30-day browser remember. It is not a permanent exemption.
+        trustDeviceMaxAge: 60 * 60 * 24 * 30,
         totpOptions: {
           digits: 6,
           period: 30,
@@ -200,6 +245,13 @@ function createAuth() {
         backupCodeOptions: {
           amount: 10,
           length: 10,
+          storeBackupCodes: "encrypted",
+        },
+        // Shared across application copies because it updates the twoFactor row.
+        accountLockout: {
+          enabled: true,
+          maxFailedAttempts: 10,
+          durationSeconds: 15 * 60,
         },
       }),
       // Must be last so Set-Cookie is applied via TanStack Start

@@ -16,6 +16,7 @@ import {
   reactivateStaffUserFn,
   resendStaffInvitationFn,
   resetStaffUserPasswordFn,
+  resetUserAuthenticatorFn,
   sendUserPasswordResetEmailFn,
   updateStaffUserFn,
 } from "@/server/phase2/fns";
@@ -671,6 +672,8 @@ function ManageUserDrawer({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [transferToUserId, setTransferToUserId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [authenticatorPassword, setAuthenticatorPassword] = useState("");
+  const [resettingAuthenticator, setResettingAuthenticator] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"details" | "permissions" | "activity">("details");
 
   useEffect(() => {
@@ -688,6 +691,8 @@ function ManageUserDrawer({
       setDeleteOpen(false);
       setTransferToUserId("");
       setBusy(false);
+      setAuthenticatorPassword("");
+      setResettingAuthenticator(false);
       setDrawerTab("details");
     }
   }, [user]);
@@ -896,6 +901,51 @@ function ManageUserDrawer({
             }}
           >
             {sendingReset ? "Sending…" : "Send password reset email"}
+          </button>
+        </div>
+      ) : null}
+
+      {showActivity && !isSelf ? (
+        <div className="mt-6 grid gap-3 border-t border-border pt-5">
+          <p className="text-[13px] font-semibold">Reset authenticator</p>
+          <p className="text-[12px] text-steel">
+            Use this when someone has lost their phone and has no recovery code. It signs them out
+            and removes the authenticator. Old codes are not shown. Enter your own password.
+          </p>
+          <input
+            type="password"
+            value={authenticatorPassword}
+            onChange={(event) => setAuthenticatorPassword(event.target.value)}
+            autoComplete="current-password"
+            placeholder="Your password"
+            className={inputClass}
+          />
+          <button
+            type="button"
+            disabled={resettingAuthenticator || authenticatorPassword.length < 1}
+            className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+            onClick={() => {
+              void (async () => {
+                setResettingAuthenticator(true);
+                const result = await resetUserAuthenticatorFn({
+                  data: { id: user.id, password: authenticatorPassword },
+                });
+                setResettingAuthenticator(false);
+                if (!result.ok) {
+                  toast.error(result.error);
+                  return;
+                }
+                setAuthenticatorPassword("");
+                toast.success(
+                  result.data.emailSent
+                    ? "Authenticator reset. The account holder was emailed."
+                    : "Authenticator reset. The account email could not be sent.",
+                );
+                await onSaved();
+              })();
+            }}
+          >
+            {resettingAuthenticator ? "Resetting…" : "Reset authenticator"}
           </button>
         </div>
       ) : null}

@@ -162,7 +162,9 @@ function Login() {
               void (async () => {
                 setPending(true);
                 setError(null);
-                const result = await verifyTwoFactorLogin({ data: { code } });
+                const result = await verifyTwoFactorLogin({
+                  data: { code, trustDevice: fd.get("trustDevice") === "on" },
+                });
                 setPending(false);
                 if (!result.ok) {
                   setError(result.error);
@@ -175,7 +177,7 @@ function Login() {
                 }
                 await router.invalidate();
                 if (session.user.mfaRequired && !session.user.twoFactorEnabled) {
-                  await navigate({ href: "/admin/security/mfa" });
+                  await navigate({ href: "/account/security" });
                   return;
                 }
                 const dest = safeReturnPath(returnTo, resolvePostLoginPath(session));
@@ -201,6 +203,10 @@ function Login() {
                   className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-base tracking-widest"
                 />
               </div>
+              <label className="flex items-start gap-2 text-[13px] text-steel" htmlFor="trust-device">
+                <input id="trust-device" name="trustDevice" type="checkbox" className="mt-1" />
+                <span>Remember this browser for 30 days. A password change or a switched-off account forgets it.</span>
+              </label>
               {error ? (
                 <p className="text-[13px] text-warn" role="alert">
                   {error}

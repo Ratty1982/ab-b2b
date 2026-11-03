@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { hashPassword } from "better-auth/crypto";
+import { hashPassword, verifyPassword } from "better-auth/crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -13,9 +13,13 @@ import {
   internalUserCreateSchema,
   internalUserPasswordResetSchema,
   internalUserUpdateSchema,
+  authenticatorResetSchema,
   staffUserDeleteSchema,
   staffUserIdSchema,
 } from "@/domain/users";
+import { canResetAnotherUsersAuthenticator } from "@/domain/mfa-policy";
+import { sendAuthenticatorResetNotice } from "@/server/auth/mfa-notice";
+import { revokeTrustedDevices } from "@/server/auth/trusted-devices";
 import { formatDateTime } from "@/lib/datetime";
 
 export type StaffInvitationStatus =
@@ -661,6 +665,7 @@ export async function deactivateStaffUser(actorUserId: string, raw: unknown) {
     data: { status: "DISABLED" },
   });
   await prisma.authSession.deleteMany({ where: { userId: existing.id } });
+  await revokeTrustedDevices(existing.id);
   const rep = await prisma.salesRep.findUnique({ where: { userId: existing.id } });
   if (rep?.active) {
     await prisma.salesRep.update({ where: { id: rep.id }, data: { active: false } });
@@ -1002,6 +1007,9 @@ export async function resetStaffUserPassword(actorUserId: string, raw: unknown) 
       });
     }
     await tx.authSession.deleteMany({ where: { userId: existing.id } });
+    await tx.authVerification.deleteMany({
+      where: { value: existing.id, identifier: { startsWith: "trust-device-" } },
+    });
     if (existing.status === "INVITED") {
       await tx.user.update({
         where: { id: existing.id },
@@ -1020,6 +1028,79 @@ export async function resetStaffUserPassword(actorUserId: string, raw: unknown) 
   });
 
   return { email: existing.email, temporaryPassword: password };
+}
+
+/**
+ * Super Admin recovery when someone has lost their phone.
+ * Does not return the old secret or recovery codes. Requires the actor's own password.
+ */
+export async function resetUserAuthenticator(actorUserId: string, raw: unknown) {
+  const actor = await requireSystemPermission(actorUserId, "users.manage");
+  const input = authenticatorResetSchema.parse(raw);
+  if (
+    !canResetAnotherUsersAuthenticator({
+      actorUserId,
+      targetUserId: input.id,
+      actorIsSuperAdmin: actor.systemRoles.includes("SUPER_ADMIN"),
+    })
+  ) {
+    throw new AuthError(
+      "Only a Super Admin can reset another person's authenticator",
+      "FORBIDDEN",
+      403,
+    );
+  }
+  const existing = await prisma.user.findUnique({ where: { id: input.id } });
+  if (!existing) {
+    throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+
+  const credential = await prisma.authAccount.findFirst({
+    where: { userId: actorUserId, providerId: "credential" },
+    select: { password: true },
+  });
+  const passwordOk = Boolean(
+    credential?.password &&
+      (await verifyPassword({ hash: credential.password, password: input.password })),
+  );
+  if (!passwordOk) {
+    throw new AuthError("Password was not accepted", "VALIDATION", 400);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.twoFactor.deleteMany({ where: { userId: existing.id } });
+    await tx.user.update({
+      where: { id: existing.id },
+      data: { twoFactorEnabled: false, mfaEnabled: false },
+    });
+    await tx.authSession.deleteMany({ where: { userId: existing.id } });
+    await tx.authVerification.deleteMany({
+      where: { value: existing.id, identifier: { startsWith: "trust-device-" } },
+    });
+  });
+
+  let emailSent = false;
+  try {
+    emailSent = await sendAuthenticatorResetNotice(existing.email);
+  } catch {
+    emailSent = false;
+  }
+  await recordAuditEvent({
+    action: "MFA_ADMIN_RESET",
+    entityType: "User",
+    entityId: existing.id,
+    actorUserId,
+    targetUserId: existing.id,
+    metadata: { emailSent },
+  });
+  await publishSecurityAlert({
+    kind: "AUTHENTICATOR_RESET",
+    dedupeKey: `mfa-reset:${existing.id}:${Date.now()}`,
+    summary: "An administrator reset the authenticator on one account.",
+    actorUserId,
+    targetUserId: existing.id,
+  });
+  return { emailSent };
 }
 
 /**

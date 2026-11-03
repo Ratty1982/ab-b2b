@@ -171,14 +171,18 @@ Security-relevant actions include (non-exhaustive):
 
 | Item | Status |
 | --- | --- |
-| Better Auth `twoFactor` plugin (TOTP + backup codes) | Implemented |
-| Login second-factor step | Implemented |
-| Enrollment UI `/admin/security/mfa` | Implemented |
-| Policy: SUPER_ADMIN + ACCOUNTS require MFA | Documented + coded |
-| Hard enforcement | **Opt-in** via `MFA_ENFORCE_PRIVILEGED=true` (default off to avoid lockout before enrollment) |
-| Trade customers forced MFA | Not in this phase |
+| Better Auth `twoFactor` plugin (TOTP + backup codes) | Implemented. Not active until a 6-digit code is accepted |
+| Login second-factor step, with a 30-day remember option | Implemented |
+| Account security page `/account/security` | Implemented for staff and customers. `/admin/security/mfa` redirects there |
+| Policy: SUPER_ADMIN + ACCOUNTS | `MFA_ENFORCE_PRIVILEGED=true` (default off) |
+| Later staff and management stage | `MFA_ENFORCE_STAFF=true` (default off) |
+| Customers | Optional. `MFA_ENFORCE_CUSTOMERS` stays off |
+| Shared authenticator lock | 10 failed codes, then 15 minutes, stored on the `twoFactor` row |
+| Super Admin lost-phone reset | Requires that Super Admin's password. Secrets are not shown. The account is emailed |
 
-**Lost device:** use a recovery code → re-enroll. Privileged lockout: Super Admin password reset (sessions revoked) + assisted re-enrollment. Never email TOTP secrets.
+**Lost device:** use a recovery code, then create new codes from Account security. If there is no code, a Super Admin uses Reset authenticator. A password reset does not remove the authenticator. Never email TOTP secrets or recovery codes.
+
+**Rollback:** set the enforcement flag to `false` and restart. Existing enrolments stay in the database.
 
 ---
 

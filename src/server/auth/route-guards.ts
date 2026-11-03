@@ -13,7 +13,7 @@ import {
   AuthError,
 } from "@/server/rbac/guards";
 import { getClientSession, type ClientSession } from "@/server/auth/session";
-import { isPrivilegedMfaEnforced } from "@/domain/mfa-policy";
+import { mfaEnrollmentRequired } from "@/domain/mfa-policy";
 import { scheduleTouchLastActive } from "@/server/audit/last-active";
 
 export type GuardResult =
@@ -41,11 +41,23 @@ async function runGuard(
     if (!session.signedIn) {
       return { ok: false, reason: "unauthenticated", session };
     }
+    if (
+      mfaEnrollmentRequired({
+        actorType: session.user.actorType,
+        systemRoles: session.user.systemRoles,
+        twoFactorEnabled: session.user.twoFactorEnabled,
+      })
+    ) {
+      return { ok: false, reason: "mfa_required", session };
+    }
     if (options?.touchActive !== false) {
       scheduleTouchLastActive(profile.userId);
     }
     return { ok: true, session, userId: profile.userId };
   } catch (error) {
+    if (error instanceof AuthError && error.code === "MFA_ENROLLMENT_REQUIRED") {
+      return { ok: false, reason: "mfa_required", session };
+    }
     if (error instanceof AuthError && error.status === 401) {
       return { ok: false, reason: "unauthenticated", session };
     }
@@ -81,16 +93,6 @@ export const ensureStaffPermission = createServerFn({ method: "GET" })
   })
   .handler(async ({ data }) => runGuard((id) => requireSystemPermission(id, data.permission)));
 
-export const ensureAdminAccess = createServerFn({ method: "GET" }).handler(async () => {
-  const result = await runGuard((id) => requireAdminAccess(id));
-  if (!result.ok) return result;
-  // Privileged MFA enforcement (opt-in via MFA_ENFORCE_PRIVILEGED=true).
-  if (
-    isPrivilegedMfaEnforced() &&
-    result.session.user.mfaRequired &&
-    !result.session.user.twoFactorEnabled
-  ) {
-    return { ok: false as const, reason: "mfa_required" as const, session: result.session };
-  }
-  return result;
-});
+export const ensureAdminAccess = createServerFn({ method: "GET" }).handler(async () =>
+  runGuard((id) => requireAdminAccess(id)),
+);

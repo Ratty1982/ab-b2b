@@ -15,6 +15,9 @@ export const Route = createFileRoute("/sales")({
           search: { returnTo: safeReturnPath(location.href, ROUTES.sales) },
         });
       }
+      if (result.reason === "mfa_required") {
+        throw redirect({ href: "/account/security" });
+      }
       if (result.session.signedIn) {
         throw redirect({ to: resolvePostLoginPath(result.session) });
       }
