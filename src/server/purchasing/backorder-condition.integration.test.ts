@@ -7,6 +7,7 @@ import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
 import { skuMatchKey } from "@/domain/stock";
 import { AUTOPART_216V_HEADER } from "@/domain/autopart-216v-fixture";
+import { dateOnlyIsoFromDate } from "@/domain/sales-history-period";
 import { confirmAutopart216vImport } from "@/server/purchasing/backorder-import";
 import { exportBackordersCsv, getBackorderLineDetail, getBackorderWorkspace } from "@/server/purchasing/backorders";
 import { applyStockFeed } from "@/server/stock/service";
@@ -18,6 +19,25 @@ const tag = stamp.toString(36).slice(-6).toUpperCase();
 
 let adminId = "";
 const account = `CNDA${tag}`;
+
+async function reportDateForCurrentSnapshot(): Promise<string> {
+  const latest = await prisma.autopartBackorderSnapshot.findFirst({
+    orderBy: { businessDate: "desc" },
+    select: { businessDate: true },
+  });
+  const stored = latest?.businessDate ? dateOnlyIsoFromDate(latest.businessDate) : "2026-10-01";
+  const today = new Date().toISOString().slice(0, 10);
+  let cursor = stored > today ? stored : today;
+  for (let i = 0; i < 14; i += 1) {
+    const [year, month, day] = cursor.split("-").map(Number);
+    const next = new Date(Date.UTC(year!, (month ?? 1) - 1, day ?? 1));
+    next.setUTCDate(next.getUTCDate() + 1);
+    cursor = next.toISOString().slice(0, 10);
+    const weekday = next.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) return cursor;
+  }
+  return cursor;
+}
 
 const codes = [
   { sku: `BO${tag}S`, code: "S", label: "Superseded" },
@@ -100,11 +120,11 @@ afterAll(async () => {
 
 describe("backorder condition enrichment", () => {
   it("shows each condition label, filters them, and exports the code without changing 216V movement", async () => {
+    const reportDate = await reportDateForCurrentSnapshot();
     const first = await confirmAutopart216vImport(adminId, {
       text: csv216v(4),
       filename: `216V-cond-${tag}-1.csv`,
-      confirmedReportDate: "2026-10-12",
-      allowHistoricalImport: true,
+      confirmedReportDate: reportDate,
       source: "MANUAL",
     });
     const firstLines = (
@@ -156,7 +176,7 @@ describe("backorder condition enrichment", () => {
     const second = await confirmAutopart216vImport(adminId, {
       text: csv216v(4, "Condition Customer Again"),
       filename: `216V-cond-${tag}-2.csv`,
-      confirmedReportDate: "2026-10-12",
+      confirmedReportDate: reportDate,
       allowHistoricalImport: true,
       source: "MANUAL",
     });
@@ -178,7 +198,7 @@ describe("backorder condition enrichment", () => {
     await confirmAutopart216vImport(adminId, {
       text: clearedFirst.replace(`"BO${tag}Z"`, `"BO${tag}Z"`).split("\n").filter((line) => !line.includes(`BO${tag}Z`)).join("\n"),
       filename: `216V-cond-${tag}-3.csv`,
-      confirmedReportDate: "2026-10-12",
+      confirmedReportDate: reportDate,
       allowHistoricalImport: true,
       source: "MANUAL",
     });

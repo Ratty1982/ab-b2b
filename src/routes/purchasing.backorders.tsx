@@ -348,14 +348,6 @@ function BackordersPage() {
     setNotice(null);
     setError(null);
     try {
-      if (!file.size) {
-        const message =
-          "The selected file is empty. Choose the Autopart 216V CSV. The previous snapshot was not replaced.";
-        setError(message);
-        setNotice({ tone: "bad", message });
-        return;
-      }
-      const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await confirmAutopart216vFn({
         data: {
           bytesBase64: manualDraft.bytesBase64,
@@ -488,7 +480,7 @@ function BackordersPage() {
           canManage={Boolean(data.canManage)}
           busy={busy}
           uploadId={`${uploadId}-recovery`}
-          onUpload={onUpload}
+          onUpload={(file) => void onPickManualFile(file)}
           onOpenSettings={() => setSettingsOpen(true)}
         />
       ) : null}
@@ -1169,6 +1161,7 @@ function SettingsBody({
   const feed = data?.feed;
   const freshness = data?.freshness;
   const settingsUploadRef = useRef<HTMLInputElement>(null);
+  const dateInputId = useId();
   return (
     <div className="grid gap-6 text-[13px]">
       {notice ? <ImportNoticeBanner notice={notice} /> : null}
