@@ -18,7 +18,8 @@
 
 import { dateOnlyIsoFromDate, todayLondonDateOnly } from "@/domain/sales-history-period";
 
-export type Autopart216vReportDateSource = "FILENAME" | "RECEIVED_AT" | "BUSINESS_DATE" | "IMPORT_TIME";
+export type Autopart216vReportDateSource =
+  "FILENAME" | "RECEIVED_AT" | "BUSINESS_DATE" | "IMPORT_TIME";
 
 export type Autopart216vReportDateReview = "WEEKEND_DATE_UNVERIFIED";
 
@@ -49,7 +50,11 @@ export function isRealIsoDate(iso: string): boolean {
   const month = Number(match[2]);
   const day = Number(match[3]);
   const parsed = new Date(Date.UTC(year, month - 1, day));
-  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
 }
 
 /** Report day encoded in names such as `216V_20261012.csv`. Undated names return null. */
@@ -60,7 +65,15 @@ export function reportDateFrom216vFilename(filename: string | null | undefined):
   return isRealIsoDate(iso) ? iso : null;
 }
 
-const CIVIL_WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+const CIVIL_WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+] as const;
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -140,6 +153,55 @@ export function weekend216vImportNotice(input: {
   return `${review} ${position}`;
 }
 
+export type Autopart216vImportDiagnosticRow = {
+  id: string;
+  filename: string;
+  recordedDate: string;
+  receivedAt: string | null;
+  importedAt: string | null;
+  reason: string;
+  importStatus: string;
+  kind: Autopart216vReportDateReview;
+};
+
+/**
+ * Historical file-date anomalies for Import diagnostics.
+ * These must not be concatenated into the Backorders header status.
+ * Observed weekend dates stay unchanged — the CSV has no reporting date.
+ */
+export function build216vImportDiagnostics(
+  headers: Autopart216vSnapshotChronology[],
+): Autopart216vImportDiagnosticRow[] {
+  const rows: Autopart216vImportDiagnosticRow[] = [];
+  for (const header of headers) {
+    const resolved = resolveAutopart216vReportDate(header);
+    if (resolved.review !== "WEEKEND_DATE_UNVERIFIED") continue;
+    rows.push({
+      id: header.id,
+      filename: header.filename?.trim() || "216V.csv",
+      recordedDate: resolved.iso,
+      receivedAt:
+        header.receivedAt && !Number.isNaN(header.receivedAt.getTime())
+          ? header.receivedAt.toISOString()
+          : null,
+      importedAt:
+        header.importedAt && !Number.isNaN(header.importedAt.getTime())
+          ? header.importedAt.toISOString()
+          : null,
+      reason: describe216vWeekendReportReview({
+        filename: header.filename ?? null,
+        observedDate: resolved.iso,
+      }),
+      importStatus: "COMMITTED",
+      kind: resolved.review,
+    });
+  }
+  rows.sort(
+    (a, b) => b.recordedDate.localeCompare(a.recordedDate) || a.filename.localeCompare(b.filename),
+  );
+  return rows;
+}
+
 function isoFromBusinessDate(value: Date | string): string | null {
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null;
@@ -166,7 +228,11 @@ export function resolveAutopart216vReportDate(input: {
     const stored = isoFromBusinessDate(input.businessDate);
     if (stored) return finishReportDate(stored, "BUSINESS_DATE", null);
   }
-  return finishReportDate(todayLondonDateOnly(input.importedAt ?? input.now ?? new Date()), "IMPORT_TIME", null);
+  return finishReportDate(
+    todayLondonDateOnly(input.importedAt ?? input.now ?? new Date()),
+    "IMPORT_TIME",
+    null,
+  );
 }
 
 function receivedMillis(value: Date | null | undefined): number {
@@ -202,7 +268,9 @@ export function compare216vSnapshotChronology(
  * Current outstanding position is the latest verified Monday–Friday snapshot.
  * A weekend-dated file is shown only when no verified working-day snapshot exists.
  */
-export function pickCurrent216vSnapshot<T extends Autopart216vSnapshotChronology>(rows: readonly T[]): T | null {
+export function pickCurrent216vSnapshot<T extends Autopart216vSnapshotChronology>(
+  rows: readonly T[],
+): T | null {
   const verified = rows.filter((row) => resolveAutopart216vReportDate(row).verifiedWorkingDay);
   const pool = verified.length > 0 ? verified : rows;
   let best: T | null = null;

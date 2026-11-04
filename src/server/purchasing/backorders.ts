@@ -9,7 +9,7 @@ import { prisma } from "@/infra/database/client";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess } from "@/server/rbac/guards";
 import {
-  describe216vWeekendReportReview,
+  build216vImportDiagnostics,
   previous216vBaseline,
   resolveAutopart216vReportDate,
   verified216vReportDate,
@@ -32,7 +32,12 @@ import {
   type Autopart216vAttentionId,
   type Autopart216vStockPosition,
 } from "@/domain/autopart-216v-position";
-import { resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
+import {
+  resolveAutopart216vFreshness,
+  headline216vFeedHealth,
+  label216vSnapshotSource,
+  summarise216vOperationalStatus,
+} from "@/domain/autopart-216v-freshness";
 import { requireBackorderManage } from "@/server/purchasing/backorder-import";
 import {
   AUTOPART_216V_MOVEMENTS,
@@ -711,19 +716,24 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
   const now = new Date();
   const report = snapshot ? resolveAutopart216vReportDate(snapshot) : null;
   const lastBusinessDate = verified216vReportDate(report?.iso ?? null);
-  const weekendReview = headers
-    .map((header) => {
-      const resolved = resolveAutopart216vReportDate(header);
-      if (resolved.review !== "WEEKEND_DATE_UNVERIFIED") return null;
-      return describe216vWeekendReportReview({ filename: header.filename, observedDate: resolved.iso });
-    })
-    .filter((line): line is string => Boolean(line))
-    .join(" ");
+  const importDiagnostics = build216vImportDiagnostics(headers);
   const freshness = resolveAutopart216vFreshness({
     lastSuccessAt: snapshot?.importedAt ?? settings.lastSuccessAt,
     lastBusinessDate: report?.iso ?? null,
     now,
     scheduleHour: settings.scheduleHour,
+  });
+  const headline = headline216vFeedHealth({
+    status: freshness.status,
+    stale: freshness.stale,
+    lastError: settings.lastError,
+    lastBusinessDate,
+    now,
+  });
+  const operational = summarise216vOperationalStatus({
+    headline: headline.key,
+    freshness,
+    lastError: settings.lastError,
   });
 
   const allLines = snapshot ? enrichLines(snapshot.lines as unknown as LineRow[], now) : [];
@@ -787,13 +797,10 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
     canManage: hasPermission(profile, "purchasing.backorders.manage"),
     freshness: {
       ...freshness,
-      headline: headline216vFeedHealth({
-        status: freshness.status,
-        stale: freshness.stale,
-        lastError: settings.lastError,
-        lastBusinessDate,
-      }),
-      warning: [freshness.warning, weekendReview].filter(Boolean).join(" ") || null,
+      headline,
+      operationalKind: operational.kind,
+      /** Concise operational status only — historical anomalies live in diagnostics. */
+      warning: operational.message,
       lastReceivedLabel: snapshot
         ? formatOrDash(formatOperationalDateTime(snapshot.receivedAt ?? snapshot.importedAt))
         : "Never",
@@ -808,6 +815,17 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
       emptyValid: snapshot?.emptyValid ?? false,
       source: snapshot?.source ?? null,
       sourceLabel: label216vSnapshotSource(snapshot?.source ?? null),
+      diagnostics: importDiagnostics.map((row) => ({
+        ...row,
+        recordedDateLabel: formatOrDash(formatDate(row.recordedDate)),
+        receivedAtLabel: row.receivedAt
+          ? formatOrDash(formatOperationalDateTime(new Date(row.receivedAt)))
+          : "—",
+        importedAtLabel: row.importedAt
+          ? formatOrDash(formatOperationalDateTime(new Date(row.importedAt)))
+          : "—",
+      })),
+      diagnosticsCount: importDiagnostics.length,
     },
     feed: {
       enabled: settings.enabled,

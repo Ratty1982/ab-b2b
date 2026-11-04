@@ -35,6 +35,7 @@ import {
   headline216vFeedHealth,
   label216vSnapshotSource,
   resolveAutopart216vFreshness,
+  summarise216vOperationalStatus,
 } from "@/domain/autopart-216v-freshness";
 import { skuMatchKey } from "@/domain/stock";
 
@@ -48,11 +49,9 @@ describe("Autopart 216V detector/parser", () => {
     expect(isAutopart216vFilename("216V.csv")).toBe(true);
     expect(isAutopart216vFilename("notes.csv")).toBe(false);
     expect(isAutopart216vReport("Order,Qty\nA,1")).toBe(false);
-    expect(
-      isAutopart216vReport(
-        "LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n",
-      ),
-    ).toBe(false);
+    expect(isAutopart216vReport("LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n")).toBe(
+      false,
+    );
   });
 
   it("parses the 66-line production-shaped fixture", () => {
@@ -414,13 +413,22 @@ describe("216V freshness", () => {
     expect(due216vPollWindow(new Date("2026-09-26T17:15:00.000Z"))).toBe(false);
   });
 
-  it("keeps the 90-minute grace measured from 18:15", () => {
+  it("keeps the 90-minute grace measured from 18:15 and does not mark overdue inside it", () => {
     const yesterday = {
       lastSuccessAt: new Date("2026-10-05T17:04:00.000Z"),
       lastBusinessDate: "2026-10-05",
     };
     const beforeGrace = new Date("2026-10-06T18:40:00.000Z"); // 19:40 BST
-    expect(resolveAutopart216vFreshness({ ...yesterday, now: beforeGrace }).status).toBe("CURRENT");
+    const inside = resolveAutopart216vFreshness({ ...yesterday, now: beforeGrace });
+    expect(inside.status).toBe("CURRENT");
+    expect(
+      headline216vFeedHealth({
+        status: inside.status,
+        stale: inside.stale,
+        lastBusinessDate: "2026-10-05",
+        now: beforeGrace,
+      }).key,
+    ).toBe("WAITING_FOR_TODAYS_REPORT");
     const afterGrace = new Date("2026-10-06T18:45:00.000Z"); // 19:45 BST
     expect(resolveAutopart216vFreshness({ ...yesterday, now: afterGrace }).status).toBe(
       "EXPECTED_REPORT_NOT_RECEIVED",
@@ -480,7 +488,7 @@ describe("216V freshness", () => {
     expect(label216vSnapshotSource(null)).toBeNull();
   });
 
-  it("weekend headline stays current when last working-day snapshot is present", () => {
+  it("weekend headline marks a non-reporting day when last working-day snapshot is present", () => {
     const sunday = new Date("2026-10-11T10:00:00.000Z");
     const result = resolveAutopart216vFreshness({
       lastSuccessAt: new Date("2026-10-09T17:04:00.000Z"),
@@ -494,7 +502,7 @@ describe("216V freshness", () => {
         lastBusinessDate: "2026-10-09",
         now: sunday,
       }).key,
-    ).toBe("CURRENT");
+    ).toBe("WEEKEND_OR_NON_REPORTING");
   });
 
   it("does not mark a current snapshot as failed just because a later poll error is stored", () => {
@@ -557,7 +565,7 @@ describe("216V freshness", () => {
           lastBusinessDate: result.lastBusinessDate,
           now,
         }).key,
-      ).toBe("CURRENT");
+      ).toBe("WEEKEND_OR_NON_REPORTING");
     }
     expect(due216vPollWindow(saturday)).toBe(false);
     expect(due216vPollWindow(sunday)).toBe(false);
@@ -618,7 +626,7 @@ describe("216V freshness", () => {
         lastBusinessDate: "2026-10-09",
         now: insideGrace,
       }).key,
-    ).toBe("CURRENT");
+    ).toBe("WAITING_FOR_TODAYS_REPORT");
 
     const afterGrace = new Date("2026-10-12T18:45:00.000Z"); // 19:45 BST
     const overdue = resolveAutopart216vFreshness({ ...friday, now: afterGrace });
@@ -697,6 +705,77 @@ describe("216V freshness", () => {
         now: new Date("2026-10-06T19:00:00.000Z"),
       }).key,
     ).toBe("IMPORT_FAILED");
+  });
+
+  it("keeps one concise operational status and preserves the snapshot wording when a report is missing", () => {
+    const overdueAt = new Date("2026-10-06T18:45:00.000Z");
+    const freshness = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-05T17:04:00.000Z"),
+      lastBusinessDate: "2026-10-05",
+      now: overdueAt,
+    });
+    const headline = headline216vFeedHealth({
+      status: freshness.status,
+      stale: freshness.stale,
+      lastBusinessDate: "2026-10-05",
+      now: overdueAt,
+    });
+    const summary = summarise216vOperationalStatus({ headline: headline.key, freshness });
+    expect(summary.kind).toBe("report_overdue");
+    expect(summary.message).toMatch(/last available snapshot/i);
+    expect(summary.message).toMatch(/were not cleared/i);
+    expect(summary.message).not.toMatch(/216V_20261010/);
+
+    const weekend = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-09T17:04:00.000Z"),
+      lastBusinessDate: "2026-10-09",
+      now: new Date("2026-10-11T12:00:00.000Z"),
+    });
+    const weekendHeadline = headline216vFeedHealth({
+      status: weekend.status,
+      stale: weekend.stale,
+      lastBusinessDate: "2026-10-09",
+      now: new Date("2026-10-11T12:00:00.000Z"),
+    });
+    expect(
+      summarise216vOperationalStatus({ headline: weekendHeadline.key, freshness: weekend }).kind,
+    ).toBe("weekend_or_non_reporting_day");
+  });
+
+  it("honours Europe/London BST and GMT schedule edges without marking early overdue", () => {
+    // BST spring-forward week: Wednesday 1 Apr 2026 — 18:14 London = 17:14 UTC
+    const bstBefore = new Date("2026-04-01T17:14:00.000Z");
+    expect(due216vPollWindow(bstBefore)).toBe(false);
+    const bstGraceInside = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-03-31T17:20:00.000Z"),
+      lastBusinessDate: "2026-03-31",
+      now: new Date("2026-04-01T18:40:00.000Z"), // 19:40 BST
+    });
+    expect(bstGraceInside.status).toBe("CURRENT");
+    expect(
+      headline216vFeedHealth({
+        status: bstGraceInside.status,
+        stale: bstGraceInside.stale,
+        lastBusinessDate: "2026-03-31",
+        now: new Date("2026-04-01T18:40:00.000Z"),
+      }).key,
+    ).toBe("WAITING_FOR_TODAYS_REPORT");
+
+    // GMT mid-winter: Wednesday 14 Jan 2026 — 19:44 London = 19:44 UTC still inside grace
+    const gmtGrace = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-01-13T18:20:00.000Z"),
+      lastBusinessDate: "2026-01-13",
+      now: new Date("2026-01-14T19:44:00.000Z"),
+    });
+    expect(gmtGrace.status).toBe("CURRENT");
+    expect(
+      headline216vFeedHealth({
+        status: gmtGrace.status,
+        stale: gmtGrace.stale,
+        lastBusinessDate: "2026-01-13",
+        now: new Date("2026-01-14T19:44:00.000Z"),
+      }).key,
+    ).toBe("WAITING_FOR_TODAYS_REPORT");
   });
 });
 

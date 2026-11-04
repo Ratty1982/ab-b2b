@@ -29,6 +29,9 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain("Last successful import");
     expect(src).toContain("Current snapshot imported");
     expect(src).toContain("Last error");
+    expect(src).toContain("Import diagnostics");
+    expect(src).toContain("data-import-diagnostics");
+    expect(src).toContain("data-backorder-status-message");
     expect(src).toContain("bytesToBase64");
     expect(src).toContain('cache: "no-store"');
     expect(src.indexOf("function SettingsBody")).toBeLessThan(src.indexOf("Upload 216V"));
