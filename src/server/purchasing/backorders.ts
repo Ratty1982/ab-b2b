@@ -9,12 +9,15 @@ import { prisma } from "@/infra/database/client";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess } from "@/server/rbac/guards";
 import {
-  describe216vWeekendReportReview,
+  build216vImportDiagnostics,
   previous216vBaseline,
   resolveAutopart216vReportDate,
   verified216vReportDate,
 } from "@/domain/autopart-216v-report-date";
-import { currentCommitted216vSnapshot, listCommitted216vSnapshots } from "@/server/purchasing/backorder-chronology";
+import {
+  currentCommitted216vSnapshot,
+  listCommitted216vSnapshots,
+} from "@/server/purchasing/backorder-chronology";
 import { formatDate, formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import {
   AUTOPART_PRODUCT_KIND_LABEL,
@@ -32,7 +35,12 @@ import {
   type Autopart216vAttentionId,
   type Autopart216vStockPosition,
 } from "@/domain/autopart-216v-position";
-import { resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
+import {
+  resolveAutopart216vFreshness,
+  headline216vFeedHealth,
+  label216vSnapshotSource,
+  summarise216vOperationalStatus,
+} from "@/domain/autopart-216v-freshness";
 import { requireBackorderManage } from "@/server/purchasing/backorder-import";
 import {
   AUTOPART_216V_MOVEMENTS,
@@ -67,7 +75,10 @@ const listInput = z.object({
     ])
     .optional()
     .nullable(),
-  ageDays: z.union([z.literal(1), z.literal(3), z.literal(7), z.literal(14), z.literal(30)]).optional().nullable(),
+  ageDays: z
+    .union([z.literal(1), z.literal(3), z.literal(7), z.literal(14), z.literal(30)])
+    .optional()
+    .nullable(),
   customerAccount: z.string().optional().nullable(),
   brand: z.string().optional().nullable(),
   catalogueType: z.enum(["CATALOGUE", "EXTERNAL", "HISTORIC_ONLY"]).optional().nullable(),
@@ -186,7 +197,10 @@ function enrichLines(lines: LineRow[], now = new Date()): BackorderLineView[] {
   const outstanding = lines.filter((l) => l.changeStatus !== "CLEARED");
   const skuDemand = new Map<string, number>();
   for (const line of outstanding) {
-    skuDemand.set(line.partMatchKey, (skuDemand.get(line.partMatchKey) ?? 0) + num(line.outstandingQty));
+    skuDemand.set(
+      line.partMatchKey,
+      (skuDemand.get(line.partMatchKey) ?? 0) + num(line.outstandingQty),
+    );
   }
   const skuCover = new Map<string, ReturnType<typeof resolveAutopart216vSkuCover>>();
   for (const line of outstanding) {
@@ -274,7 +288,10 @@ type IdentityFilterable = {
 };
 
 /** Filters meaningful for both current and historical (cleared) lines. */
-function applyIdentityFilters<T extends IdentityFilterable>(rows: T[], input: z.infer<typeof listInput>): T[] {
+function applyIdentityFilters<T extends IdentityFilterable>(
+  rows: T[],
+  input: z.infer<typeof listInput>,
+): T[] {
   const q = input.q?.trim().toLowerCase() ?? "";
   let out = rows;
   if (input.customerAccount) {
@@ -306,7 +323,10 @@ function applyIdentityFilters<T extends IdentityFilterable>(rows: T[], input: z.
   return out;
 }
 
-function applyFilters(rows: BackorderLineView[], input: z.infer<typeof listInput>): BackorderLineView[] {
+function applyFilters(
+  rows: BackorderLineView[],
+  input: z.infer<typeof listInput>,
+): BackorderLineView[] {
   let out = rows;
   if (input.status) out = out.filter((r) => r.status === input.status);
   if (input.position) out = out.filter((r) => r.position === input.position);
@@ -387,7 +407,11 @@ function groupCustomers(rows: BackorderLineView[]) {
       const first = lines[0]!;
       const outstandingValue = lines.reduce((s, l) => s + Number(l.outstandingValue ?? 0), 0);
       const oldest = Math.max(...lines.map((l) => l.ageDays));
-      const coverIssues = [...new Set(lines.filter((l) => l.position !== "STOCK_AVAILABLE").map((l) => l.positionLabel))];
+      const coverIssues = [
+        ...new Set(
+          lines.filter((l) => l.position !== "STOCK_AVAILABLE").map((l) => l.positionLabel),
+        ),
+      ];
       return {
         customerAccount: account,
         customerName: first.customerName,
@@ -424,7 +448,10 @@ const lineInclude = {
       catalogueVariantId: true,
       conditionCode: true,
       catalogueVariant: {
-        select: { sku: true, product: { select: { brand: { select: { name: true, slug: true } } } } },
+        select: {
+          sku: true,
+          product: { select: { brand: { select: { name: true, slug: true } } } },
+        },
       },
     },
   },
@@ -489,7 +516,7 @@ async function loadPreviousCommittedSnapshot(current: LoadedSnapshot) {
     select: { id: true, filename: true, businessDate: true, receivedAt: true, importedAt: true },
   });
   const linked = current.previousSnapshotId
-    ? headers.find((header) => header.id === current.previousSnapshotId) ?? null
+    ? (headers.find((header) => header.id === current.previousSnapshotId) ?? null)
     : null;
   const previous = previous216vBaseline(headers, current, linked);
   if (!previous) return null;
@@ -540,10 +567,15 @@ async function buildMovementRows(
       },
       select: { identityKey: true, outstandingValue: true },
     });
-    for (const line of prevLines) previousValues.set(line.identityKey, money(line.outstandingValue));
+    for (const line of prevLines)
+      previousValues.set(line.identityKey, money(line.outstandingValue));
   }
 
-  function previousValueOf(identityKey: string, previousQty: number | null, unitValue: string | null) {
+  function previousValueOf(
+    identityKey: string,
+    previousQty: number | null,
+    unitValue: string | null,
+  ) {
     const stored = previousValues.get(identityKey);
     if (stored != null) return stored;
     if (previousQty == null || unitValue == null) return null;
@@ -580,7 +612,8 @@ async function buildMovementRows(
         partMatchKey: line.partMatchKey,
         description: line.descriptionSnapshot,
         productKind: kind,
-        productKindLabel: kind === "UNKNOWN" ? "Historic/not current" : AUTOPART_PRODUCT_KIND_LABEL[kind],
+        productKindLabel:
+          kind === "UNKNOWN" ? "Historic/not current" : AUTOPART_PRODUCT_KIND_LABEL[kind],
         brand: brand?.name ?? null,
         brandSlug: brand?.slug ?? null,
         ...quantities,
@@ -600,59 +633,67 @@ async function buildMovementRows(
         conditionLabel: autopartConditionLabel(line.autopartProduct?.conditionCode ?? null),
       };
     });
-    rows = applyConditionFilter(applyIdentityFilters(rows, effective), effective.condition).sort(movementSort);
+    rows = applyConditionFilter(applyIdentityFilters(rows, effective), effective.condition).sort(
+      movementSort,
+    );
   } else {
     rows = applyFilters(
       outstanding.filter((l) => l.status === changeStatus),
       effective,
-    ).map((line) => {
-      const quantities = autopart216vMovementQuantities({
-        movement,
-        outstandingQty: line.outstandingQty,
-        previousQty: line.previousQty,
-      });
-      return {
-        id: line.id,
-        identityKey: line.identityKey,
-        movement,
-        status: line.status,
-        statusLabel: line.statusLabel,
-        currentlyOutstanding: true,
-        orderNumber: line.orderNumber,
-        customerAccount: line.customerAccount,
-        customerName: line.customerName,
-        customerOrderRef: line.customerOrderRef,
-        companyId: line.companyId,
-        companyName: line.companyName,
-        unmapped: line.unmapped,
-        sku: line.sku,
-        partMatchKey: line.partMatchKey,
-        description: line.description,
-        productKind: line.productKind,
-        productKindLabel: line.productKindLabel,
-        brand: line.brand,
-        brandSlug: line.brandSlug,
-        ...quantities,
-        unitValue: line.unitValue,
-        previousValue:
-          movement === "NEW" ? null : previousValueOf(line.identityKey, quantities.previousQty, line.unitValue),
-        currentValue: line.outstandingValue,
-        firstSeenAt: line.firstSeenAt,
-        ageLabel: line.ageLabel,
-        lastChangedAt: line.lastChangedAt,
-        clearedAt: null,
-        availQty: line.availQty,
-        incomingQty: line.incomingQty,
-        position: line.position,
-        positionLabel: line.positionLabel,
-        coverSummary: line.coverSummary,
-        conditionCode: line.conditionCode,
-        conditionLabel: line.conditionLabel,
-      };
-    }).sort(movementSort);
+    )
+      .map((line) => {
+        const quantities = autopart216vMovementQuantities({
+          movement,
+          outstandingQty: line.outstandingQty,
+          previousQty: line.previousQty,
+        });
+        return {
+          id: line.id,
+          identityKey: line.identityKey,
+          movement,
+          status: line.status,
+          statusLabel: line.statusLabel,
+          currentlyOutstanding: true,
+          orderNumber: line.orderNumber,
+          customerAccount: line.customerAccount,
+          customerName: line.customerName,
+          customerOrderRef: line.customerOrderRef,
+          companyId: line.companyId,
+          companyName: line.companyName,
+          unmapped: line.unmapped,
+          sku: line.sku,
+          partMatchKey: line.partMatchKey,
+          description: line.description,
+          productKind: line.productKind,
+          productKindLabel: line.productKindLabel,
+          brand: line.brand,
+          brandSlug: line.brandSlug,
+          ...quantities,
+          unitValue: line.unitValue,
+          previousValue:
+            movement === "NEW"
+              ? null
+              : previousValueOf(line.identityKey, quantities.previousQty, line.unitValue),
+          currentValue: line.outstandingValue,
+          firstSeenAt: line.firstSeenAt,
+          ageLabel: line.ageLabel,
+          lastChangedAt: line.lastChangedAt,
+          clearedAt: null,
+          availQty: line.availQty,
+          incomingQty: line.incomingQty,
+          position: line.position,
+          positionLabel: line.positionLabel,
+          coverSummary: line.coverSummary,
+          conditionCode: line.conditionCode,
+          conditionLabel: line.conditionLabel,
+        };
+      })
+      .sort(movementSort);
   }
 
-  const ignoredFilters = ignored.filter((key) => input[key] != null) as Autopart216vMovementFilterKey[];
+  const ignoredFilters = ignored.filter(
+    (key) => input[key] != null,
+  ) as Autopart216vMovementFilterKey[];
   return {
     movement,
     label: AUTOPART_216V_MOVEMENT_LABEL[movement],
@@ -662,7 +703,9 @@ async function buildMovementRows(
       ? {
           id: previous.id,
           filename: previous.filename,
-          receivedLabel: formatOrDash(formatOperationalDateTime(previous.receivedAt ?? previous.importedAt)),
+          receivedLabel: formatOrDash(
+            formatOperationalDateTime(previous.receivedAt ?? previous.importedAt),
+          ),
         }
       : null,
     rows,
@@ -711,19 +754,24 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
   const now = new Date();
   const report = snapshot ? resolveAutopart216vReportDate(snapshot) : null;
   const lastBusinessDate = verified216vReportDate(report?.iso ?? null);
-  const weekendReview = headers
-    .map((header) => {
-      const resolved = resolveAutopart216vReportDate(header);
-      if (resolved.review !== "WEEKEND_DATE_UNVERIFIED") return null;
-      return describe216vWeekendReportReview({ filename: header.filename, observedDate: resolved.iso });
-    })
-    .filter((line): line is string => Boolean(line))
-    .join(" ");
+  const importDiagnostics = build216vImportDiagnostics(headers);
   const freshness = resolveAutopart216vFreshness({
     lastSuccessAt: snapshot?.importedAt ?? settings.lastSuccessAt,
     lastBusinessDate: report?.iso ?? null,
     now,
     scheduleHour: settings.scheduleHour,
+  });
+  const headline = headline216vFeedHealth({
+    status: freshness.status,
+    stale: freshness.stale,
+    lastError: settings.lastError,
+    lastBusinessDate,
+    now,
+  });
+  const operational = summarise216vOperationalStatus({
+    headline: headline.key,
+    freshness,
+    lastError: settings.lastError,
   });
 
   const allLines = snapshot ? enrichLines(snapshot.lines as unknown as LineRow[], now) : [];
@@ -745,12 +793,16 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
     rules: AUTOPART_216V_ATTENTION_RULES,
     STOCK_NOW_AVAILABLE: filtered.filter((l) => l.attention.includes("STOCK_NOW_AVAILABLE")),
     NO_STOCK_NO_INCOMING: filtered.filter((l) => l.attention.includes("NO_STOCK_NO_INCOMING")),
-    INCOMING_DOES_NOT_COVER: filtered.filter((l) => l.attention.includes("INCOMING_DOES_NOT_COVER")),
+    INCOMING_DOES_NOT_COVER: filtered.filter((l) =>
+      l.attention.includes("INCOMING_DOES_NOT_COVER"),
+    ),
     LONG_STANDING: filtered.filter((l) => l.attention.includes("LONG_STANDING")),
     HIGH_VALUE: filtered.filter((l) => l.attention.includes("HIGH_VALUE")),
   };
 
-  const uniqueAttentionIds = new Set(filtered.filter((l) => l.attention.length > 0).map((l) => l.id));
+  const uniqueAttentionIds = new Set(
+    filtered.filter((l) => l.attention.length > 0).map((l) => l.id),
+  );
   const attentionSummary = {
     STOCK_NOW_AVAILABLE: attention.STOCK_NOW_AVAILABLE.length,
     NO_STOCK_NO_INCOMING: attention.NO_STOCK_NO_INCOMING.length,
@@ -765,7 +817,9 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
   const pagedCustomers = paginate(customerGroups, page, pageSize);
 
   const movementResult =
-    snapshot && input.movement ? await buildMovementRows(snapshot, allLines, input.movement, input, now) : null;
+    snapshot && input.movement
+      ? await buildMovementRows(snapshot, allLines, input.movement, input, now)
+      : null;
   const movement = movementResult
     ? {
         movement: movementResult.movement,
@@ -777,8 +831,14 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
       }
     : null;
 
-  const brands = [...new Set(allLines.map((l) => l.brandSlug).filter((b): b is string => Boolean(b)))].sort();
-  const customers = [...new Map(allLines.map((l) => [l.customerAccount.trim().toUpperCase(), l.customerName])).entries()]
+  const brands = [
+    ...new Set(allLines.map((l) => l.brandSlug).filter((b): b is string => Boolean(b))),
+  ].sort();
+  const customers = [
+    ...new Map(
+      allLines.map((l) => [l.customerAccount.trim().toUpperCase(), l.customerName]),
+    ).entries(),
+  ]
     .filter(([acc]) => acc)
     .map(([account, name]) => ({ account, name }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -787,13 +847,10 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
     canManage: hasPermission(profile, "purchasing.backorders.manage"),
     freshness: {
       ...freshness,
-      headline: headline216vFeedHealth({
-        status: freshness.status,
-        stale: freshness.stale,
-        lastError: settings.lastError,
-        lastBusinessDate,
-      }),
-      warning: [freshness.warning, weekendReview].filter(Boolean).join(" ") || null,
+      headline,
+      operationalKind: operational.kind,
+      /** Concise operational status only — historical anomalies live in diagnostics. */
+      warning: operational.message,
       lastReceivedLabel: snapshot
         ? formatOrDash(formatOperationalDateTime(snapshot.receivedAt ?? snapshot.importedAt))
         : "Never",
@@ -808,6 +865,17 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
       emptyValid: snapshot?.emptyValid ?? false,
       source: snapshot?.source ?? null,
       sourceLabel: label216vSnapshotSource(snapshot?.source ?? null),
+      diagnostics: importDiagnostics.map((row) => ({
+        ...row,
+        recordedDateLabel: formatOrDash(formatDate(row.recordedDate)),
+        receivedAtLabel: row.receivedAt
+          ? formatOrDash(formatOperationalDateTime(new Date(row.receivedAt)))
+          : "—",
+        importedAtLabel: row.importedAt
+          ? formatOrDash(formatOperationalDateTime(new Date(row.importedAt)))
+          : "—",
+      })),
+      diagnosticsCount: importDiagnostics.length,
     },
     feed: {
       enabled: settings.enabled,
@@ -847,12 +915,23 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
       attention: attentionSummary.unique,
     },
     attentionSummary,
-    lines: view === "lines" ? pagedLines : { total: filtered.length, page, pageSize, rows: [] as BackorderLineView[] },
-    skus: view === "sku" ? pagedSkus : { total: skuGroups.length, page, pageSize, rows: [] as ReturnType<typeof groupSkus> },
+    lines:
+      view === "lines"
+        ? pagedLines
+        : { total: filtered.length, page, pageSize, rows: [] as BackorderLineView[] },
+    skus:
+      view === "sku"
+        ? pagedSkus
+        : { total: skuGroups.length, page, pageSize, rows: [] as ReturnType<typeof groupSkus> },
     customerGroups:
       view === "customer"
         ? pagedCustomers
-        : { total: customerGroups.length, page, pageSize, rows: [] as ReturnType<typeof groupCustomers> },
+        : {
+            total: customerGroups.length,
+            page,
+            pageSize,
+            rows: [] as ReturnType<typeof groupCustomers>,
+          },
     attention,
     movement,
   };
@@ -866,7 +945,11 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
   });
   if (!current) throw new AuthError("Backorder line not found", "NOT_FOUND", 404);
   if (current.changeStatus === "CLEARED") {
-    throw new AuthError("Cleared backorders are historical and have no current outstanding detail", "NOT_FOUND", 404);
+    throw new AuthError(
+      "Cleared backorders are historical and have no current outstanding detail",
+      "NOT_FOUND",
+      404,
+    );
   }
   const [history, enriched, fbaQty] = await Promise.all([
     prisma.autopartBackorderLine.findMany({
@@ -880,7 +963,9 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
       },
     }),
     Promise.resolve(enrichLines([current as unknown as LineRow])[0]!),
-    import("@/server/purchasing/fba-stock").then((mod) => mod.fbaQtyForMatchKey(current.partMatchKey)),
+    import("@/server/purchasing/fba-stock").then((mod) =>
+      mod.fbaQtyForMatchKey(current.partMatchKey),
+    ),
   ]);
   const timeline = history
     .map((h) => ({
