@@ -125,13 +125,19 @@ function AdminCustomers() {
             >
               Autopart accounts
             </Link>
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
+            <Link
+              to="/admin/customers/setup"
               className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-[13px] font-bold uppercase tracking-wide text-primary-foreground"
             >
               <Plus className="size-4" aria-hidden />
               Create customer
+            </Link>
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
+            >
+              Quick create
             </button>
           </div>
         }
@@ -224,7 +230,10 @@ function AdminCustomers() {
           </button>
         ) : null}
       </div>
-      <p className="border-b border-border/70 px-4 py-2 text-[12px] text-steel sm:px-6" role="status">
+      <p
+        className="border-b border-border/70 px-4 py-2 text-[12px] text-steel sm:px-6"
+        role="status"
+      >
         Showing {statusLabel.toLowerCase()}
         {q ? ` matching “${q}”` : ""}.
         {status === "" && q
@@ -252,13 +261,12 @@ function AdminCustomers() {
                 ? `Nothing in ${statusLabel.toLowerCase()} matches “${q}”.`
                 : "Create a customer or approve a trade application."}
             </p>
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="mt-6 h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase text-primary-foreground"
+            <Link
+              to="/admin/customers/setup"
+              className="mt-6 inline-flex h-10 items-center rounded-md bg-primary px-5 text-[13px] font-bold uppercase text-primary-foreground"
             >
               Create customer
-            </button>
+            </Link>
           </div>
         ) : (
           <div className="overflow-x-auto rounded-md border border-border">
