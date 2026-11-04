@@ -103,6 +103,8 @@ describe("backorder condition enrichment", () => {
     const first = await confirmAutopart216vImport(adminId, {
       text: csv216v(4),
       filename: `216V-cond-${tag}-1.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const firstLines = (
@@ -154,6 +156,8 @@ describe("backorder condition enrichment", () => {
     const second = await confirmAutopart216vImport(adminId, {
       text: csv216v(4, "Condition Customer Again"),
       filename: `216V-cond-${tag}-2.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const secondLines = (
@@ -174,6 +178,8 @@ describe("backorder condition enrichment", () => {
     await confirmAutopart216vImport(adminId, {
       text: clearedFirst.replace(`"BO${tag}Z"`, `"BO${tag}Z"`).split("\n").filter((line) => !line.includes(`BO${tag}Z`)).join("\n"),
       filename: `216V-cond-${tag}-3.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const cleared = await getBackorderWorkspace(adminId, { movement: "CLEARED", pageSize: 50 });

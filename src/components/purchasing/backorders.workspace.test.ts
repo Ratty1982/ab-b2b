@@ -21,7 +21,10 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain('aria-label="Export backorders CSV"');
     expect(src).toContain("every field shown on the lines");
     expect(src).toContain("function SettingsBody");
-    expect(src).toContain("Upload 216V");
+    expect(src).toContain("Choose 216V file");
+    expect(src).toContain("Report date (required)");
+    expect(src).toContain("Confirm import");
+    expect(src).toContain("confirmedReportDate");
     expect(src).toContain("Poll mailbox");
     expect(src).toContain("Last poll");
     expect(src).toContain("Latest report date");
@@ -31,7 +34,7 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain("Last error");
     expect(src).toContain("bytesToBase64");
     expect(src).toContain('cache: "no-store"');
-    expect(src.indexOf("function SettingsBody")).toBeLessThan(src.indexOf("Upload 216V"));
+    expect(src.indexOf("function SettingsBody")).toBeLessThan(src.indexOf("Choose 216V file"));
   });
 
   it("exposes operational view counts, attention summary, and search copy", () => {
@@ -46,7 +49,7 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain("data?.canManage");
     expect(src).toContain("Upload and mailbox poll require purchasing.manage");
     expect(src).toContain("Export current view CSV");
-    const uploadIdx = src.indexOf("Upload 216V");
+    const uploadIdx = src.indexOf("Choose 216V file");
     const canManageIdx = src.lastIndexOf("data?.canManage", uploadIdx);
     expect(canManageIdx).toBeGreaterThan(0);
     expect(canManageIdx).toBeLessThan(uploadIdx);

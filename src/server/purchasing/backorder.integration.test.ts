@@ -154,9 +154,9 @@ describe("216V import snapshots", () => {
     const text = buildAutopart216vFixture();
     const hash = createHash("sha256").update(text).digest("hex");
     await prisma.autopartBackorderSnapshot.deleteMany({ where: { fileHash: hash } });
-    const first = await confirmAutopart216vImport(adminId, { text, filename: "216V.CSV", source: "MANUAL" });
+    const first = await confirmAutopart216vImport(adminId, { text, filename: "216V.CSV", confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" });
     expect(first.duplicate).toBe(false);
-    const again = await confirmAutopart216vImport(adminId, { text, filename: "216V.csv", source: "MANUAL" });
+    const again = await confirmAutopart216vImport(adminId, { text, filename: "216V.csv", confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" });
     expect(again.duplicate).toBe(true);
     expect(again.id).toBe(first.id);
     const snap = await prisma.autopartBackorderSnapshot.findUniqueOrThrow({ where: { id: first.id } });
@@ -193,7 +193,7 @@ describe("216V import snapshots", () => {
       value: "8.00",
     };
     const first = csv216v([keep, drop]);
-    await confirmAutopart216vImport(adminId, { text: first, filename: `216V-${stamp}-1.csv`, source: "MANUAL" });
+    await confirmAutopart216vImport(adminId, { text: first, filename: `216V-${stamp}-1.csv`, confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" });
     const second = csv216v([
       { ...keep, qty: 6, value: "12.00" },
       {
@@ -222,7 +222,7 @@ describe("216V import snapshots", () => {
         value: "4.00",
       },
     ]);
-    await confirmAutopart216vImport(adminId, { text: second, filename: `216V-${stamp}-2.csv`, source: "MANUAL" });
+    await confirmAutopart216vImport(adminId, { text: second, filename: `216V-${stamp}-2.csv`, confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" });
     const reduced = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
       where: { filename: `216V-${stamp}-2.csv` },
       include: { lines: true },
@@ -232,7 +232,7 @@ describe("216V import snapshots", () => {
     expect(reduced.lines.find((l) => l.customerOrderRef === "REF-NEW")?.changeStatus).toBe("NEW");
     expect(reduced.outstandingLineCount).toBe(2);
 
-    await confirmAutopart216vImport(adminId, { text: thirdText, filename: `216V-${stamp}-3.csv`, source: "MANUAL" });
+    await confirmAutopart216vImport(adminId, { text: thirdText, filename: `216V-${stamp}-3.csv`, confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" });
     const increased = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
       where: { filename: `216V-${stamp}-3.csv` },
       include: { lines: true },
@@ -242,7 +242,7 @@ describe("216V import snapshots", () => {
 
     const companiesBefore = await prisma.company.count();
     await expect(
-      confirmAutopart216vImport(adminId, { text: "not a 216v file", filename: "notes.csv", source: "MANUAL" }),
+      confirmAutopart216vImport(adminId, { text: "not a 216v file", filename: "notes.csv", confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" }),
     ).rejects.toBeInstanceOf(AuthError);
     const afterFail = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
       where: { filename: `216V-${stamp}-3.csv` },
@@ -268,6 +268,8 @@ describe("216V import snapshots", () => {
     const result = await confirmAutopart216vImport(adminId, {
       text: empty,
       filename: `216V-${stamp}-empty.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     expect(result.emptyValid).toBe(true);
@@ -279,7 +281,7 @@ describe("216V import snapshots", () => {
     expect(snap.outstandingLineCount).toBe(0);
     expect(snap.lines.every((l) => l.changeStatus === "CLEARED")).toBe(true);
     await expect(
-      confirmAutopart216vImport(adminId, { text: "Order No,Part Number\n", filename: "empty.csv", source: "MANUAL" }),
+      confirmAutopart216vImport(adminId, { text: "Order No,Part Number\n", filename: "empty.csv", confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" }),
     ).rejects.toBeInstanceOf(AuthError);
   });
 });
@@ -357,7 +359,7 @@ describe("216V matching, cover, RBAC, export", () => {
         value: "8.00",
       },
     ]);
-    await confirmAutopart216vImport(adminId, { text: live, filename: `216V-${stamp}-cover.csv`, source: "MANUAL" });
+    await confirmAutopart216vImport(adminId, { text: live, filename: `216V-${stamp}-cover.csv`, confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" });
     const workspace = await getBackorderWorkspace(adminId, { q: String(stamp) });
     const mapped = workspace.lines.rows.find((r) => r.orderNumber === `SB${stamp}M`);
     const unmapped = workspace.lines.rows.find((r) => r.orderNumber === `SB${stamp}U`);
@@ -414,7 +416,7 @@ describe("216V matching, cover, RBAC, export", () => {
     expect(csvView.csv).toContain(catalogueSku);
     await expect(updateBackorderFeedSettings(accountsId, { enabled: true })).rejects.toBeInstanceOf(AuthError);
     await expect(
-      confirmAutopart216vImport(accountsId, { text: live, filename: "216V-denied.csv", source: "MANUAL" }),
+      confirmAutopart216vImport(accountsId, { text: live, filename: "216V-denied.csv", confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" }),
     ).rejects.toBeInstanceOf(AuthError);
     await expect(pollBackorderMailboxNow(accountsId)).rejects.toBeInstanceOf(AuthError);
   });
@@ -553,6 +555,8 @@ describe("216V expanded-field identity continuity", () => {
     const first = await confirmAutopart216vImport(adminId, {
       text,
       filename: `216V-expanded-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     expect(first.duplicate).toBe(false);
@@ -566,6 +570,8 @@ describe("216V expanded-field identity continuity", () => {
     const again = await confirmAutopart216vImport(adminId, {
       text,
       filename: `216V-expanded-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     expect(again.duplicate).toBe(true);
@@ -599,6 +605,8 @@ describe("216V expanded-field identity continuity", () => {
     await confirmAutopart216vImport(adminId, {
       text: truncated,
       filename: `216V-trunc-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const firstSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
@@ -637,6 +645,8 @@ describe("216V expanded-field identity continuity", () => {
     await confirmAutopart216vImport(adminId, {
       text: expandedSameQty,
       filename: `216V-exp-same-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const sameSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
@@ -681,6 +691,8 @@ describe("216V expanded-field identity continuity", () => {
     await confirmAutopart216vImport(adminId, {
       text: reduced,
       filename: `216V-exp-red-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const redSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
@@ -719,6 +731,8 @@ describe("216V expanded-field identity continuity", () => {
     await confirmAutopart216vImport(adminId, {
       text: increased,
       filename: `216V-exp-inc-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const incSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
@@ -759,6 +773,8 @@ describe("216V expanded-field identity continuity", () => {
     await confirmAutopart216vImport(adminId, {
       text: first,
       filename: `216V-dup-a-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
 
@@ -789,6 +805,8 @@ describe("216V expanded-field identity continuity", () => {
     await confirmAutopart216vImport(adminId, {
       text: prefixSafe,
       filename: `216V-dup-b-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const safeSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
@@ -827,6 +845,8 @@ describe("216V expanded-field identity continuity", () => {
     await confirmAutopart216vImport(adminId, {
       text: ambFirst,
       filename: `216V-amb-a-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const ambSecond = csv216v([
@@ -845,6 +865,8 @@ describe("216V expanded-field identity continuity", () => {
     await confirmAutopart216vImport(adminId, {
       text: ambSecond,
       filename: `216V-amb-b-${expStamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     const ambSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
@@ -881,15 +903,19 @@ describe("216V movement drill-down", () => {
     const previous = await confirmAutopart216vImport(adminId, {
       text: csv216v([row(up, 4), row(down, 7), row(same, 1), row(gone1, 3, "2.50"), row(gone2, 5)]),
       filename: `216V-mv-a-${stamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     previousId = previous.id;
     await expect(
-      confirmAutopart216vImport(adminId, { text: "not a 216v file", filename: "bad.csv", source: "MANUAL" }),
+      confirmAutopart216vImport(adminId, { text: "not a 216v file", filename: "bad.csv", confirmedReportDate: "2026-10-12", allowHistoricalImport: true, source: "MANUAL" }),
     ).rejects.toBeInstanceOf(AuthError);
     await confirmAutopart216vImport(adminId, {
       text: csv216v([row(up, 7), row(down, 4), row(same, 1), row(new1, 2), row(new2, 1)]),
       filename: `216V-mv-b-${stamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
 
@@ -992,6 +1018,8 @@ describe("216V movement drill-down", () => {
         row(new2, 1),
       ]),
       filename: `216V-mv-c-${stamp}.csv`,
+      confirmedReportDate: "2026-10-12",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     for (const movement of ["NEW", "INCREASED", "REDUCED", "CLEARED"] as const) {
@@ -1067,6 +1095,8 @@ describe("216V report chronology", () => {
     const monday = await confirmAutopart216vImport(adminId, {
       text: mondayText,
       filename: workingName,
+      confirmedReportDate: workingDay,
+      allowHistoricalImport: true,
       source: "MANUAL",
       receivedAt: new Date(),
     });
@@ -1074,6 +1104,7 @@ describe("216V report chronology", () => {
     expect(monday.duplicate).toBe(false);
     expect(monday.becameCurrent).toBe(true);
     expect(monday.reportDate).toBe(workingDay);
+    expect(monday.reportDateSource).toBe("MANUAL_CONFIRMED");
 
     const saturday = await confirmAutopart216vImport(adminId, {
       text: saturdayText,
@@ -1122,9 +1153,13 @@ describe("216V report chronology", () => {
     const again = await confirmAutopart216vImport(adminId, {
       text: mondayText,
       filename: workingName,
+      confirmedReportDate: "2099-01-01",
+      allowHistoricalImport: true,
       source: "MANUAL",
     });
     expect(again.duplicate).toBe(true);
+    expect(again.duplicateMessage).toMatch(/identical file content/i);
+    expect(again.reportDate).toBe(workingDay);
     expect(again.id).toBe(monday.id);
     expect(again.becameCurrent).toBe(true);
     expect(await prisma.autopartBackorderSnapshot.count({ where: { fileHash: monday.fileHash } })).toBe(1);
@@ -1351,6 +1386,161 @@ describe("216V report chronology", () => {
         await prisma.autopartBackorderSnapshot.deleteMany({ where: { id: { in: ids } } });
       }
     }
+  });
+});
+
+describe("216V manual report date confirmation", () => {
+  it("rejects undated manual uploads without a confirmed report date", async () => {
+    const text = csv216v([
+      {
+        order: `SB${stamp}NODATE`,
+        account: "UNMAPPEDX",
+        name: "Unmapped Factors",
+        part: unknownSku,
+        desc: "Needs confirmed date",
+        ref: "REF-ND",
+        qty: 1,
+        unit: "1.00",
+        value: "1.00",
+      },
+    ]);
+    await expect(
+      confirmAutopart216vImport(adminId, {
+        text,
+        filename: "216V.csv",
+        source: "MANUAL",
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/confirm the 216v report date/i),
+    });
+  });
+
+  it("keeps content-hash duplicates even when a different report date is confirmed", async () => {
+    const text = csv216v([
+      {
+        order: `SB${stamp}HASH`,
+        account: "UNMAPPEDX",
+        name: "Unmapped Factors",
+        part: unknownSku,
+        desc: "Hash duplicate line",
+        ref: "REF-HASH",
+        qty: 7,
+        unit: "1.00",
+        value: "7.00",
+      },
+    ]);
+    const first = await confirmAutopart216vImport(adminId, {
+      text,
+      filename: "216V_20261103.csv",
+      confirmedReportDate: "2026-11-03",
+      allowHistoricalImport: true,
+      source: "MANUAL",
+    });
+    expect(first.duplicate).toBe(false);
+    expect(first.reportDate).toBe("2026-11-03");
+    expect(first.reportDateSource).toBe("MANUAL_CONFIRMED");
+
+    const preview = await (
+      await import("@/server/purchasing/backorder-import")
+    ).previewAutopart216vImport(adminId, {
+      text,
+      filename: "216V.csv",
+      confirmedReportDate: "2026-11-04",
+    });
+    expect(preview.duplicate).toBe(true);
+    expect(preview.wouldBecomeCurrent).toBe(false);
+    expect(preview.duplicateMessage).toMatch(/identical file content/i);
+    expect(preview.duplicateOfFilename).toBe("216V_20261103.csv");
+    expect(preview.reportDate).toBe("2026-11-04");
+
+    const again = await confirmAutopart216vImport(adminId, {
+      text,
+      filename: "216V.csv",
+      confirmedReportDate: "2026-11-04",
+      allowHistoricalImport: true,
+      source: "MANUAL",
+    });
+    expect(again.duplicate).toBe(true);
+    expect(again.id).toBe(first.id);
+    expect(again.reportDate).toBe("2026-11-03");
+    expect(again.duplicateMessage).toMatch(/cannot create a second snapshot/i);
+
+    await prisma.autopartBackorderSnapshot.deleteMany({ where: { id: first.id } });
+  });
+
+  it("refuses silent historical replay until allowHistoricalImport is set", async () => {
+    const newer = await confirmAutopart216vImport(adminId, {
+      text: csv216v([
+        {
+          order: `SB${stamp}NEW`,
+          account: "UNMAPPEDX",
+          name: "Unmapped Factors",
+          part: unknownSku,
+          desc: "Newer",
+          ref: "REF-NEW",
+          qty: 2,
+          unit: "1.00",
+          value: "2.00",
+        },
+      ]),
+      filename: "216V_newer.csv",
+      confirmedReportDate: "2026-11-05",
+      source: "MANUAL",
+    });
+    expect(newer.becameCurrent).toBe(true);
+
+    await expect(
+      confirmAutopart216vImport(adminId, {
+        text: csv216v([
+          {
+            order: `SB${stamp}OLD`,
+            account: "UNMAPPEDX",
+            name: "Unmapped Factors",
+            part: unknownSku,
+            desc: "Older",
+            ref: "REF-OLD",
+            qty: 1,
+            unit: "1.00",
+            value: "1.00",
+          },
+        ]),
+        filename: "216V_older.csv",
+        confirmedReportDate: "2026-11-04",
+        source: "MANUAL",
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/historical import/i),
+    });
+
+    const saved = await confirmAutopart216vImport(adminId, {
+      text: csv216v([
+        {
+          order: `SB${stamp}OLD2`,
+          account: "UNMAPPEDX",
+          name: "Unmapped Factors",
+          part: unknownSku,
+          desc: "Older saved",
+          ref: "REF-OLD2",
+          qty: 1,
+          unit: "1.00",
+          value: "1.00",
+        },
+      ]),
+      filename: "216V_older2.csv",
+      confirmedReportDate: "2026-11-04",
+      allowHistoricalImport: true,
+      source: "MANUAL",
+    });
+    expect(saved.duplicate).toBe(false);
+    expect(saved.becameCurrent).toBe(false);
+    expect(saved.reportDateSource).toBe("MANUAL_CONFIRMED");
+
+    const workspace = await getBackorderWorkspace(adminId, {});
+    expect(workspace.current?.snapshotId).toBe(newer.id);
+
+    await prisma.autopartBackorderSnapshot.deleteMany({
+      where: { id: { in: [newer.id, saved.id] } },
+    });
   });
 });
 

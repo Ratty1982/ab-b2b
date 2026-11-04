@@ -11,9 +11,11 @@ import { hasPermission } from "@/server/rbac/access";
 import { recordAuditEvent } from "@/server/audit/record";
 import { skuMatchKey } from "@/domain/stock";
 import {
+  parseManual216vReportDate,
   pickCurrent216vSnapshot,
   previous216vSnapshot,
   resolveAutopart216vReportDate,
+  suggestManual216vReportDate,
 } from "@/domain/autopart-216v-report-date";
 import { listCommitted216vSnapshots } from "@/server/purchasing/backorder-chronology";
 import {
@@ -44,6 +46,10 @@ export type Autopart216vImportOutcome = {
   /** Observed calendar date. A weekend date is not a verified reporting day. */
   reportDate: string;
   reportDateReview: "WEEKEND_DATE_UNVERIFIED" | null;
+  reportDateSource?: string;
+  /** Present when duplicate=true — content hash matched an existing COMMITTED snapshot. */
+  duplicateOfFilename?: string | null;
+  duplicateMessage?: string;
 };
 
 function fileHashOf(input: { bytes: Buffer | null; text: string }): string {
@@ -116,6 +122,26 @@ async function mapProducts(matchKeys: string[]): Promise<Map<string, string>> {
   return out;
 }
 
+function duplicateContentMessage(input: {
+  uploadedFilename?: string | null;
+  existingFilename: string | null;
+  reportDate: string;
+  fileHash: string;
+}): string {
+  const existingName = input.existingFilename?.trim() || "an earlier 216V snapshot";
+  const uploaded = input.uploadedFilename?.trim();
+  const nameNote =
+    uploaded && uploaded !== existingName
+      ? ` Your file was named ${uploaded}; the matching snapshot is stored as ${existingName}.`
+      : "";
+  return (
+    `Already imported (${existingName}, report ${input.reportDate}). ` +
+    `This rejection is based on identical file content (SHA-256 ${input.fileHash.slice(0, 12)}…), not the filename or report date.` +
+    nameNote +
+    ` Choosing a different report date cannot create a second snapshot. The previous outstanding position was left unchanged.`
+  );
+}
+
 export async function confirmAutopart216vImport(
   actorUserId: string | null,
   raw: {
@@ -124,6 +150,10 @@ export async function confirmAutopart216vImport(
     filename?: string;
     source?: "MANUAL" | "EMAIL" | "SCHEDULE";
     receivedAt?: Date;
+    /** Required for MANUAL. Ignored for email/schedule. Date alone never bypasses content-hash duplicates. */
+    confirmedReportDate?: string | null;
+    /** Required for MANUAL when the confirmed date would not become the current position. */
+    allowHistoricalImport?: boolean;
   },
 ): Promise<Autopart216vImportOutcome> {
   if (actorUserId) {
@@ -158,6 +188,17 @@ export async function confirmAutopart216vImport(
     );
   }
 
+  const isManual = raw.source === "MANUAL";
+  let confirmedReportDate: string | null = null;
+  if (isManual) {
+    confirmedReportDate = parseManual216vReportDate(raw.confirmedReportDate);
+    if (!confirmedReportDate) {
+      await reject(
+        "Confirm the 216V report date (YYYY-MM-DD) before importing. The CSV has no reporting date. The previous snapshot was not replaced.",
+      );
+    }
+  }
+
   const hash = fileHashOf(upload);
   const existing = await prisma.autopartBackorderSnapshot.findUnique({
     where: { fileHash: hash },
@@ -183,6 +224,13 @@ export async function confirmAutopart216vImport(
   ) {
     const currentId = pickCurrent216vSnapshot(await listCommitted216vSnapshots())?.id ?? null;
     const existingReport = resolveAutopart216vReportDate(existing);
+    const duplicateMessage = duplicateContentMessage({
+      uploadedFilename: raw.filename ?? null,
+      existingFilename: existing.filename,
+      reportDate: existingReport.iso,
+      fileHash: existing.fileHash,
+    });
+    await rememberImportError(duplicateMessage);
     return {
       id: existing.id,
       duplicate: true,
@@ -198,6 +246,9 @@ export async function confirmAutopart216vImport(
       becameCurrent: currentId === existing.id,
       reportDate: existingReport.iso,
       reportDateReview: existingReport.review,
+      reportDateSource: existingReport.source,
+      duplicateOfFilename: existing.filename,
+      duplicateMessage,
     };
   }
 
@@ -207,8 +258,9 @@ export async function confirmAutopart216vImport(
   const receivedAt = raw.receivedAt ?? now;
   const report = resolveAutopart216vReportDate({
     filename: raw.filename ?? null,
-    receivedAt: raw.receivedAt ?? null,
+    receivedAt: isManual ? null : (raw.receivedAt ?? null),
     importedAt: now,
+    confirmedReportDate,
   });
   const businessDate = utcDateOnly(report.iso);
   const headers = await listCommitted216vSnapshots();
@@ -220,6 +272,15 @@ export async function confirmAutopart216vImport(
     importedAt: now,
   };
   const becameCurrent = pickCurrent216vSnapshot([...headers, incoming])?.id === incoming.id;
+  if (isManual && !becameCurrent && !raw.allowHistoricalImport) {
+    const current = pickCurrent216vSnapshot(headers);
+    const currentReport = current ? resolveAutopart216vReportDate(current).iso : null;
+    await reject(
+      `Report date ${report.iso} would not replace the current outstanding position` +
+        (currentReport ? ` (${current?.filename ?? "current snapshot"}, report ${currentReport})` : "") +
+        `. Confirm historical import to save it without changing today's backorders. The previous snapshot was not replaced.`,
+    );
+  }
   const previousHeader = previous216vSnapshot(headers, incoming);
   const previous = previousHeader
     ? await prisma.autopartBackorderSnapshot.findUnique({
@@ -339,7 +400,9 @@ export async function confirmAutopart216vImport(
         reportDateVerified: report.verifiedWorkingDay,
         reportDateReview: report.review,
         filenameDate: report.filenameDate,
+        confirmedReportDate: confirmedReportDate,
         becameCurrent,
+        allowHistoricalImport: Boolean(raw.allowHistoricalImport),
       },
       lines: { createMany: { data: lineData } },
     },
@@ -355,6 +418,14 @@ export async function confirmAutopart216vImport(
     },
     update: { lastSuccessAt: now, lastError: null },
   });
+
+  const actor =
+    actorUserId == null
+      ? null
+      : await prisma.user.findUnique({
+          where: { id: actorUserId },
+          select: { id: true, email: true, name: true },
+        });
 
   await recordAuditEvent({
     action:
@@ -375,7 +446,13 @@ export async function confirmAutopart216vImport(
       reportDateSource: report.source,
       reportDateVerified: report.verifiedWorkingDay,
       reportDateReview: report.review,
+      confirmedReportDate: confirmedReportDate,
+      filenameDate: report.filenameDate,
       becameCurrent,
+      allowHistoricalImport: Boolean(raw.allowHistoricalImport),
+      administratorUserId: actor?.id ?? actorUserId ?? null,
+      administratorEmail: actor?.email ?? null,
+      administratorName: actor?.name ?? null,
     },
   });
 
@@ -394,21 +471,73 @@ export async function confirmAutopart216vImport(
     becameCurrent,
     reportDate: report.iso,
     reportDateReview: report.review,
+    reportDateSource: report.source,
   };
 }
 
 export async function previewAutopart216vImport(
   actorUserId: string,
-  raw: { text: string; filename?: string },
+  raw: {
+    text?: string;
+    bytesBase64?: string;
+    filename?: string;
+    confirmedReportDate?: string | null;
+  },
 ) {
   const profile = await requirePurchasingAccess(actorUserId);
   if (!hasPermission(profile, "purchasing.backorders.view")) {
     throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
   }
-  if (!isAutopart216vReport(raw.text)) {
+  const upload = read216vUpload(raw);
+  if (!isAutopart216vReport(upload.text, raw.filename)) {
     throw new AuthError("File does not look like an Autopart 216V report", "VALIDATION", 400);
   }
-  const parsed = parseAutopart216vReport(raw.text);
+  const parsed = parseAutopart216vReport(upload.text);
+  const suggestedReportDate = suggestManual216vReportDate({ filename: raw.filename ?? null });
+  const confirmedReportDate =
+    parseManual216vReportDate(raw.confirmedReportDate) ?? suggestedReportDate;
+  const report = resolveAutopart216vReportDate({
+    filename: raw.filename ?? null,
+    confirmedReportDate,
+    importedAt: new Date(),
+  });
+  const hash = fileHashOf(upload);
+  const existing = await prisma.autopartBackorderSnapshot.findUnique({
+    where: { fileHash: hash },
+    select: {
+      id: true,
+      status: true,
+      filename: true,
+      fileHash: true,
+      businessDate: true,
+      receivedAt: true,
+      importedAt: true,
+    },
+  });
+  const duplicate =
+    existing?.status === "COMMITTED" &&
+    isCommitted216vSnapshotHash(hash, new Set([existing.fileHash]));
+  const headers = await listCommitted216vSnapshots();
+  const incoming = {
+    id: "incoming",
+    filename: raw.filename ?? "216V.csv",
+    businessDate: utcDateOnly(report.iso),
+    receivedAt: new Date(),
+    importedAt: new Date(),
+  };
+  const wouldBecomeCurrent =
+    !duplicate && pickCurrent216vSnapshot([...headers, incoming])?.id === incoming.id;
+  const existingReport = existing ? resolveAutopart216vReportDate(existing) : null;
+  const duplicateMessage =
+    duplicate && existing
+      ? duplicateContentMessage({
+          uploadedFilename: raw.filename ?? null,
+          existingFilename: existing.filename,
+          reportDate: existingReport?.iso ?? report.iso,
+          fileHash: existing.fileHash,
+        })
+      : null;
+
   return {
     headerFound: parsed.headerFound,
     errors: parsed.errors,
@@ -418,7 +547,20 @@ export async function previewAutopart216vImport(
     skus: parsed.skuCount,
     outstandingQty: parsed.outstandingQty,
     outstandingValue: parsed.outstandingValue,
-    emptyValid: parsed.rows.length === 0 && isStrongEmpty216vReport(raw.text),
+    emptyValid: parsed.rows.length === 0 && isStrongEmpty216vReport(upload.text),
+    suggestedReportDate,
+    confirmedReportDate,
+    reportDate: report.iso,
+    reportDateSource: report.source,
+    reportDateReview: report.review,
+    reportDateVerified: report.verifiedWorkingDay,
+    filenameDate: report.filenameDate,
+    fileHash: hash,
+    duplicate,
+    duplicateOfFilename: duplicate ? (existing?.filename ?? null) : null,
+    duplicateMessage,
+    wouldBecomeCurrent,
+    requiresHistoricalConfirmation: !duplicate && !wouldBecomeCurrent,
     sample: parsed.rows.slice(0, 20).map((r) => ({
       orderNumber: r.orderNumber,
       account: r.customerAccount,

@@ -1,7 +1,9 @@
 /**
  * 216V report date is the report's own business day, not the moment it was imported.
- * Filename `216V_YYYYMMDD` wins, then the email received day, then a previously
- * stored business date, then the import clock.
+ * Manual confirmed date wins when provided. Otherwise filename `216V_YYYYMMDD`,
+ * then a previously stored business date, then the email received day, then the
+ * import clock. Persisted business dates must outrank receivedAt so manual
+ * confirmations are not rebuilt from the import clock on read.
  *
  * Autopart sends scheduled 216V reports Monday to Friday at about 18:15 Europe/London.
  * A Saturday or Sunday calendar date is stored as observed and flagged for review.
@@ -18,7 +20,13 @@
 
 import { dateOnlyIsoFromDate, todayLondonDateOnly } from "@/domain/sales-history-period";
 
-export type Autopart216vReportDateSource = "FILENAME" | "RECEIVED_AT" | "BUSINESS_DATE" | "IMPORT_TIME";
+export type Autopart216vReportDateSource =
+  | "FILENAME"
+  | "RECEIVED_AT"
+  | "BUSINESS_DATE"
+  | "IMPORT_TIME"
+  /** Administrator-confirmed date on a manual upload. Email/schedule never use this. */
+  | "MANUAL_CONFIRMED";
 
 export type Autopart216vReportDateReview = "WEEKEND_DATE_UNVERIFIED";
 
@@ -150,21 +158,47 @@ function isoFromBusinessDate(value: Date | string): string | null {
   return isRealIsoDate(iso) ? iso : null;
 }
 
+/**
+ * Parse and validate a manual-upload report date (YYYY-MM-DD).
+ * Rejects impossible calendar dates. Does not rewrite weekends.
+ */
+export function parseManual216vReportDate(raw: string | null | undefined): string | null {
+  const iso = String(raw ?? "")
+    .trim()
+    .slice(0, 10);
+  return isRealIsoDate(iso) ? iso : null;
+}
+
+/** Prefill for the manual form: filename date when present, otherwise London today. */
+export function suggestManual216vReportDate(input: {
+  filename?: string | null;
+  now?: Date;
+}): string {
+  return reportDateFrom216vFilename(input.filename) ?? todayLondonDateOnly(input.now ?? new Date());
+}
+
 export function resolveAutopart216vReportDate(input: {
   filename?: string | null;
   receivedAt?: Date | null;
   businessDate?: Date | string | null;
   importedAt?: Date | null;
   now?: Date;
+  /** When set (manual confirm only), this date wins over filename / received / import clock. */
+  confirmedReportDate?: string | null;
 }): Autopart216vResolvedReportDate {
   const filenameDate = reportDateFrom216vFilename(input.filename);
+  const confirmed = parseManual216vReportDate(input.confirmedReportDate);
+  if (confirmed) return finishReportDate(confirmed, "MANUAL_CONFIRMED", filenameDate);
   if (filenameDate) return finishReportDate(filenameDate, "FILENAME", filenameDate);
-  if (input.receivedAt && !Number.isNaN(input.receivedAt.getTime())) {
-    return finishReportDate(todayLondonDateOnly(input.receivedAt), "RECEIVED_AT", null);
-  }
+  // Prefer the persisted / already-resolved business date over receivedAt so a
+  // manual confirmed date (or any stored report day) is not rebuilt from the
+  // import clock when the filename has no date.
   if (input.businessDate) {
     const stored = isoFromBusinessDate(input.businessDate);
     if (stored) return finishReportDate(stored, "BUSINESS_DATE", null);
+  }
+  if (input.receivedAt && !Number.isNaN(input.receivedAt.getTime())) {
+    return finishReportDate(todayLondonDateOnly(input.receivedAt), "RECEIVED_AT", null);
   }
   return finishReportDate(todayLondonDateOnly(input.importedAt ?? input.now ?? new Date()), "IMPORT_TIME", null);
 }

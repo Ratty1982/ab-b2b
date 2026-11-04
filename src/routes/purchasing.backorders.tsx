@@ -50,7 +50,11 @@ import {
   type Autopart216vMovement,
 } from "@/domain/autopart-216v-movement";
 import { AUTOPART_216V_SCHEDULE_LABEL } from "@/domain/autopart-216v-freshness";
-import { weekend216vImportNotice } from "@/domain/autopart-216v-report-date";
+import {
+  parseManual216vReportDate,
+  suggestManual216vReportDate,
+  weekend216vImportNotice,
+} from "@/domain/autopart-216v-report-date";
 import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate, formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
@@ -60,6 +64,7 @@ import {
   getPurchasingBackorderLineFn,
   getPurchasingBackordersFn,
   pollBackorderMailboxNowFn,
+  previewAutopart216vFn,
   updateBackorderFeedSettingsFn,
 } from "@/server/phase2/fns";
 
@@ -84,6 +89,14 @@ type LineRow = Data["lines"]["rows"][number];
 type MovementData = NonNullable<Data["movement"]>;
 type MovementRow = MovementData["rows"][number];
 type ImportNotice = { tone: "good" | "warn" | "bad"; message: string };
+type Manual216vPreview = Extract<Awaited<ReturnType<typeof previewAutopart216vFn>>, { ok: true }>["data"];
+type Manual216vDraft = {
+  filename: string;
+  bytesBase64: string;
+  reportDate: string;
+  preview: Manual216vPreview;
+  allowHistoricalImport: boolean;
+};
 
 function uncachedFetch(input: RequestInfo | URL, init?: RequestInit) {
   return fetch(input, { ...init, cache: "no-store" });
@@ -147,6 +160,7 @@ function BackordersPage() {
   const [notice, setNotice] = useState<ImportNotice | null>(null);
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
   const [clearedDetail, setClearedDetail] = useState<MovementRow | null>(null);
+  const [manualDraft, setManualDraft] = useState<Manual216vDraft | null>(null);
   const view = search.view ?? "lines";
   const movement = search.movement ?? null;
   const uploadId = useId();
@@ -224,13 +238,117 @@ function BackordersPage() {
     downloadCsv(result.data.csv, result.data.filename);
   }
 
-  async function onUpload(file: File) {
+  async function onPickManualFile(file: File) {
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    try {
+      if (!file.size) {
+        const message =
+          "The selected file is empty. Choose the Autopart 216V CSV. The previous snapshot was not replaced.";
+        setError(message);
+        setNotice({ tone: "bad", message });
+        return;
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const bytesBase64 = bytesToBase64(bytes);
+      const suggested = suggestManual216vReportDate({ filename: file.name });
+      const preview = await previewAutopart216vFn({
+        data: { bytesBase64, filename: file.name, confirmedReportDate: suggested },
+      });
+      if (!preview.ok) {
+        setError(preview.error);
+        setNotice({ tone: "bad", message: preview.error });
+        setManualDraft(null);
+        return;
+      }
+      setSettingsOpen(true);
+      setManualDraft({
+        filename: file.name,
+        bytesBase64,
+        reportDate: preview.data.confirmedReportDate || suggested,
+        preview: preview.data,
+        allowHistoricalImport: false,
+      });
+      if (preview.data.duplicate && preview.data.duplicateMessage) {
+        setNotice({ tone: "warn", message: preview.data.duplicateMessage });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "216V preview failed";
+      setError(message);
+      setNotice({ tone: "bad", message });
+      setManualDraft(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshManualPreview(nextDate: string, draft: Manual216vDraft) {
+    const confirmed = parseManual216vReportDate(nextDate);
+    if (!confirmed) {
+      setManualDraft({ ...draft, reportDate: nextDate });
+      return;
+    }
+    setBusy(true);
+    const preview = await previewAutopart216vFn({
+      data: {
+        bytesBase64: draft.bytesBase64,
+        filename: draft.filename,
+        confirmedReportDate: confirmed,
+      },
+    });
+    setBusy(false);
+    if (!preview.ok) {
+      setError(preview.error);
+      setNotice({ tone: "bad", message: preview.error });
+      return;
+    }
+    setManualDraft({
+      ...draft,
+      reportDate: confirmed,
+      preview: preview.data,
+      allowHistoricalImport: draft.allowHistoricalImport,
+    });
+    if (preview.data.duplicate && preview.data.duplicateMessage) {
+      setNotice({ tone: "warn", message: preview.data.duplicateMessage });
+    }
+  }
+
+  async function confirmManualUpload() {
+    if (!manualDraft) return;
+    const confirmed = parseManual216vReportDate(manualDraft.reportDate);
+    if (!confirmed) {
+      const message =
+        "Enter a valid report date (YYYY-MM-DD). The 216V CSV has no reporting date. The previous snapshot was not replaced.";
+      setError(message);
+      setNotice({ tone: "bad", message });
+      return;
+    }
+    if (manualDraft.preview.duplicate) {
+      const message =
+        manualDraft.preview.duplicateMessage ??
+        `Already imported (${manualDraft.preview.duplicateOfFilename ?? manualDraft.filename}). No second snapshot was created.`;
+      setError(message);
+      setNotice({ tone: "warn", message });
+      return;
+    }
+    if (manualDraft.preview.requiresHistoricalConfirmation && !manualDraft.allowHistoricalImport) {
+      const message =
+        `Report date ${confirmed} would not replace the current outstanding position. Tick “Import as historical only” to save it without changing today's backorders.`;
+      setError(message);
+      setNotice({ tone: "warn", message });
+      return;
+    }
     setBusy(true);
     setNotice(null);
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await confirmAutopart216vFn({
-        data: { bytesBase64: bytesToBase64(bytes), filename: file.name },
+        data: {
+          bytesBase64: manualDraft.bytesBase64,
+          filename: manualDraft.filename,
+          confirmedReportDate: confirmed,
+          allowHistoricalImport: manualDraft.allowHistoricalImport,
+        },
       });
       if (!result.ok) {
         setError(result.error);
@@ -238,31 +356,34 @@ function BackordersPage() {
         return;
       }
       const imported = result.data;
-      if (imported.reportDateReview) {
+      if (imported.duplicate) {
+        setNotice({
+          tone: "warn",
+          message:
+            imported.duplicateMessage ??
+            `Already imported (${imported.filename ?? manualDraft.filename}, report ${imported.reportDate}). No second snapshot was created.`,
+        });
+      } else if (imported.reportDateReview) {
         setNotice({
           tone: "warn",
           message: weekend216vImportNotice({
-            filename: file.name,
+            filename: manualDraft.filename,
             observedDate: imported.reportDate,
             becameCurrent: imported.becameCurrent,
           }),
         });
-      } else if (imported.duplicate) {
-        setNotice({
-          tone: "warn",
-          message: `Already imported (${imported.filename ?? file.name}, report ${imported.reportDate}). No second snapshot was created.`,
-        });
       } else if (!imported.becameCurrent) {
         setNotice({
           tone: "warn",
-          message: `Saved ${file.name} for history (report ${imported.reportDate}). It is older than the current snapshot, so the outstanding position was not replaced.`,
+          message: `Saved ${manualDraft.filename} for history (report ${imported.reportDate}). It is older than the current snapshot, so the outstanding position was not replaced.`,
         });
       } else {
         setNotice({
           tone: "good",
-          message: `Imported ${file.name}: report ${imported.reportDate}, ${imported.orderCount} orders, ${imported.lineCount} lines, ${imported.accountCount} accounts, ${imported.outstandingQty} units, £${imported.outstandingValue}.`,
+          message: `Imported ${manualDraft.filename}: report ${imported.reportDate}, ${imported.orderCount} orders, ${imported.lineCount} lines, ${imported.accountCount} accounts, ${imported.outstandingQty} units, £${imported.outstandingValue}.`,
         });
       }
+      setManualDraft(null);
       load();
     } catch (err) {
       const message = err instanceof Error ? err.message : "216V upload failed";
@@ -442,7 +563,18 @@ function BackordersPage() {
           onExport={() => void exportCsv()}
           onPoll={() => void pollNow()}
           onToggle={() => void saveFeed(!data?.feed.enabled)}
-          onUpload={onUpload}
+          onPickFile={(file) => void onPickManualFile(file)}
+          manualDraft={manualDraft}
+          onReportDateChange={(value) => {
+            if (!manualDraft) return;
+            void refreshManualPreview(value, manualDraft);
+          }}
+          onAllowHistoricalChange={(value) => {
+            if (!manualDraft) return;
+            setManualDraft({ ...manualDraft, allowHistoricalImport: value });
+          }}
+          onConfirmManual={() => void confirmManualUpload()}
+          onCancelManual={() => setManualDraft(null)}
           notice={notice}
         />
       </Drawer>
@@ -922,7 +1054,12 @@ function SettingsBody({
   onExport,
   onPoll,
   onToggle,
-  onUpload,
+  onPickFile,
+  manualDraft,
+  onReportDateChange,
+  onAllowHistoricalChange,
+  onConfirmManual,
+  onCancelManual,
   notice,
 }: {
   data: Data | null;
@@ -932,11 +1069,17 @@ function SettingsBody({
   onExport: () => void;
   onPoll: () => void;
   onToggle: () => void;
-  onUpload: (file: File) => void;
+  onPickFile: (file: File) => void;
+  manualDraft: Manual216vDraft | null;
+  onReportDateChange: (value: string) => void;
+  onAllowHistoricalChange: (value: boolean) => void;
+  onConfirmManual: () => void;
+  onCancelManual: () => void;
   notice: ImportNotice | null;
 }) {
   const feed = data?.feed;
   const freshness = data?.freshness;
+  const dateInputId = useId();
   return (
     <div className="grid gap-6 text-[13px]">
       {notice ? <ImportNoticeBanner notice={notice} /> : null}
@@ -1005,20 +1148,110 @@ function SettingsBody({
               <input
                 id={uploadId}
                 type="file"
-                accept=".csv,.txt,text/csv,text/plain"
+                accept=".csv,.txt,text/csv,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream"
                 className="sr-only"
                 disabled={busy}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) onUpload(file);
+                  if (file) onPickFile(file);
                   e.currentTarget.value = "";
                 }}
               />
               <label htmlFor={uploadId} className={cn(btnClass, busy && "pointer-events-none opacity-50")}>
-                Upload 216V
+                {busy && !manualDraft ? "Reading…" : "Choose 216V file"}
               </label>
-              <p className="mt-1 text-[12px] text-steel">Manually import an Autopart 216V CSV.</p>
+              <p className="mt-1 text-[12px] text-steel">
+                The 216V CSV has no reporting date. After choosing a file you must confirm the report
+                date before import. Content-hash duplicates cannot be bypassed by changing the date.
+              </p>
             </div>
+            {manualDraft ? (
+              <div className="grid gap-3 border border-border bg-surface/40 p-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Selected file</p>
+                  <p className="mt-1 font-medium">{manualDraft.filename}</p>
+                </div>
+                <div>
+                  <label
+                    htmlFor={dateInputId}
+                    className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel"
+                  >
+                    Report date (required)
+                  </label>
+                  <input
+                    id={dateInputId}
+                    type="date"
+                    className={cn(controlClass, "mt-1")}
+                    value={manualDraft.reportDate}
+                    disabled={busy || manualDraft.preview.duplicate}
+                    onChange={(e) => onReportDateChange(e.target.value)}
+                  />
+                  <p className="mt-1 text-[12px] text-steel">
+                    Confirm the Autopart reporting day for this file. Suggested:{" "}
+                    {manualDraft.preview.suggestedReportDate}
+                    {manualDraft.preview.filenameDate
+                      ? ` (filename carries ${manualDraft.preview.filenameDate})`
+                      : " (filename has no date)"}
+                    .
+                  </p>
+                </div>
+                <dl className="grid gap-1 text-[12px]">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-steel">Preview report date</dt>
+                    <dd className="font-medium">{manualDraft.preview.reportDate}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-steel">Lines / orders / accounts</dt>
+                    <dd className="font-medium">
+                      {manualDraft.preview.lines} / {manualDraft.preview.orders} / {manualDraft.preview.accounts}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-steel">Outstanding</dt>
+                    <dd className="font-medium">
+                      {manualDraft.preview.outstandingQty} units · £{manualDraft.preview.outstandingValue}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-steel">Would become current</dt>
+                    <dd className="font-medium">{manualDraft.preview.wouldBecomeCurrent ? "Yes" : "No"}</dd>
+                  </div>
+                  {manualDraft.preview.duplicate ? (
+                    <div className="mt-1 text-destructive whitespace-pre-wrap">
+                      {manualDraft.preview.duplicateMessage}
+                    </div>
+                  ) : null}
+                </dl>
+                {manualDraft.preview.requiresHistoricalConfirmation ? (
+                  <label className="flex items-start gap-2 text-[12px]">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={manualDraft.allowHistoricalImport}
+                      disabled={busy || manualDraft.preview.duplicate}
+                      onChange={(e) => onAllowHistoricalChange(e.target.checked)}
+                    />
+                    <span>
+                      Import as historical only — save this report without replacing the current outstanding
+                      position.
+                    </span>
+                  </label>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={primaryBtnClass}
+                    disabled={busy || manualDraft.preview.duplicate}
+                    onClick={onConfirmManual}
+                  >
+                    {busy ? "Importing…" : "Confirm import"}
+                  </button>
+                  <button type="button" className={btnClass} disabled={busy} onClick={onCancelManual}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : (
           <p className="mt-2 text-[12px] text-steel">Upload and mailbox poll require purchasing.manage.</p>
