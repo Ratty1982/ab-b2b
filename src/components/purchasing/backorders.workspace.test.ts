@@ -22,6 +22,7 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain("every field shown on the lines");
     expect(src).toContain("function SettingsBody");
     expect(src).toContain("Upload 216V");
+    expect(src).toContain("Upload 216V now");
     expect(src).toContain("Poll mailbox");
     expect(src).toContain("Last poll");
     expect(src).toContain("Latest report date");
@@ -29,9 +30,13 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain("Last successful import");
     expect(src).toContain("Current snapshot imported");
     expect(src).toContain("Last error");
+    expect(src).toContain("Import diagnostics:");
     expect(src).toContain("bytesToBase64");
+    expect(src).toContain("bytesBase64");
     expect(src).toContain('cache: "no-store"');
-    expect(src.indexOf("function SettingsBody")).toBeLessThan(src.indexOf("Upload 216V"));
+    expect(src).toContain("AUTOPART_216V_FILE_ACCEPT");
+    // Settings remains the home for day-to-day upload; recovery upload is only on the freshness bar.
+    expect(src.indexOf("function SettingsBody")).toBeLessThan(src.indexOf(': "Upload 216V"}'));
   });
 
   it("exposes operational view counts, attention summary, and search copy", () => {

@@ -1,12 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { guardStaffPage } from "@/lib/guard-staff-page";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   AlertTriangle,
   Boxes,
   ClipboardList,
   Download,
   Settings,
+  Upload,
   Users,
 } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
@@ -97,6 +98,10 @@ function bytesToBase64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
+
+/** Autopart 216V is CSV/TXT; Outlook may still report an Excel or generic download MIME. */
+const AUTOPART_216V_FILE_ACCEPT =
+  ".csv,.txt,text/csv,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream";
 
 function describePoll(data: {
   ran: boolean;
@@ -227,7 +232,15 @@ function BackordersPage() {
   async function onUpload(file: File) {
     setBusy(true);
     setNotice(null);
+    setError(null);
     try {
+      if (!file.size) {
+        const message =
+          "The selected file is empty. Choose the Autopart 216V CSV. The previous snapshot was not replaced.";
+        setError(message);
+        setNotice({ tone: "bad", message });
+        return;
+      }
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await confirmAutopart216vFn({
         data: { bytesBase64: bytesToBase64(bytes), filename: file.name },
@@ -346,7 +359,17 @@ function BackordersPage() {
       />
       {notice ? <ImportNoticeBanner notice={notice} /> : null}
       {error && error !== notice?.message ? <ErrorState message={error} /> : null}
-      {data?.freshness ? <FreshnessBar freshness={data.freshness} /> : null}
+      {data?.freshness ? (
+        <FreshnessBar
+          freshness={data.freshness}
+          lastError={data.feed.lastError}
+          canManage={Boolean(data.canManage)}
+          busy={busy}
+          uploadId={`${uploadId}-recovery`}
+          onUpload={onUpload}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+      ) : null}
       {current && data ? (
         <Metrics
           current={current}
@@ -468,8 +491,30 @@ function BackordersPage() {
   );
 }
 
-function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
+function FreshnessBar({
+  freshness,
+  lastError,
+  canManage,
+  busy,
+  uploadId,
+  onUpload,
+  onOpenSettings,
+}: {
+  freshness: Data["freshness"];
+  lastError?: string | null;
+  canManage: boolean;
+  busy: boolean;
+  uploadId: string;
+  onUpload: (file: File) => void;
+  onOpenSettings: () => void;
+}) {
   const headline = freshness.headline;
+  const inputRef = useRef<HTMLInputElement>(null);
+  const needsManualFallback =
+    headline.key === "REPORT_OVERDUE" ||
+    headline.key === "IMPORT_FAILED" ||
+    headline.key === "NO_SNAPSHOT" ||
+    Boolean(freshness.stale && lastError?.trim());
   const toneClass =
     headline.tone === "good"
       ? "border-good/40 bg-good/10"
@@ -511,6 +556,49 @@ function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
         </span>
       </div>
       {freshness.warning ? <p className="mt-1">{freshness.warning}</p> : null}
+      {lastError?.trim() && (freshness.stale || headline.tone === "bad") ? (
+        <p className="mt-2 whitespace-pre-wrap text-destructive" role="status">
+          Import diagnostics: {lastError.trim()}
+        </p>
+      ) : null}
+      {needsManualFallback ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {canManage ? (
+            <>
+              <input
+                ref={inputRef}
+                id={uploadId}
+                type="file"
+                accept={AUTOPART_216V_FILE_ACCEPT}
+                className="sr-only"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onUpload(file);
+                  e.currentTarget.value = "";
+                }}
+              />
+              <button
+                type="button"
+                className={primaryBtnClass}
+                disabled={busy}
+                onClick={() => inputRef.current?.click()}
+              >
+                <Upload className="mr-2 size-3.5" aria-hidden />
+                {busy ? "Importing…" : "Upload 216V now"}
+              </button>
+              <button type="button" className={btnClass} disabled={busy} onClick={onOpenSettings}>
+                Backorder Settings
+              </button>
+            </>
+          ) : (
+            <p className="text-[12px] text-steel">
+              Manual upload requires purchasing.manage. Ask a purchasing manager to import today&apos;s
+              216V file — the previous snapshot stays on screen until then.
+            </p>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -937,6 +1025,7 @@ function SettingsBody({
 }) {
   const feed = data?.feed;
   const freshness = data?.freshness;
+  const settingsUploadRef = useRef<HTMLInputElement>(null);
   return (
     <div className="grid gap-6 text-[13px]">
       {notice ? <ImportNoticeBanner notice={notice} /> : null}
@@ -1003,9 +1092,10 @@ function SettingsBody({
             </div>
             <div>
               <input
+                ref={settingsUploadRef}
                 id={uploadId}
                 type="file"
-                accept=".csv,.txt,text/csv,text/plain"
+                accept={AUTOPART_216V_FILE_ACCEPT}
                 className="sr-only"
                 disabled={busy}
                 onChange={(e) => {
@@ -1014,10 +1104,18 @@ function SettingsBody({
                   e.currentTarget.value = "";
                 }}
               />
-              <label htmlFor={uploadId} className={cn(btnClass, busy && "pointer-events-none opacity-50")}>
-                Upload 216V
-              </label>
-              <p className="mt-1 text-[12px] text-steel">Manually import an Autopart 216V CSV.</p>
+              <button
+                type="button"
+                className={btnClass}
+                disabled={busy}
+                onClick={() => settingsUploadRef.current?.click()}
+              >
+                {busy ? "Importing…" : "Upload 216V"}
+              </button>
+              <p className="mt-1 text-[12px] text-steel">
+                Manually import an Autopart 216V CSV or TXT. Works even when the scheduled email import
+                failed. The previous snapshot is kept if this file is rejected.
+              </p>
             </div>
           </div>
         ) : (

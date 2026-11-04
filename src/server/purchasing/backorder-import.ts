@@ -399,16 +399,17 @@ export async function confirmAutopart216vImport(
 
 export async function previewAutopart216vImport(
   actorUserId: string,
-  raw: { text: string; filename?: string },
+  raw: { text?: string; bytesBase64?: string; filename?: string },
 ) {
   const profile = await requirePurchasingAccess(actorUserId);
   if (!hasPermission(profile, "purchasing.backorders.view")) {
     throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
   }
-  if (!isAutopart216vReport(raw.text)) {
+  const upload = read216vUpload(raw);
+  if (!isAutopart216vReport(upload.text, raw.filename)) {
     throw new AuthError("File does not look like an Autopart 216V report", "VALIDATION", 400);
   }
-  const parsed = parseAutopart216vReport(raw.text);
+  const parsed = parseAutopart216vReport(upload.text);
   return {
     headerFound: parsed.headerFound,
     errors: parsed.errors,
@@ -418,7 +419,7 @@ export async function previewAutopart216vImport(
     skus: parsed.skuCount,
     outstandingQty: parsed.outstandingQty,
     outstandingValue: parsed.outstandingValue,
-    emptyValid: parsed.rows.length === 0 && isStrongEmpty216vReport(raw.text),
+    emptyValid: parsed.rows.length === 0 && isStrongEmpty216vReport(upload.text),
     sample: parsed.rows.slice(0, 20).map((r) => ({
       orderNumber: r.orderNumber,
       account: r.customerAccount,
