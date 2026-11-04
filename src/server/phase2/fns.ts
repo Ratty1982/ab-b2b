@@ -4023,14 +4023,16 @@ export const startCustomerSalesHistoryBaselineFn = createServerFn({ method: "POS
   });
 
 export const completeCustomerSalesCutoverFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data as { companyId: string })
+  .inputValidator(
+    (data: unknown) => data as { companyId: string; reason: string; confirmAccount: string },
+  )
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();
       const history = await import("@/server/companies/customer-sales-history-import");
       return {
         ok: true as const,
-        data: await history.completeCustomerSalesCutoverWithoutHistory(userId, data.companyId),
+        data: await history.completeCustomerSalesCutoverWithoutHistory(userId, data),
       };
     } catch (e) {
       return toError(e);

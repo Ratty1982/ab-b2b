@@ -551,7 +551,11 @@ async function main() {
   }
   let zeroHistoryOnBaseline = false;
   try {
-    await completeCustomerSalesCutoverWithoutHistory(admin.id, company.id);
+    await completeCustomerSalesCutoverWithoutHistory(admin.id, {
+      companyId: company.id,
+      confirmAccount: account,
+      reason: "New customer. The Autopart history export has no sales for this account.",
+    });
   } catch (error) {
     zeroHistoryOnBaseline = error instanceof Error && error.message.includes("not a record of no historical sales");
     if (!zeroHistoryOnBaseline) throw error;
@@ -576,7 +580,11 @@ async function main() {
       companyId: zeroCompany.id,
     },
   });
-  const zeroHistory = await completeCustomerSalesCutoverWithoutHistory(admin.id, zeroCompany.id);
+  const zeroHistory = await completeCustomerSalesCutoverWithoutHistory(admin.id, {
+    companyId: zeroCompany.id,
+    confirmAccount: zeroAccount,
+    reason: "New customer. The Autopart history export has no sales for this account.",
+  });
   const zeroRow = await prisma.customerSalesCutover.findUniqueOrThrow({ where: { companyId: zeroCompany.id } });
   const zeroEvidence = zeroRow.evidence as { kind?: string } | null;
   if (zeroHistory.historyStatus !== "COMPLETE" || zeroEvidence?.kind !== "NO_HISTORICAL_SALES") {

@@ -171,7 +171,11 @@ ${account},GRP,SSNEW${stamp.slice(0, 4).toUpperCase()},20/10/2026,SS,Steel Seal,
     });
     const code = `EH${stamp.slice(0, 8).toUpperCase()}`;
     await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: fresh.id, code });
-    const result = await completeCustomerSalesCutoverWithoutHistory(adminId, fresh.id);
+    const result = await completeCustomerSalesCutoverWithoutHistory(adminId, {
+      companyId: fresh.id,
+      confirmAccount: code,
+      reason: "New customer. The Autopart history export has no sales for this account.",
+    });
     expect(result.historyStatus).toBe("COMPLETE");
     expect(await prisma.autopartSalesDocument.count({ where: { companyId: fresh.id } })).toBe(0);
     await prisma.customerSalesCutover.deleteMany({ where: { companyId: fresh.id } });
@@ -458,7 +462,13 @@ ${code},I/BADLINE,MISSING,Bad identity,1,"£1.00"
     const imported = await confirmCustomerSalesHistory(adminId, { companyId: fresh.id, text561l: text });
     expect(imported.historyStatus).toBe("REVIEW");
     expect(imported.rowsImported).toBeGreaterThan(0);
-    await expect(completeCustomerSalesCutoverWithoutHistory(adminId, fresh.id)).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      completeCustomerSalesCutoverWithoutHistory(adminId, {
+        companyId: fresh.id,
+        confirmAccount: code,
+        reason: "New customer. The Autopart history export has no sales for this account.",
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
     await expect(startCustomerSalesHistoryBaseline(adminId, fresh.id)).rejects.toThrow(/not a new sales baseline/);
     const blocked = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
 ${code},GRP,SSREV${stamp.slice(0, 4).toUpperCase()},29/09/2026,SS,Widget,1,10.00,4.00,6.00,60.000
@@ -513,9 +523,13 @@ ${code},GRP,SSREV${stamp.slice(0, 4).toUpperCase()},29/09/2026,SS,Widget,1,10.00
     expect(listed.historyStatus).toBe("COMPLETE");
     const evidence = await prisma.customerSalesCutover.findUniqueOrThrow({ where: { companyId: fresh.id } });
     expect(evidence.evidence).toMatchObject({ kind: "PRELAUNCH_HISTORY_DISCARDED" });
-    await expect(completeCustomerSalesCutoverWithoutHistory(adminId, fresh.id)).rejects.toThrow(
-      /not a record of no historical sales/,
-    );
+    await expect(
+      completeCustomerSalesCutoverWithoutHistory(adminId, {
+        companyId: fresh.id,
+        confirmAccount: code,
+        reason: "New customer. The Autopart history export has no sales for this account.",
+      }),
+    ).rejects.toThrow(/not a record of no historical sales/);
 
     const reference = `SSBASE${stamp.slice(0, 4).toUpperCase()}`;
     const ongoing = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
@@ -530,10 +544,20 @@ ${code},GRP,${reference},20/10/2026,SS,Steel Seal,1,10.00,4.00,6.00,60.000
     });
     const emptyCode = `GE${stamp.slice(0, 8).toUpperCase()}`;
     await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: empty.id, code: emptyCode });
-    const recorded = await completeCustomerSalesCutoverWithoutHistory(adminId, empty.id);
+    const recorded = await completeCustomerSalesCutoverWithoutHistory(adminId, {
+      companyId: empty.id,
+      confirmAccount: emptyCode,
+      reason: "New customer. The Autopart history export has no sales for this account.",
+    });
     expect(recorded.historyStatus).toBe("COMPLETE");
     const emptyEvidence = await prisma.customerSalesCutover.findUniqueOrThrow({ where: { companyId: empty.id } });
-    expect(emptyEvidence.evidence).toMatchObject({ kind: "NO_HISTORICAL_SALES" });
+    expect(emptyEvidence.evidence).toMatchObject({
+      kind: "NO_HISTORICAL_SALES",
+      verifiedAccount: emptyCode,
+      reason: "New customer. The Autopart history export has no sales for this account.",
+    });
+    expect(emptyEvidence.completedById).toBe(adminId);
+    expect(emptyEvidence.completedAt).toBeTruthy();
     await expect(startCustomerSalesHistoryBaseline(adminId, empty.id)).rejects.toThrow(
       /not a discarded pre-launch baseline/,
     );
@@ -542,5 +566,105 @@ ${code},GRP,${reference},20/10/2026,SS,Steel Seal,1,10.00,4.00,6.00,60.000
     await prisma.autopartSalesDocument.deleteMany({ where: { companyId: fresh.id } });
     await prisma.customerSalesCutover.deleteMany({ where: { companyId: { in: [fresh.id, empty.id] } } });
     await prisma.company.deleteMany({ where: { id: { in: [fresh.id, empty.id] } } });
+  });
+
+  it("records a zero-history baseline without an empty file and still accepts later sales", async () => {
+    const fresh = await prisma.company.create({
+      data: { name: `Worsbro ${stamp}`, status: "ACTIVE" },
+    });
+    const code = `WB${stamp.slice(0, 8).toUpperCase()}`;
+    const reason = "New customer. The Autopart history export has no sales for this account.";
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: fresh.id, code });
+
+    await expect(
+      confirmCustomerSalesHistory(adminId, {
+        companyId: fresh.id,
+        text561l: "Acct.,Inv & Ln,Part Number,Description,Units,Sales\n",
+        filename561l: "empty.csv",
+      }),
+    ).rejects.toThrow(/Nothing|belongs|Choose/);
+    expect(await prisma.customerSalesCutover.count({ where: { companyId: fresh.id } })).toBe(0);
+    expect(await prisma.autopartSalesDocument.count({ where: { companyId: fresh.id } })).toBe(0);
+
+    await expect(
+      completeCustomerSalesCutoverWithoutHistory(adminId, {
+        companyId: fresh.id,
+        confirmAccount: "NOT-THIS",
+        reason,
+      }),
+    ).rejects.toThrow(/verified Autopart account/);
+    expect(await prisma.customerSalesCutover.count({ where: { companyId: fresh.id } })).toBe(0);
+
+    const held = await prisma.autopartSalesDocument.create({
+      data: {
+        companyId: fresh.id,
+        autopartCustomerCode: code,
+        documentType: "INVOICE",
+        documentReference: `KEEP${stamp.slice(0, 6).toUpperCase()}`,
+        source: "561L",
+      },
+    });
+    await expect(
+      completeCustomerSalesCutoverWithoutHistory(adminId, {
+        companyId: fresh.id,
+        confirmAccount: code,
+        reason,
+      }),
+    ).rejects.toThrow(/already has imported sales/);
+    expect(await prisma.autopartSalesDocument.count({ where: { id: held.id } })).toBe(1);
+    await prisma.autopartSalesDocument.delete({ where: { id: held.id } });
+
+    const recorded = await completeCustomerSalesCutoverWithoutHistory(adminId, {
+      companyId: fresh.id,
+      confirmAccount: code.toLowerCase(),
+      reason,
+    });
+    expect(recorded.alreadyComplete).toBe(false);
+    const evidence = await prisma.customerSalesCutover.findUniqueOrThrow({ where: { companyId: fresh.id } });
+    expect(evidence.historyStatus).toBe("COMPLETE");
+    expect(evidence.completedById).toBe(adminId);
+    expect(evidence.completedAt).toBeTruthy();
+    expect(evidence.evidence).toMatchObject({
+      kind: "NO_HISTORICAL_SALES",
+      verifiedAccount: code,
+      companyName: `Worsbro ${stamp}`,
+      reason,
+    });
+    const audit = await prisma.auditEvent.findFirst({
+      where: { entityId: fresh.id, action: "autopart.customer_sales_cutover_completed" },
+    });
+    expect(audit?.actorUserId).toBe(adminId);
+    expect(audit?.metadata).toMatchObject({ verifiedAccount: code, reason });
+
+    const reference = `WBON${stamp.slice(0, 4).toUpperCase()}`;
+    const ongoing = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
+${code},GRP,${reference},20/10/2026,SS,Steel Seal,1,10.00,4.00,6.00,60.000
+`;
+    const imported = await confirmAutopartTrm21qcImport(adminId, {
+      text: ongoing,
+      filename: "TRM21QC.csv",
+      source: "MANUAL",
+    });
+    expect(imported.rowsImported).toBe(1);
+
+    const historyText = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${code},I/WBH${stamp.slice(0, 4).toUpperCase()}/1,SS,Past,1,"£4.00"
+`;
+    const history = await confirmCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: historyText,
+      filename561l: "later.csv",
+    });
+    expect(history.historyStatus).toBe("COMPLETE");
+    const after = await prisma.customerSalesCutover.findUniqueOrThrow({ where: { companyId: fresh.id } });
+    expect(after.evidence).toMatchObject({ kind: "561L_SLRB" });
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: fresh.id, documentReference: reference } })).toBe(1);
+    expect(await prisma.autopartSalesDocument.count({ where: { id: held.id } })).toBe(0);
+
+    await prisma.autopartSalesLine.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.autopartSalesDocument.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.customerSalesCutover.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.auditEvent.deleteMany({ where: { entityId: fresh.id } });
+    await prisma.company.delete({ where: { id: fresh.id } });
   });
 });
