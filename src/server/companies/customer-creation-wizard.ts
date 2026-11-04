@@ -6,18 +6,20 @@
  * invitation services.
  */
 import { prisma } from "@/infra/database/client";
-import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
+import { requireSystemPermission } from "@/server/rbac/guards";
 import { grants, hasPermission } from "@/server/rbac/access";
 import {
-  classifyCustomerDuplicate,
   customerCreationDetailsSchema,
   duplicateSearchSchema,
   mergeCustomerTypeNotes,
   splitCustomerTypeNotes,
   suggestWizardStep,
-  type DuplicateMatchReason,
-  type DuplicateStrength,
 } from "@/domain/customer-creation-wizard";
+import {
+  assertNoStrongCustomerDuplicates,
+  findCustomerDuplicates,
+  type CustomerDuplicateMatch,
+} from "@/server/companies/customer-duplicates";
 import {
   createCompany,
   createContact,
@@ -26,78 +28,11 @@ import {
   updateCompany,
 } from "@/server/companies/service";
 
-export type CustomerDuplicateMatch = {
-  id: string;
-  name: string;
-  status: string;
-  primaryEmail: string | null;
-  phone: string | null;
-  strength: DuplicateStrength;
-  reason: DuplicateMatchReason;
-};
+export type { CustomerDuplicateMatch };
 
 function blankToNull(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length ? trimmed : null;
-}
-
-async function findCustomerDuplicates(input: {
-  name: string;
-  email?: string | null | undefined;
-  phone?: string | null | undefined;
-  excludeCompanyId?: string | null | undefined;
-}): Promise<CustomerDuplicateMatch[]> {
-  const name = input.name.trim();
-  const email = blankToNull(input.email);
-  const phone = blankToNull(input.phone);
-  if (name.length < 2 && !email && !phone) return [];
-
-  const or: Array<Record<string, unknown>> = [];
-  if (name.length >= 2) {
-    or.push({ name: { contains: name, mode: "insensitive" } });
-    or.push({ tradingName: { contains: name, mode: "insensitive" } });
-  }
-  if (email) or.push({ primaryEmail: { equals: email, mode: "insensitive" } });
-  const digits = (phone ?? "").replace(/\D/g, "");
-  if (digits.length >= 6) or.push({ phone: { contains: digits.slice(-6) } });
-  if (or.length === 0) return [];
-
-  const rows = await prisma.company.findMany({
-    where: {
-      OR: or,
-      ...(input.excludeCompanyId ? { id: { not: input.excludeCompanyId } } : {}),
-    },
-    select: {
-      id: true,
-      name: true,
-      tradingName: true,
-      status: true,
-      primaryEmail: true,
-      phone: true,
-    },
-    take: 20,
-    orderBy: { name: "asc" },
-  });
-
-  const matches: CustomerDuplicateMatch[] = [];
-  for (const row of rows) {
-    const classified = classifyCustomerDuplicate({ name, email, phone }, row);
-    if (!classified) continue;
-    matches.push({
-      id: row.id,
-      name: row.name,
-      status: row.status,
-      primaryEmail: row.primaryEmail,
-      phone: row.phone,
-      strength: classified.strength,
-      reason: classified.reason,
-    });
-  }
-  matches.sort((a, b) => {
-    if (a.strength === b.strength) return a.name.localeCompare(b.name);
-    return a.strength === "strong" ? -1 : 1;
-  });
-  return matches;
 }
 
 export async function searchCustomerCreationDuplicates(actorUserId: string, raw: unknown) {
@@ -161,25 +96,13 @@ export async function saveCustomerCreationDetails(actorUserId: string, raw: unkn
   const salesRepId = blankToNull(input.salesRepId);
 
   if (!input.companyId) {
-    if (!input.confirmDespiteDuplicates) {
-      const matches = await findCustomerDuplicates({
-        name: input.name,
-        email: input.primaryEmail,
-        phone: input.phone,
-      });
-      const strong = matches.filter((match) => match.strength === "strong");
-      if (strong.length > 0) {
-        const names = strong
-          .slice(0, 5)
-          .map((match) => match.name)
-          .join(", ");
-        throw new AuthError(
-          `A customer already matches this name or contact: ${names}. Open that customer, or confirm that this is a separate customer.`,
-          "DUPLICATE_CUSTOMER",
-          409,
-        );
-      }
-    }
+    // Create-time enforcement (not only the preliminary search UI).
+    await assertNoStrongCustomerDuplicates({
+      name: input.name,
+      email: input.primaryEmail,
+      phone: input.phone,
+      confirmDespiteDuplicates: input.confirmDespiteDuplicates,
+    });
     const created = await createCompany(actorUserId, {
       name: input.name,
       tradingName: blankToNull(input.tradingName),
@@ -191,8 +114,18 @@ export async function saveCustomerCreationDetails(actorUserId: string, raw: unkn
       salesRepId,
       contact,
       address,
+      // Already asserted above so createCompany does not double-throw with a
+      // different call stack during the same wizard save.
+      confirmDespiteDuplicates: true,
     });
-    return { companyId: created.id, created: true as const };
+    return {
+      companyId: created.id,
+      created: true as const,
+      contactCreated: Boolean(contact),
+      addressCreated: Boolean(address),
+      contactAlreadyPresent: false,
+      addressAlreadyPresent: false,
+    };
   }
 
   await updateCompany(actorUserId, {
@@ -207,31 +140,34 @@ export async function saveCustomerCreationDetails(actorUserId: string, raw: unkn
     salesRepId,
   });
 
-  if (contact) {
-    const existing = await prisma.contact.count({ where: { companyId: input.companyId } });
-    if (existing === 0) {
-      await createContact(actorUserId, {
-        companyId: input.companyId,
-        ...contact,
-        isPrimary: true,
-        isPurchasing: true,
-      });
-    }
+  const existingContacts = await prisma.contact.count({ where: { companyId: input.companyId } });
+  if (contact && existingContacts === 0) {
+    await createContact(actorUserId, {
+      companyId: input.companyId,
+      ...contact,
+      isPrimary: true,
+      isPurchasing: true,
+    });
   }
-  if (address) {
-    const existing = await prisma.address.count({ where: { companyId: input.companyId } });
-    if (existing === 0) {
-      await createAddress(actorUserId, {
-        companyId: input.companyId,
-        type: "REGISTERED",
-        label: "Registered / trading",
-        ...address,
-        isDefaultBilling: true,
-        isDefaultDelivery: true,
-      });
-    }
+  const existingAddresses = await prisma.address.count({ where: { companyId: input.companyId } });
+  if (address && existingAddresses === 0) {
+    await createAddress(actorUserId, {
+      companyId: input.companyId,
+      type: "REGISTERED",
+      label: "Registered / trading",
+      ...address,
+      isDefaultBilling: true,
+      isDefaultDelivery: true,
+    });
   }
-  return { companyId: input.companyId, created: false as const };
+  return {
+    companyId: input.companyId,
+    created: false as const,
+    contactCreated: Boolean(contact && existingContacts === 0),
+    addressCreated: Boolean(address && existingAddresses === 0),
+    contactAlreadyPresent: existingContacts > 0,
+    addressAlreadyPresent: existingAddresses > 0,
+  };
 }
 
 export async function getCustomerCreationWizard(actorUserId: string, companyId: string) {

@@ -472,6 +472,17 @@ export async function createCompany(actorUserId: string, raw: unknown) {
   if (input.contact) await requireSystemPermission(actorUserId, "contacts.create");
   if (input.address) await requireSystemPermission(actorUserId, "companies.edit");
 
+  if (!input.skipDuplicateCustomerCheck) {
+    const { assertNoStrongCustomerDuplicates } =
+      await import("@/server/companies/customer-duplicates");
+    await assertNoStrongCustomerDuplicates({
+      name: input.name,
+      email: input.primaryEmail,
+      phone: input.phone,
+      confirmDespiteDuplicates: input.confirmDespiteDuplicates,
+    });
+  }
+
   if (input.accountNumber) {
     const clash = await prisma.company.findUnique({ where: { accountNumber: input.accountNumber } });
     if (clash) throw new AuthError("Account number already in use", "CONFLICT", 409);

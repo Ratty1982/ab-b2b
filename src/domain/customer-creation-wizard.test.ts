@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyCustomerDuplicate,
   mergeCustomerTypeNotes,
+  normalisePhone,
   splitCustomerTypeNotes,
   suggestWizardStep,
   wizardFinishPlan,
@@ -23,8 +24,8 @@ describe("customer creation wizard", () => {
     ).toBe("email");
     expect(
       classifyCustomerDuplicate(
-        { name: "New Garage", phone: "0114 123 456" },
-        { name: "Elsewhere", phone: "01141 23456", primaryEmail: null },
+        { name: "New Garage", phone: "0114 123 4567" },
+        { name: "Elsewhere", phone: "0114 1234567", primaryEmail: null },
       )?.reason,
     ).toBe("phone");
     expect(
@@ -33,6 +34,26 @@ describe("customer creation wizard", () => {
         { name: "Worsbro Motor Spares Ltd", primaryEmail: null, phone: null },
       ),
     ).toEqual({ strength: "possible", reason: "similar_name" });
+  });
+
+  it("matches formatted UK phone numbers across spaces, +44, 0044, and national 0", () => {
+    expect(normalisePhone("0114 123 4567")).toBe("01141234567");
+    expect(normalisePhone("+44 114 123 4567")).toBe("01141234567");
+    expect(normalisePhone("0044 114 123 4567")).toBe("01141234567");
+    expect(normalisePhone("+44 (0) 114 123 4567")).toBe("01141234567");
+    expect(normalisePhone("(0114) 123-4567")).toBe("01141234567");
+    expect(
+      classifyCustomerDuplicate(
+        { name: "Alpha Garage", phone: "+44 114 123 4567" },
+        { name: "Beta Ltd", phone: "0114 123 4567", primaryEmail: null },
+      ),
+    ).toEqual({ strength: "strong", reason: "phone" });
+    expect(
+      classifyCustomerDuplicate(
+        { name: "Alpha Garage", phone: "00441141234567" },
+        { name: "Beta Ltd", phone: "+44 (0)114 123 4567", primaryEmail: null },
+      )?.reason,
+    ).toBe("phone");
   });
 
   it("keeps the customer type in notes without dropping the rest of the note", () => {
@@ -44,6 +65,22 @@ describe("customer creation wizard", () => {
     expect(mergeCustomerTypeNotes(notes, "Bodyshop")).toBe(
       "Customer type: Bodyshop\nCall before delivery.",
     );
+  });
+
+  it("does not create a second Customer type line when notes are merged again", () => {
+    const once = mergeCustomerTypeNotes(
+      "Keep this note.\nCustomer type: Motor Factor",
+      "Motor Factor",
+    );
+    expect(once).toBe("Customer type: Motor Factor\nKeep this note.");
+    const twice = mergeCustomerTypeNotes(once, "Motor Factor");
+    expect(twice).toBe("Customer type: Motor Factor\nKeep this note.");
+    expect(twice?.match(/Customer type:/g)).toHaveLength(1);
+    const cleared = mergeCustomerTypeNotes(
+      "Customer type: Bodyshop\nCustomer type: Motor Factor\nStaff note",
+      "Retailer",
+    );
+    expect(cleared).toBe("Customer type: Retailer\nStaff note");
   });
 
   it("returns staff to the unfinished part and does not treat an active account as finished setup", () => {

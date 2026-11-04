@@ -152,6 +152,84 @@ describe("customer creation wizard", () => {
     expect(await prisma.company.count({ where: { name } })).toBe(1);
   });
 
+  it("blocks create-time duplicates for equivalent UK phone formats without a preliminary search", async () => {
+    const phoneSeed = await saveCustomerCreationDetails(adminId, {
+      name: `Phone seed ${stamp}`,
+      status: "PROSPECT",
+      phone: "0114 987 6543",
+    });
+    await expect(
+      saveCustomerCreationDetails(adminId, {
+        name: `Phone clash national ${stamp}`,
+        status: "PROSPECT",
+        phone: "+44 114 987 6543",
+      }),
+    ).rejects.toMatchObject({ code: "DUPLICATE_CUSTOMER" });
+    await expect(
+      saveCustomerCreationDetails(adminId, {
+        name: `Phone clash intl ${stamp}`,
+        status: "PROSPECT",
+        phone: "0044 (0)114 987 6543",
+      }),
+    ).rejects.toMatchObject({ code: "DUPLICATE_CUSTOMER" });
+
+    const { createCompany } = await import("@/server/companies/service");
+    await expect(
+      createCompany(adminId, {
+        name: `Quick create phone clash ${stamp}`,
+        status: "PROSPECT",
+        phone: "+441149876543",
+      }),
+    ).rejects.toMatchObject({ code: "DUPLICATE_CUSTOMER" });
+
+    const phoneMatches = await searchCustomerCreationDuplicates(adminId, {
+      name: "Unrelated",
+      phone: "+44 114 987 6543",
+    });
+    expect(
+      phoneMatches.some((match) => match.id === phoneSeed.companyId && match.reason === "phone"),
+    ).toBe(true);
+    expect(await prisma.company.count({ where: { phone: "+44 114 987 6543" } })).toBe(0);
+  });
+
+  it("preserves staff notes and keeps a single Customer type line on resume saves", async () => {
+    const first = await saveCustomerCreationDetails(adminId, {
+      companyId,
+      name,
+      status: "PROSPECT",
+      customerType: "Motor Factor",
+      notes: "Created from the guided setup.\nCall before 9am.",
+    });
+    expect(first.created).toBe(false);
+    const once = await prisma.company.findUniqueOrThrow({ where: { id: companyId } });
+    expect(once.notes).toBe(
+      "Customer type: Motor Factor\nCreated from the guided setup.\nCall before 9am.",
+    );
+
+    const second = await saveCustomerCreationDetails(adminId, {
+      companyId,
+      name,
+      status: "PROSPECT",
+      customerType: "Bodyshop",
+      notes: "Created from the guided setup.\nCall before 9am.",
+    });
+    expect(second.contactAlreadyPresent).toBe(true);
+    expect(second.addressAlreadyPresent).toBe(true);
+    expect(second.contactCreated).toBe(false);
+    expect(second.addressCreated).toBe(false);
+    const twice = await prisma.company.findUniqueOrThrow({ where: { id: companyId } });
+    expect(twice.notes).toBe(
+      "Customer type: Bodyshop\nCreated from the guided setup.\nCall before 9am.",
+    );
+    expect(twice.notes?.match(/Customer type:/g)).toHaveLength(1);
+
+    const wizard = await getCustomerCreationWizard(adminId, companyId);
+    expect(wizard.company.customerType).toBe("Bodyshop");
+    expect(wizard.company.staffNotes).toBe("Created from the guided setup.\nCall before 9am.");
+    expect(wizard.contacts.length).toBe(1);
+    expect(wizard.addresses.length).toBe(1);
+  });
+
   it("links a 407EXP master without copying a verified sales code", async () => {
     const account = await prisma.autopartAccount.create({
       data: {

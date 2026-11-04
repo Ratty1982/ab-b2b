@@ -75,6 +75,10 @@ export const companySetupAddressSchema = z
 export const companyCreateWithSetupSchema = companyCreateSchema.extend({
   contact: companySetupContactSchema,
   address: companySetupAddressSchema,
+  /** Staff confirmed that a strong name/email/phone match is still a separate customer. */
+  confirmDespiteDuplicates: z.boolean().optional(),
+  /** Internal create paths (Autopart mapping) that must not inherit the wizard gate. */
+  skipDuplicateCustomerCheck: z.boolean().optional(),
 });
 
 /**

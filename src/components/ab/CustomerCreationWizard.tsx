@@ -578,13 +578,29 @@ function DetailsStep({
       ) : null}
 
       {existingContact ? (
-        <p className="text-[13px] text-steel">
-          Primary contact: {existingContact.firstName} {existingContact.lastName}
-          {existingContact.email ? ` · ${existingContact.email}` : ""}
-        </p>
+        <div className="rounded-md border border-border bg-surface/30 p-4" data-existing-contact="">
+          <p className="text-[13px] font-semibold">Existing primary contact</p>
+          <p className="mt-1 text-[13px] text-steel">
+            {existingContact.firstName} {existingContact.lastName}
+            {existingContact.email ? ` · ${existingContact.email}` : ""}
+            {existingContact.phone ? ` · ${existingContact.phone}` : ""}
+          </p>
+          <p className="mt-2 text-[12px] text-steel">
+            This step does not edit the contact. Open the customer Contacts tab to change it.
+          </p>
+          {companyId ? (
+            <Link
+              to="/admin/customers/$id"
+              params={{ id: companyId }}
+              className="mt-3 inline-flex min-h-11 items-center text-[12px] font-bold uppercase"
+            >
+              Open customer to edit contact
+            </Link>
+          ) : null}
+        </div>
       ) : (
-        <fieldset className="grid gap-4 rounded-md border border-border p-4">
-          <legend className="px-1 text-[13px] font-semibold">Primary contact</legend>
+        <fieldset className="grid gap-4 rounded-md border border-border p-4" data-new-contact="">
+          <legend className="px-1 text-[13px] font-semibold">Add primary contact</legend>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="First name" htmlFor="wizard-first">
               <input
@@ -632,13 +648,28 @@ function DetailsStep({
       )}
 
       {existingAddress ? (
-        <p className="text-[13px] text-steel">
-          Address: {existingAddress.line1}, {existingAddress.town}, {existingAddress.postcode}
-          {existingAddress.isDefaultDelivery ? " · default delivery" : ""}
-        </p>
+        <div className="rounded-md border border-border bg-surface/30 p-4" data-existing-address="">
+          <p className="text-[13px] font-semibold">Existing address</p>
+          <p className="mt-1 text-[13px] text-steel">
+            {existingAddress.line1}, {existingAddress.town}, {existingAddress.postcode}
+            {existingAddress.isDefaultDelivery ? " · default delivery" : ""}
+          </p>
+          <p className="mt-2 text-[12px] text-steel">
+            This step does not edit the address. Open the customer Addresses tab to change it.
+          </p>
+          {companyId ? (
+            <Link
+              to="/admin/customers/$id"
+              params={{ id: companyId }}
+              className="mt-3 inline-flex min-h-11 items-center text-[12px] font-bold uppercase"
+            >
+              Open customer to edit address
+            </Link>
+          ) : null}
+        </div>
       ) : (
-        <fieldset className="grid gap-4 rounded-md border border-border p-4">
-          <legend className="px-1 text-[13px] font-semibold">Address</legend>
+        <fieldset className="grid gap-4 rounded-md border border-border p-4" data-new-address="">
+          <legend className="px-1 text-[13px] font-semibold">Add address</legend>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Address line 1" htmlFor="wizard-line1">
               <input

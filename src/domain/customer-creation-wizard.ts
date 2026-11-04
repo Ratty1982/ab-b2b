@@ -29,8 +29,27 @@ export function normaliseMatchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+/**
+ * Compare UK telephone numbers across common staff formats.
+ * Spaces, brackets, +44, 0044, and a national leading 0 all reduce to one digit string.
+ */
 export function normalisePhone(value: string): string {
-  return value.replace(/\D/g, "");
+  let digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.startsWith("44") && digits.length >= 11) {
+    const rest = digits.slice(2);
+    digits = rest.startsWith("0") ? rest : `0${rest}`;
+  }
+  return digits;
+}
+
+/** Last digits used when scanning stored formatted phone values. */
+export function phoneMatchTail(value: string, length = 8): string {
+  const national = normalisePhone(value);
+  if (!national) return "";
+  const significant = national.startsWith("0") ? national.slice(1) : national;
+  return significant.slice(-Math.min(length, significant.length));
 }
 
 export type DuplicateMatchReason = "name" | "email" | "phone" | "similar_name";
@@ -59,7 +78,7 @@ export function classifyCustomerDuplicate(
   }
   const phone = normalisePhone(query.phone ?? "");
   const candidatePhone = normalisePhone(candidate.phone ?? "");
-  if (phone.length >= 6 && candidatePhone && phone === candidatePhone) {
+  if (phone.length >= 8 && candidatePhone.length >= 8 && phone === candidatePhone) {
     return { strength: "strong", reason: "phone" };
   }
   if (
@@ -77,14 +96,17 @@ export function splitCustomerTypeNotes(notes: string | null | undefined): {
 } {
   if (!notes?.trim()) return { customerType: null, notes: "" };
   const lines = notes.split(/\n/);
-  const index = lines.findIndex((line) => CUSTOMER_TYPE_LINE.test(line.trim()));
-  if (index < 0) return { customerType: null, notes: notes.trim() };
-  const match = lines[index]!.trim().match(CUSTOMER_TYPE_LINE);
-  const rest = lines
-    .filter((_, lineIndex) => lineIndex !== index)
-    .join("\n")
-    .trim();
-  return { customerType: match?.[1]?.trim() || null, notes: rest };
+  let customerType: string | null = null;
+  const rest: string[] = [];
+  for (const line of lines) {
+    const match = line.trim().match(CUSTOMER_TYPE_LINE);
+    if (match) {
+      if (!customerType) customerType = match[1]?.trim() || null;
+      continue;
+    }
+    rest.push(line);
+  }
+  return { customerType, notes: rest.join("\n").trim() };
 }
 
 export function mergeCustomerTypeNotes(
