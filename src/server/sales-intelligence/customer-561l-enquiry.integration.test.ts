@@ -278,7 +278,13 @@ ${reviewCode},INV,OK1,01 Oct 26,"£4.00","£0.80","£4.80","£4.80"
       textSlrb: ledger,
     });
     expect(imported.historyStatus).toBe("REVIEW");
-    await expect(completeCustomerSalesCutoverWithoutHistory(adminId, fresh.id)).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      completeCustomerSalesCutoverWithoutHistory(adminId, {
+        companyId: fresh.id,
+        confirmAccount: reviewCode,
+        reason: "New customer. The Autopart history export has no sales for this account.",
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
     const sales = await getUnifiedCustomerSales(adminId, { companyId: fresh.id, period: "ALL" });
     expect(sales.kpis.netSales).toBe("4.00");
     const stored = await listStoredCustomerSalesHistory(adminId, fresh.id);

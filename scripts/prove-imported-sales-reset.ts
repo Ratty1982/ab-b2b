@@ -408,7 +408,11 @@ ${prospectAccount},INV,SXOTHER01,18 Jan 20,"£9.00","£1.80","£10.80","£10.80"
   if (history.historyStatus !== "REVIEW") throw new Error("Rejected history row was marked complete.");
   let zeroHistoryRefused = false;
   try {
-    await completeCustomerSalesCutoverWithoutHistory(admin.id, company.id);
+    await completeCustomerSalesCutoverWithoutHistory(admin.id, {
+      companyId: company.id,
+      confirmAccount: account,
+      reason: "New customer. The Autopart history export has no sales for this account.",
+    });
   } catch (error) {
     zeroHistoryRefused = error instanceof Error && error.message.includes("not a zero-history");
   }

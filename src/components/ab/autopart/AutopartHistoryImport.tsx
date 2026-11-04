@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import {
+  NEW_SALES_BASELINE_REASON_MAX,
+  NEW_SALES_BASELINE_REASON_MIN,
+} from "@/domain/new-sales-baseline";
+import {
   formatBytes,
   uploadCustomerSalesReport,
   type SavedCustomerSalesUpload,
@@ -76,6 +80,8 @@ function FileSlot({
 
 export function AutopartHistoryImport({
   companyId,
+  companyName,
+  verifiedAccount,
   canImport,
   blocked,
   historyStatus,
@@ -83,6 +89,8 @@ export function AutopartHistoryImport({
   onChanged,
 }: {
   companyId: string;
+  companyName: string;
+  verifiedAccount: string | null;
   canImport: boolean;
   blocked: string | null;
   historyStatus: "NOT_STARTED" | "REVIEW" | "COMPLETE";
@@ -102,6 +110,8 @@ export function AutopartHistoryImport({
   const [filter, setFilter] = useState<RowFilter>("ALL");
   const [page, setPage] = useState(1);
   const [confirm, setConfirm] = useState<"import" | "none" | "baseline" | "review" | null>(null);
+  const [baselineReason, setBaselineReason] = useState("");
+  const [baselineAccount, setBaselineAccount] = useState("");
 
   function jobFileNames(current: HistoryJob) {
     return [productFile?.filename ?? current.filename561l, ledgerFile?.filename ?? current.filenameSlrb]
@@ -221,6 +231,12 @@ export function AutopartHistoryImport({
   const recorded =
     historyStatus === "COMPLETE" &&
     (historyKind === "NO_HISTORICAL_SALES" || historyKind === "PRELAUNCH_HISTORY_DISCARDED");
+  const reasonReady =
+    baselineReason.trim().length >= NEW_SALES_BASELINE_REASON_MIN &&
+    baselineReason.trim().length <= NEW_SALES_BASELINE_REASON_MAX;
+  const accountReady = Boolean(
+    verifiedAccount && baselineAccount.trim().toUpperCase() === verifiedAccount.trim().toUpperCase(),
+  );
 
   async function previewImport(samplePage = 1, rejectedPage = preview?.rejectedPage ?? 1) {
     if (!productFile && !ledgerFile) return;
@@ -310,6 +326,67 @@ export function AutopartHistoryImport({
               Review exceptions
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {!locked && !blocked && historyStatus !== "COMPLETE" && canImport && verifiedAccount ? (
+        <div className="mt-4 rounded-md border border-border p-4" data-sales-baseline="establish">
+          <h4 className="text-[13px] font-semibold">Establish New Sales Baseline</h4>
+          <p className="mt-1 max-w-3xl text-[12px] text-steel">
+            For a new customer whose verified Autopart account has no historical purchases. No spreadsheet
+            is required. An empty file is not proof, and this does not create invoices or sales. Sales
+            Setup is complete once this is confirmed. Later 504 and TRM21QC imports still run. A real
+            history file can be imported later if purchases were missing.
+          </p>
+          <p className="mt-2 text-[13px]">
+            Customer <span className="font-semibold">{companyName}</span>. Verified account{" "}
+            <span className="font-semibold">{verifiedAccount}</span>.
+          </p>
+          <label className="mt-3 grid gap-1 text-[12px] font-semibold">
+            Reason
+            <textarea
+              value={baselineReason}
+              onChange={(event) => setBaselineReason(event.target.value)}
+              maxLength={NEW_SALES_BASELINE_REASON_MAX}
+              rows={3}
+              className="rounded-md border border-border px-3 py-2 text-[13px] font-normal"
+              placeholder="Why this account has no historical Autopart sales"
+            />
+          </label>
+          <label className="mt-3 grid gap-1 text-[12px] font-semibold">
+            Type the verified account to confirm this customer
+            <input
+              value={baselineAccount}
+              onChange={(event) => setBaselineAccount(event.target.value)}
+              autoComplete="off"
+              className="h-10 rounded-md border border-border px-3 text-[13px] font-normal"
+            />
+          </label>
+          {baselineAccount.trim() && !accountReady ? (
+            <p className="mt-2 text-[12px] text-steel">That is not this customer&apos;s verified account.</p>
+          ) : null}
+          <button
+            type="button"
+            disabled={!reasonReady || !accountReady || busy}
+            className="mt-3 h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+            onClick={() => setConfirm("none")}
+          >
+            Establish New Sales Baseline
+          </button>
+          <div className="mt-4 border-t border-border pt-3">
+            <h4 className="text-[13px] font-semibold">Discarded pre-launch history</h4>
+            <p className="mt-1 text-[12px] text-steel">
+              Use this only when earlier imported history was discarded. It does not mean the customer
+              never had purchases, and it is not the record for a new empty account.
+            </p>
+            <button
+              type="button"
+              className="mt-3 h-9 rounded-md border border-border px-3 text-[12px] font-semibold"
+              onClick={() => setConfirm("baseline")}
+            >
+              Start new sales baseline
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -602,27 +679,6 @@ export function AutopartHistoryImport({
         </div>
       ) : null}
 
-      {!locked && !blocked && historyStatus !== "COMPLETE" && canImport ? (
-        <details className="mt-5 border-t border-border pt-4">
-          <summary className="cursor-pointer text-[13px] font-semibold">Other ways to record history</summary>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <div className="rounded-md border border-border p-3">
-              <h4 className="text-[13px] font-semibold">No historical sales</h4>
-              <p className="mt-1 text-[12px] text-steel">This customer genuinely has no historical purchases to import.</p>
-              <button type="button" className="mt-3 h-9 rounded-md border border-border px-3 text-[12px] font-semibold" onClick={() => setConfirm("none")}>
-                Record no historical sales
-              </button>
-            </div>
-            <div className="rounded-md border border-border p-3">
-              <h4 className="text-[13px] font-semibold">Start a new sales baseline</h4>
-              <p className="mt-1 text-[12px] text-steel">Historical purchases may have existed, but the record starts from a new point.</p>
-              <button type="button" className="mt-3 h-9 rounded-md border border-border px-3 text-[12px] font-semibold" onClick={() => setConfirm("baseline")}>
-                Start new sales baseline
-              </button>
-            </div>
-          </div>
-        </details>
-      ) : null}
       {recorded ? (
         <p className="mt-4 text-[12px] text-steel">
           {historyKind === "NO_HISTORICAL_SALES"
@@ -635,7 +691,7 @@ export function AutopartHistoryImport({
         open={confirm != null}
         title={
           confirm === "none"
-            ? "Record no historical sales?"
+            ? "Establish New Sales Baseline?"
             : confirm === "baseline"
               ? "Start a new sales baseline?"
               : confirm === "review"
@@ -644,7 +700,7 @@ export function AutopartHistoryImport({
         }
         description={
           confirm === "none"
-            ? "This records that the customer has no historical purchases. It is not the same as starting a new baseline. It does not import a file, and it will not replace a completed history import."
+            ? `This records no historical purchases for ${companyName} (${verifiedAccount}). Reason: ${baselineReason.trim()}. It does not upload a file, create sales, or change any other customer.`
             : confirm === "baseline"
               ? "This records that sales start from a new point. It does not claim the customer never bought before. It does not import a file, and it will not replace a completed history import."
               : confirm === "review"
@@ -668,7 +724,13 @@ export function AutopartHistoryImport({
               confirm === "review"
                 ? await acknowledgeCustomerSalesHistoryFn({ data: { companyId } })
                 : confirm === "none"
-                  ? await completeCustomerSalesCutoverFn({ data: { companyId } })
+                  ? await completeCustomerSalesCutoverFn({
+                      data: {
+                        companyId,
+                        reason: baselineReason.trim(),
+                        confirmAccount: baselineAccount.trim(),
+                      },
+                    })
                   : await startCustomerSalesHistoryBaselineFn({ data: { companyId } });
             setBusy(false);
             setConfirm(null);

@@ -21,6 +21,7 @@ import {
 } from "@/domain/customer-sales-history";
 import { classifyCustomerSalesReport } from "@/domain/customer-sales-import";
 import { PRELAUNCH_HISTORY_DISCARDED } from "@/domain/imported-sales-reset";
+import { parseNewSalesBaselineConfirmation } from "@/domain/new-sales-baseline";
 import {
   foreignAutopartClaims,
   resolveAutopartCodeOwnership,
@@ -974,9 +975,12 @@ function evidenceKind(evidence: unknown): string | null {
   return typeof kind === "string" ? kind : null;
 }
 
-export async function completeCustomerSalesCutoverWithoutHistory(actorUserId: string, companyId: string) {
+export async function completeCustomerSalesCutoverWithoutHistory(
+  actorUserId: string,
+  input: { companyId: string; reason: string; confirmAccount: string },
+) {
   await requireHistoryImporter(actorUserId);
-  const target = await loadCustomerSalesHistoryTarget(companyId);
+  const target = await loadCustomerSalesHistoryTarget(input.companyId);
   const existing = await prisma.customerSalesCutover.findUnique({ where: { companyId: target.companyId } });
   if (existing?.historyStatus === "REVIEW") {
     throw new AuthError(
@@ -995,28 +999,42 @@ export async function completeCustomerSalesCutoverWithoutHistory(actorUserId: st
     }
     return { companyId: target.companyId, historyStatus: "COMPLETE" as const, alreadyComplete: true };
   }
-  const existingSales = await prisma.autopartSalesDocument.count({ where: { companyId: target.companyId } });
-  if (existingSales > 0) {
+  const [existingDocuments, existingLines] = await Promise.all([
+    prisma.autopartSalesDocument.count({ where: { companyId: target.companyId } }),
+    prisma.autopartSalesLine.count({ where: { companyId: target.companyId } }),
+  ]);
+  if (existingDocuments > 0 || existingLines > 0) {
     throw new AuthError(
       "This customer already has imported sales. Record a reviewed history import instead of zero history.",
       "VALIDATION",
       400,
     );
   }
+  const recordedAt = new Date();
+  const confirmed = parseNewSalesBaselineConfirmation({
+    companyName: target.companyName,
+    verifiedAccount: target.codes[0] ?? "",
+    confirmAccount: input.confirmAccount,
+    reason: input.reason,
+    recordedAt: recordedAt.toISOString(),
+  });
+  if (!confirmed.ok) {
+    throw new AuthError(confirmed.message, "VALIDATION", 400);
+  }
   await prisma.customerSalesCutover.upsert({
     where: { companyId: target.companyId },
     create: {
       companyId: target.companyId,
       historyStatus: "COMPLETE",
-      completedAt: new Date(),
+      completedAt: recordedAt,
       completedById: actorUserId,
-      evidence: { kind: "NO_HISTORICAL_SALES" },
+      evidence: confirmed.evidence,
     },
     update: {
       historyStatus: "COMPLETE",
-      completedAt: new Date(),
+      completedAt: recordedAt,
       completedById: actorUserId,
-      evidence: { kind: "NO_HISTORICAL_SALES" },
+      evidence: confirmed.evidence,
     },
   });
   await recordAuditEvent({
@@ -1024,7 +1042,12 @@ export async function completeCustomerSalesCutoverWithoutHistory(actorUserId: st
     entityType: "Company",
     entityId: target.companyId,
     actorUserId,
-    metadata: { kind: "NO_HISTORICAL_SALES" },
+    metadata: {
+      kind: confirmed.evidence.kind,
+      reason: confirmed.evidence.reason,
+      verifiedAccount: confirmed.evidence.verifiedAccount,
+      companyName: confirmed.evidence.companyName,
+    },
   });
   return { companyId: target.companyId, historyStatus: "COMPLETE" as const, alreadyComplete: false };
 }

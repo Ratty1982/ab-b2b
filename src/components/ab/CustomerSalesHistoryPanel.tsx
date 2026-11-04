@@ -16,6 +16,10 @@ import {
   uploadCustomerSalesReport,
   type SavedCustomerSalesUpload,
 } from "@/components/ab/upload-customer-sales-report";
+import {
+  NEW_SALES_BASELINE_REASON_MAX,
+  NEW_SALES_BASELINE_REASON_MIN,
+} from "@/domain/new-sales-baseline";
 
 type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesHistoryUploadFn>>, { ok: true }>["data"];
 type ImportResult = Extract<Awaited<ReturnType<typeof confirmCustomerSalesHistoryUploadFn>>, { ok: true }>["data"];
@@ -31,6 +35,10 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
   const restoredJob = useRef<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<string>("NOT_STARTED");
   const [historyKind, setHistoryKind] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState("");
+  const [verifiedAccount, setVerifiedAccount] = useState<string | null>(null);
+  const [baselineReason, setBaselineReason] = useState("");
+  const [baselineAccount, setBaselineAccount] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function refreshStatus() {
@@ -38,6 +46,9 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
     if (accounts.ok) {
       setHistoryStatus(accounts.data.historyStatus);
       setHistoryKind(accounts.data.historyKind);
+      setCompanyName(accounts.data.companyName);
+      const primary = accounts.data.accounts.find((account) => account.kind === "primary" && account.verified);
+      setVerifiedAccount(primary?.code ?? null);
     }
   }
 
@@ -209,6 +220,28 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
             {progress}
           </p>
         ) : null}
+        <div className="grid gap-2 rounded-md border border-border p-3">
+          <p className="text-[13px] font-semibold">Establish New Sales Baseline</p>
+          <label className="grid gap-1 text-[12px] font-semibold">
+            Reason for {companyName || "this customer"}
+            <textarea
+              value={baselineReason}
+              onChange={(event) => setBaselineReason(event.target.value)}
+              maxLength={NEW_SALES_BASELINE_REASON_MAX}
+              rows={2}
+              className="rounded-md border border-border px-3 py-2 text-[13px] font-normal"
+            />
+          </label>
+          <label className="grid gap-1 text-[12px] font-semibold">
+            Type verified account {verifiedAccount ?? "—"}
+            <input
+              value={baselineAccount}
+              onChange={(event) => setBaselineAccount(event.target.value)}
+              autoComplete="off"
+              className="h-9 rounded-md border border-border px-3 text-[13px] font-normal"
+            />
+          </label>
+        </div>
         <div className="flex flex-wrap gap-2">
           <button
             type="submit"
@@ -219,12 +252,23 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
           </button>
           <button
             type="button"
-            disabled={busy}
+            disabled={
+              busy ||
+              !verifiedAccount ||
+              baselineReason.trim().length < NEW_SALES_BASELINE_REASON_MIN ||
+              baselineAccount.trim().toUpperCase() !== verifiedAccount.trim().toUpperCase()
+            }
             className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold disabled:opacity-50"
             onClick={() => {
               void (async () => {
                 setBusy(true);
-                const result = await completeCustomerSalesCutoverFn({ data: { companyId } });
+                const result = await completeCustomerSalesCutoverFn({
+                  data: {
+                    companyId,
+                    reason: baselineReason.trim(),
+                    confirmAccount: baselineAccount.trim(),
+                  },
+                });
                 setBusy(false);
                 if (!result.ok) {
                   toast.error(result.error);
@@ -234,12 +278,12 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
                 toast.success(
                   result.data.alreadyComplete
                     ? "Historical cutover is already complete"
-                    : "Recorded that this customer has no historical sales",
+                    : "New sales baseline recorded. This customer has no historical purchases",
                 );
               })();
             }}
           >
-            No historical sales
+            Establish New Sales Baseline
           </button>
           <button
             type="button"

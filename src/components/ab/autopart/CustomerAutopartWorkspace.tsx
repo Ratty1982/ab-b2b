@@ -179,6 +179,8 @@ export function CustomerAutopartWorkspace({
 
       <AutopartHistoryImport
         companyId={companyId}
+        companyName={workspace.company.name}
+        verifiedAccount={workspace.salesAccount.verified ? workspace.salesAccount.code : null}
         canImport={workspace.canImport}
         blocked={
           workspace.salesAccount.ownershipAmbiguous
