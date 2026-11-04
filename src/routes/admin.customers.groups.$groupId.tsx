@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
+import { BulkAssignCustomerGroupPanel } from "@/components/ab/BulkAssignCustomerGroupPanel";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
 import { formatGbp } from "@/domain/sales-intelligence";
@@ -239,6 +240,7 @@ function CustomerGroupWorkspace() {
       />
 
       <div className="space-y-6 px-4 py-4 sm:px-6">
+        <BulkAssignCustomerGroupPanel initialGroupId={groupId} />
         <div className="flex flex-wrap items-end gap-3">
           <Field label="Period">
             <select

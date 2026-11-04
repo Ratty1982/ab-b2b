@@ -2864,6 +2864,60 @@ export const setCompanyCustomerGroupFn = createServerFn({ method: "POST" })
     }
   });
 
+export const searchCompaniesForBulkCustomerGroupAssignFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-group-bulk");
+      return {
+        ok: true as const,
+        data: await mod.searchCompaniesForBulkCustomerGroupAssign(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const resolveAllCompaniesForBulkCustomerGroupAssignFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-group-bulk");
+      return {
+        ok: true as const,
+        data: await mod.resolveAllCompaniesForBulkCustomerGroupAssign(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewBulkCustomerGroupAssignFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-group-bulk");
+      return { ok: true as const, data: await mod.previewBulkCustomerGroupAssign(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmBulkCustomerGroupAssignFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-group-bulk");
+      return { ok: true as const, data: await mod.confirmBulkCustomerGroupAssign(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getCustomerGroupSalesSummaryFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {
