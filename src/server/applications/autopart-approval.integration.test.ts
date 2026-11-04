@@ -195,7 +195,8 @@ describe("Autopart claim / approval verification", () => {
       code: `${claim}X`,
     });
     const workspace = await getCompanyWorkspace(adminId, approved.companyId);
-    expect(workspace.company.autopartAccount.verified).toBe(true);
+    expect(workspace.company.autopartAccount.code).toBe(`${claim}X`);
+    expect(workspace.company.autopartAccount.verified).toBe(false);
     expect(workspace.registrationAutopartClaim?.needsVerification).toBe(true);
   });
 
@@ -246,10 +247,12 @@ describe("Autopart claim / approval verification", () => {
       },
     });
 
-    await setCompanyAutopartCustomerCode(adminId, {
-      companyId: company.id,
-      code: `${code}-NEW`,
-    });
+    await expect(
+      setCompanyAutopartCustomerCode(adminId, {
+        companyId: company.id,
+        code: `${code}-NEW`,
+      }),
+    ).rejects.toMatchObject({ code: "AUTOPART_CODE_VERIFIED" });
     await linkAndVerifyCompanyAutopartCustomerCode(adminId, {
       companyId: company.id,
       code: `${code}-NEW`,

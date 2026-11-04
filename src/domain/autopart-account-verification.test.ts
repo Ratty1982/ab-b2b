@@ -148,7 +148,7 @@ describe("automatic verification plan", () => {
     }
   });
 
-  it("labels a unique unverified mapping as verified for display", () => {
+  it("does not display a unique saved ID as verified before the timestamp", () => {
     const eligible = classifyCompanyAutopartCode({
       companyId: "a",
       code: "00123",
@@ -160,8 +160,10 @@ describe("automatic verification plan", () => {
       reason: eligible.reason,
       verifiedByName: null,
     });
-    expect(display.verified).toBe(true);
+    expect(eligible.decision).toBe("ELIGIBLE");
+    expect(display.verified).toBe(false);
     expect(display.verificationRecorded).toBe(false);
+    expect(display.attention).toMatch(/not been verified/i);
     expect(display.verifiedByLabel).toBeNull();
 
     const recorded = autopartMappingDisplay({

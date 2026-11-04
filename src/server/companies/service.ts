@@ -16,6 +16,7 @@ import {
 import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { normaliseAssignedAutopartCode } from "@/domain/autopart-account-verification";
 import { describeCompanyAutopartMapping } from "@/server/companies/autopart-account-verification";
+import { loadCustomerOnboarding } from "@/server/companies/customer-onboarding";
 import {
   companyCreateSchema,
   companyDeleteSchema,
@@ -372,6 +373,32 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
   const assignedKey = normaliseAssignedAutopartCode(serialized.autopartAccount.code).key;
   const claimKey = normaliseAssignedAutopartCode(claimedCode).key;
   const verifiedLinked = Boolean(assignedKey && claimKey && assignedKey === claimKey && mapping.verified);
+  const ownershipAmbiguous =
+    mapping.assessment.decision === "CONFLICT" ||
+    mapping.assessment.decision === "MANUAL_REVIEW" ||
+    (mapping.assessment.decision === "ALREADY_VERIFIED" && Boolean(mapping.assessment.reason));
+  const portalActiveUsers = company.users.filter((user) => user.status === "ACTIVE").length;
+  const portalPending = Math.max(
+    company.users.filter((user) => user.status === "INVITED").length,
+    company.invitations.filter((invitation) => invitation.status === "PENDING").length,
+  );
+  const onboarding = await loadCustomerOnboarding({
+    profile,
+    companyId,
+    status: company.status,
+    salesCode: company.autopartCustomerCode,
+    salesCodeVerified: Boolean(mapping.verified && company.autopartCustomerCodeVerifiedAt),
+    ownershipAmbiguous,
+    ownershipNote: mapping.attention,
+    priceListName: company.priceList?.name ?? null,
+    paymentTerms: company.paymentTerms,
+    customerGroupName: company.customerGroup?.name ?? null,
+    taxStatus: company.taxStatus,
+    contactCount: company.contacts.length,
+    addressCount: company.addresses.length,
+    portalActiveUsers,
+    portalPending,
+  });
 
   return {
     company: serialized,
@@ -393,6 +420,7 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
         grants(profile, "companies.manage_users", "admin.access"),
       canEditPricing,
     },
+    onboarding,
     contacts: company.contacts.map((c) => ({
       ...c,
       createdAt: c.createdAt.toISOString(),
@@ -1080,6 +1108,17 @@ export async function inviteCompanyUser(actorUserId: string, raw: unknown) {
   }
 
   const email = input.email.toLowerCase();
+  const existingUser = await prisma.user.findUnique({
+    where: { email },
+    select: { actorType: true },
+  });
+  if (existingUser?.actorType === "INTERNAL") {
+    throw new AuthError(
+      "Cannot invite an internal staff email as a customer portal user.",
+      "VALIDATION",
+      400,
+    );
+  }
   const { token, tokenHash } = generateInviteToken();
   const expiresAt = new Date(Date.now() + input.expiresInDays * 24 * 60 * 60 * 1000);
 

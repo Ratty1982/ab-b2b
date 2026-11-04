@@ -1490,7 +1490,11 @@ export async function linkAutopartAccountToCompany(
     entityId: account.id,
     actorUserId,
     companyId: company.id,
-    metadata: { accountCode: account.accountCode, setPrimary: Boolean(input.setPrimary) },
+    metadata: {
+      accountCode: account.accountCode,
+      setPrimary: Boolean(input.setPrimary),
+      verification: "not_verified",
+    },
   });
   return {
     accountId: account.id,
@@ -1533,7 +1537,7 @@ export async function createCompanyForAutopartAccount(actorUserId: string, accou
     entityId: company.id,
     actorUserId,
     companyId: company.id,
-    metadata: { accountCode: account.accountCode },
+    metadata: { accountCode: account.accountCode, verification: "not_verified" },
   });
   return { companyId: company.id, accountId: account.id };
 }

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { LogActivityDrawer } from "@/components/crm/LogActivityDrawer";
@@ -8,6 +8,7 @@ import { COMPANY_STATUS_LABEL } from "@/domain/company";
 import { activityTypeLabel, formatGbpExact, formatOpportunityValue } from "@/domain/crm";
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
+import { CustomerOnboardingOverview } from "@/components/ab/CustomerOnboardingOverview";
 import { InstantText } from "@/components/ab/InstantText";
 import { CustomerPriceImportPanel } from "@/components/pricing/CustomerPriceImportPanel";
 import { UnifiedSalesFigures } from "@/components/sales-intelligence/unified-sales";
@@ -66,6 +67,7 @@ function SalesCustomer() {
       isDefaultBilling: boolean;
       isDefaultDelivery: boolean;
     }>;
+    onboarding?: ComponentProps<typeof CustomerOnboardingOverview>["onboarding"];
   }>(null);
   const [crm, setCrm] = useState<Extract<
     Awaited<ReturnType<typeof getCompanyCrmWorkspaceFn>>,
@@ -144,6 +146,14 @@ function SalesCustomer() {
       <div className="p-4 text-[13px] sm:p-6">
         {tab === "Overview" ? (
           <div className="space-y-6">
+            {data.onboarding ? (
+              <CustomerOnboardingOverview
+                companyId={company.id}
+                onboarding={data.onboarding}
+                availableTabs={tabs}
+                onOpenTab={(next) => setTab(next as (typeof tabs)[number])}
+              />
+            ) : null}
             <dl className="grid max-w-xl gap-3">
               <div>
                 <dt className="text-steel">Trading name</dt>

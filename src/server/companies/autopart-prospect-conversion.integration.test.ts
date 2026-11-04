@@ -359,6 +359,8 @@ describe("Autopart prospect conversion", () => {
       where: { autopartCustomerCode: eligibleCode },
     });
     expect(eligibleCompany.status).toBe("PROSPECT");
+    expect(eligibleCompany.autopartCustomerCodeVerifiedAt).toBeNull();
+    expect(eligibleCompany.autopartCustomerCodeVerifiedById).toBeNull();
     expect(eligibleCompany.name).toBe(`Eligible ${stamp}`);
     expect(eligibleCompany.notes).toContain(eligibleCode);
     expect(eligibleCompany.notes).toContain("N1");

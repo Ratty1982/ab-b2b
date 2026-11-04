@@ -4,6 +4,7 @@ import { bootstrapRbac } from "../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
 import {
   clearCompanyAutopartCustomerCode,
+  linkAndVerifyCompanyAutopartCustomerCode,
   normalizeAutopartCustomerCode,
   setCompanyAutopartCustomerCode,
   verifyCompanyAutopartCustomerCode,
@@ -216,20 +217,29 @@ describe("Phase 6A.5 commercial accounts", () => {
       code: `AP-${suffix}`,
     });
     expect(set.code).toBe(`AP-${suffix}`);
-    expect(set.verified).toBe(true);
+    expect(set.verified).toBe(false);
     expect(set.verifiedBy).toBeNull();
 
     const verified = await verifyCompanyAutopartCustomerCode(adminId, { companyId: companyA });
     expect(verified.verified).toBe(true);
     expect(verified.verifiedBy?.id).toBe(adminId);
 
-    const changed = await setCompanyAutopartCustomerCode(adminId, {
+    await expect(
+      setCompanyAutopartCustomerCode(adminId, {
+        companyId: companyA,
+        code: `AP2-${suffix}`,
+      }),
+    ).rejects.toMatchObject({ code: "AUTOPART_CODE_VERIFIED" });
+    const kept = await prisma.company.findUniqueOrThrow({ where: { id: companyA } });
+    expect(kept.autopartCustomerCode).toBe(`AP-${suffix}`);
+    expect(kept.autopartCustomerCodeVerifiedById).toBe(adminId);
+
+    const replaced = await linkAndVerifyCompanyAutopartCustomerCode(adminId, {
       companyId: companyA,
       code: `AP2-${suffix}`,
     });
-    expect(changed.code).toBe(`AP2-${suffix}`);
-    expect(changed.verified).toBe(true);
-    expect(changed.verifiedBy).toBeNull();
+    expect(replaced.code).toBe(`AP2-${suffix}`);
+    expect(replaced.verifiedBy?.id).toBe(adminId);
 
     await setCompanyAutopartCustomerCode(adminId, {
       companyId: companyB,
