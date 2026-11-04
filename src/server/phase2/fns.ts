@@ -5610,12 +5610,7 @@ export const exportPurchasingBackordersCsvFn = createServerFn({ method: "GET" })
 export const previewAutopart216vFn = createServerFn({ method: "POST" })
   .inputValidator(
     (data: unknown) =>
-      data as {
-        text?: string;
-        bytesBase64?: string;
-        filename?: string;
-        confirmedReportDate?: string | null;
-      },
+      data as { text?: string; bytesBase64?: string; filename?: string },
   )
   .handler(async ({ data }) => {
     try {
@@ -5630,13 +5625,7 @@ export const previewAutopart216vFn = createServerFn({ method: "POST" })
 export const confirmAutopart216vFn = createServerFn({ method: "POST" })
   .inputValidator(
     (data: unknown) =>
-      data as {
-        text?: string;
-        bytesBase64?: string;
-        filename?: string;
-        confirmedReportDate?: string | null;
-        allowHistoricalImport?: boolean;
-      },
+      data as { text?: string; bytesBase64?: string; filename?: string },
   )
   .handler(async ({ data }) => {
     try {

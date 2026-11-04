@@ -3,6 +3,7 @@ import { inspected216vFileHash } from "@/domain/autopart-216v";
 import {
   backorderFeedPatchAfterPoll,
   decide216vMailboxAttachment,
+  isAutopart216vAttachmentCandidate,
   summarise216vPoll,
 } from "@/server/purchasing/backorder-poll";
 
@@ -36,6 +37,18 @@ describe("216V mailbox duplicate identity", () => {
         committedHashes: new Set(),
       }).action,
     ).toBe("skip");
+  });
+
+  it("accepts a 216V CSV even when Outlook labels it as force-download", () => {
+    expect(isAutopart216vAttachmentCandidate("216V_20261104.csv", "application/force-download")).toBe(
+      true,
+    );
+    expect(isAutopart216vAttachmentCandidate("216V_20261104.csv", "application/download")).toBe(true);
+    expect(isAutopart216vAttachmentCandidate("216V_20261104.CSV", "application/octet-stream")).toBe(
+      true,
+    );
+    expect(isAutopart216vAttachmentCandidate("notes.pdf", "application/pdf")).toBe(false);
+    expect(isAutopart216vAttachmentCandidate("stock.csv", "image/png")).toBe(false);
   });
 
   it("describes skipped, duplicate and failed polls", () => {

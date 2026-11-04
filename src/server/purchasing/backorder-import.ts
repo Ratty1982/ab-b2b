@@ -477,12 +477,7 @@ export async function confirmAutopart216vImport(
 
 export async function previewAutopart216vImport(
   actorUserId: string,
-  raw: {
-    text?: string;
-    bytesBase64?: string;
-    filename?: string;
-    confirmedReportDate?: string | null;
-  },
+  raw: { text?: string; bytesBase64?: string; filename?: string },
 ) {
   const profile = await requirePurchasingAccess(actorUserId);
   if (!hasPermission(profile, "purchasing.backorders.view")) {
@@ -493,51 +488,6 @@ export async function previewAutopart216vImport(
     throw new AuthError("File does not look like an Autopart 216V report", "VALIDATION", 400);
   }
   const parsed = parseAutopart216vReport(upload.text);
-  const suggestedReportDate = suggestManual216vReportDate({ filename: raw.filename ?? null });
-  const confirmedReportDate =
-    parseManual216vReportDate(raw.confirmedReportDate) ?? suggestedReportDate;
-  const report = resolveAutopart216vReportDate({
-    filename: raw.filename ?? null,
-    confirmedReportDate,
-    importedAt: new Date(),
-  });
-  const hash = fileHashOf(upload);
-  const existing = await prisma.autopartBackorderSnapshot.findUnique({
-    where: { fileHash: hash },
-    select: {
-      id: true,
-      status: true,
-      filename: true,
-      fileHash: true,
-      businessDate: true,
-      receivedAt: true,
-      importedAt: true,
-    },
-  });
-  const duplicate =
-    existing?.status === "COMMITTED" &&
-    isCommitted216vSnapshotHash(hash, new Set([existing.fileHash]));
-  const headers = await listCommitted216vSnapshots();
-  const incoming = {
-    id: "incoming",
-    filename: raw.filename ?? "216V.csv",
-    businessDate: utcDateOnly(report.iso),
-    receivedAt: new Date(),
-    importedAt: new Date(),
-  };
-  const wouldBecomeCurrent =
-    !duplicate && pickCurrent216vSnapshot([...headers, incoming])?.id === incoming.id;
-  const existingReport = existing ? resolveAutopart216vReportDate(existing) : null;
-  const duplicateMessage =
-    duplicate && existing
-      ? duplicateContentMessage({
-          uploadedFilename: raw.filename ?? null,
-          existingFilename: existing.filename,
-          reportDate: existingReport?.iso ?? report.iso,
-          fileHash: existing.fileHash,
-        })
-      : null;
-
   return {
     headerFound: parsed.headerFound,
     errors: parsed.errors,
@@ -548,19 +498,6 @@ export async function previewAutopart216vImport(
     outstandingQty: parsed.outstandingQty,
     outstandingValue: parsed.outstandingValue,
     emptyValid: parsed.rows.length === 0 && isStrongEmpty216vReport(upload.text),
-    suggestedReportDate,
-    confirmedReportDate,
-    reportDate: report.iso,
-    reportDateSource: report.source,
-    reportDateReview: report.review,
-    reportDateVerified: report.verifiedWorkingDay,
-    filenameDate: report.filenameDate,
-    fileHash: hash,
-    duplicate,
-    duplicateOfFilename: duplicate ? (existing?.filename ?? null) : null,
-    duplicateMessage,
-    wouldBecomeCurrent,
-    requiresHistoricalConfirmation: !duplicate && !wouldBecomeCurrent,
     sample: parsed.rows.slice(0, 20).map((r) => ({
       orderNumber: r.orderNumber,
       account: r.customerAccount,
