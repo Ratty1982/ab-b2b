@@ -1,7 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useId, useState } from "react";
-import { AlertTriangle, Boxes, ClipboardList, Download, Settings, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  Boxes,
+  ClipboardList,
+  Download,
+  Settings,
+  Users,
+} from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Drawer } from "@/components/ab/Drawer";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -57,8 +64,7 @@ import {
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/purchasing/backorders")({
-  beforeLoad: ({ location }) =>
-    guardStaffPage("purchasing.backorders.view", location.href, "/purchasing"),
+  beforeLoad: ({ location }) => guardStaffPage("purchasing.backorders.view", location.href, "/purchasing"),
   validateSearch: (raw: Record<string, unknown>) => parseBackorderSearch(raw),
   head: () => ({
     meta: [
@@ -73,10 +79,7 @@ export const Route = createFileRoute("/purchasing/backorders")({
 });
 
 type Data = Extract<Awaited<ReturnType<typeof getPurchasingBackordersFn>>, { ok: true }>["data"];
-type LineDetail = Extract<
-  Awaited<ReturnType<typeof getPurchasingBackorderLineFn>>,
-  { ok: true }
->["data"];
+type LineDetail = Extract<Awaited<ReturnType<typeof getPurchasingBackorderLineFn>>, { ok: true }>["data"];
 type LineRow = Data["lines"]["rows"][number];
 type MovementData = NonNullable<Data["movement"]>;
 type MovementRow = MovementData["rows"][number];
@@ -112,8 +115,7 @@ function describePoll(data: {
     if (historical && !detail) return { tone: "warn", message: historical };
     return {
       tone: "good",
-      message:
-        detail ?? `Imported ${data.processed} 216V report${data.processed === 1 ? "" : "s"}.`,
+      message: detail ?? `Imported ${data.processed} 216V report${data.processed === 1 ? "" : "s"}.`,
     };
   }
   if (data.duplicatesIgnored > 0) {
@@ -354,10 +356,7 @@ function BackordersPage() {
         />
       ) : null}
       {data?.current && data.attentionSummary.unique > 0 ? (
-        <AttentionSummary
-          summary={data.attentionSummary}
-          onView={() => patch({ view: "attention", movement: undefined, page: undefined })}
-        />
+        <AttentionSummary summary={data.attentionSummary} onView={() => patch({ view: "attention", movement: undefined, page: undefined })} />
       ) : null}
       <div className="grid gap-2 border-b border-border/70 px-4 py-3 sm:grid-cols-2 sm:px-6 lg:grid-cols-4">
         <ViewCard
@@ -415,46 +414,19 @@ function BackordersPage() {
           movement={data.movement}
           onClear={() => patch({ movement: undefined, page: undefined })}
           onPage={(page) => patch({ page })}
-          onOpen={(row) =>
-            row.currentlyOutstanding ? void openLine(row.id) : setClearedDetail(row)
-          }
+          onOpen={(row) => (row.currentlyOutstanding ? void openLine(row.id) : setClearedDetail(row))}
         />
       ) : null}
       {data && current && !data.movement && view === "lines" ? (
-        <LinesTable
-          rows={data.lines.rows}
-          total={data.lines.total}
-          page={data.lines.page}
-          pageSize={data.lines.pageSize}
-          onPage={(page) => patch({ page })}
-          onOpen={openLine}
-        />
+        <LinesTable rows={data.lines.rows} total={data.lines.total} page={data.lines.page} pageSize={data.lines.pageSize} onPage={(page) => patch({ page })} onOpen={openLine} />
       ) : null}
       {data && current && !data.movement && view === "sku" ? (
-        <SkuTable
-          groups={data.skus.rows}
-          total={data.skus.total}
-          page={data.skus.page}
-          pageSize={data.skus.pageSize}
-          expanded={expandedSku}
-          onExpand={setExpandedSku}
-          onPage={(page) => patch({ page })}
-          onOpen={openLine}
-        />
+        <SkuTable groups={data.skus.rows} total={data.skus.total} page={data.skus.page} pageSize={data.skus.pageSize} expanded={expandedSku} onExpand={setExpandedSku} onPage={(page) => patch({ page })} onOpen={openLine} />
       ) : null}
       {data && current && !data.movement && view === "customer" ? (
-        <CustomerTable
-          groups={data.customerGroups.rows}
-          total={data.customerGroups.total}
-          page={data.customerGroups.page}
-          pageSize={data.customerGroups.pageSize}
-          onPage={(page) => patch({ page })}
-          onOpen={openLine}
-        />
+        <CustomerTable groups={data.customerGroups.rows} total={data.customerGroups.total} page={data.customerGroups.page} pageSize={data.customerGroups.pageSize} onPage={(page) => patch({ page })} onOpen={openLine} />
       ) : null}
-      {data && current && !data.movement && view === "attention" ? (
-        <AttentionBoard data={data} onOpen={openLine} />
-      ) : null}
+      {data && current && !data.movement && view === "attention" ? <AttentionBoard data={data} onOpen={openLine} /> : null}
       <Drawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -520,37 +492,27 @@ function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
           <span>{headline.label}</span>
         </p>
         <span>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-            Latest report date
-          </span>{" "}
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Latest report date</span>{" "}
           {freshness.latestReportDateLabel}
         </span>
         <span>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-            Report received
-          </span>{" "}
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Report received</span>{" "}
           {freshness.lastReceivedLabel}
         </span>
         {freshness.sourceLabel ? (
           <span>
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Source
-            </span>{" "}
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Source</span>{" "}
             {freshness.sourceLabel}
           </span>
         ) : null}
         {freshness.filename ? (
           <span>
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              File
-            </span>{" "}
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">File</span>{" "}
             {freshness.filename}
           </span>
         ) : null}
         <span>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-            Next automatic report
-          </span>{" "}
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Next automatic report</span>{" "}
           {freshness.nextExpectedLabel}
         </span>
       </div>
@@ -621,12 +583,7 @@ function Metrics({
   movement: Autopart216vMovement | null;
   onMovement: (movement: Autopart216vMovement) => void;
 }) {
-  const movementCard = (
-    id: Autopart216vMovement,
-    label: string,
-    count: number,
-    accent: "cyan" | "warn" | "good",
-  ) => (
+  const movementCard = (id: Autopart216vMovement, label: string, count: number, accent: "cyan" | "warn" | "good") => (
     <KpiCard
       label={label}
       value={qty(count)}
@@ -635,9 +592,7 @@ function Metrics({
       selected={movement === id}
       onSelect={() => onMovement(id)}
       ariaLabel={`${label}: ${count} line${count === 1 ? "" : "s"} since the previous 216V snapshot. ${
-        movement === id
-          ? "Selected. Activate to return to all current backorders."
-          : "Show these lines."
+        movement === id ? "Selected. Activate to return to all current backorders." : "Show these lines."
       }`}
     />
   );
@@ -645,24 +600,9 @@ function Metrics({
     <div className="grid gap-3 border-b border-border/70 px-4 py-4 sm:px-6">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard label="Outstanding Orders" value={qty(current.outstandingOrders)} accent="cyan" />
-        <KpiCard
-          label="Outstanding Units"
-          value={qty(current.outstandingUnits)}
-          accent="warn"
-          emphasis
-        />
-        <KpiCard
-          label="Outstanding Value"
-          value={gbp(current.outstandingValue)}
-          accent="warn"
-          emphasis
-        />
-        <KpiCard
-          label="Attention"
-          value={qty(attentionCount)}
-          accent={attentionCount > 0 ? "bad" : "steel"}
-          emphasis={attentionCount > 0}
-        />
+        <KpiCard label="Outstanding Units" value={qty(current.outstandingUnits)} accent="warn" emphasis />
+        <KpiCard label="Outstanding Value" value={gbp(current.outstandingValue)} accent="warn" emphasis />
+        <KpiCard label="Attention" value={qty(attentionCount)} accent={attentionCount > 0 ? "bad" : "steel"} emphasis={attentionCount > 0} />
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {movementCard("NEW", "New Today", current.newToday, "cyan")}
@@ -671,12 +611,7 @@ function Metrics({
         {movementCard("CLEARED", "Cleared", current.clearedSincePrevious, "good")}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <KpiCard
-          label="Outstanding Lines"
-          value={qty(current.outstandingLines)}
-          accent="steel"
-          compact
-        />
+        <KpiCard label="Outstanding Lines" value={qty(current.outstandingLines)} accent="steel" compact />
         <KpiCard label="Customers" value={qty(current.customers)} accent="steel" compact />
       </div>
     </div>
@@ -714,25 +649,14 @@ function KpiCard({
             : "border-l-steel/50 bg-surface/60";
   const body = (
     <>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-        {label}
-      </div>
-      <div
-        className={cn(
-          "num mt-1 font-display font-semibold",
-          emphasis || !compact ? "text-2xl" : "text-lg",
-        )}
-      >
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">{label}</div>
+      <div className={cn("num mt-1 font-display font-semibold", emphasis || !compact ? "text-2xl" : "text-lg")}>
         {value}
       </div>
     </>
   );
   if (!onSelect) {
-    return (
-      <div className={cn("border border-border border-l-4 px-3 py-3", border, compact && "py-2")}>
-        {body}
-      </div>
-    );
+    return <div className={cn("border border-border border-l-4 px-3 py-3", border, compact && "py-2")}>{body}</div>;
   }
   return (
     <button
@@ -749,9 +673,7 @@ function KpiCard({
     >
       {body}
       {selected ? (
-        <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
-          Showing these lines
-        </div>
+        <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">Showing these lines</div>
       ) : null}
     </button>
   );
@@ -776,9 +698,7 @@ function AttentionSummary({
     <section className="border-b border-border/70 px-4 py-3 sm:px-6" aria-label="Needs attention">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-warn">
-            Needs attention
-          </h2>
+          <h2 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-warn">Needs attention</h2>
           <ul className="mt-2 grid gap-1 text-[13px] sm:grid-cols-2">
             {items.map((item) => (
               <li key={item.label}>
@@ -836,9 +756,7 @@ function ViewCard({
       className={cn(
         "flex items-start justify-between gap-3 border px-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         accentClass,
-        active
-          ? "bg-secondary/80 ring-1 ring-foreground/20"
-          : "bg-surface/40 hover:bg-secondary/40",
+        active ? "bg-secondary/80 ring-1 ring-foreground/20" : "bg-surface/40 hover:bg-secondary/40",
       )}
     >
       <div>
@@ -848,12 +766,7 @@ function ViewCard({
         </div>
         <div className="mt-1 text-[12px] text-steel">{hint}</div>
       </div>
-      <span
-        className={cn(
-          "num font-display text-2xl font-semibold",
-          id === "attention" && count > 0 && "text-warn",
-        )}
-      >
+      <span className={cn("num font-display text-2xl font-semibold", id === "attention" && count > 0 && "text-warn")}>
         {qty(count)}
       </span>
     </button>
@@ -885,9 +798,7 @@ function Filters({
         : null;
   return (
     <div className="border-b border-border/70 px-4 py-3 sm:px-6">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">
-        Filters
-      </div>
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">Filters</div>
       <div className="mb-3 flex flex-wrap gap-2">
         <QuickFilter
           label="Needs Attention"
@@ -898,12 +809,7 @@ function Filters({
           label="Stock Available"
           active={!positionOff && search.position === "STOCK_AVAILABLE"}
           disabled={positionOff}
-          onClick={() =>
-            patch({
-              position: search.position === "STOCK_AVAILABLE" ? undefined : "STOCK_AVAILABLE",
-              page: undefined,
-            })
-          }
+          onClick={() => patch({ position: search.position === "STOCK_AVAILABLE" ? undefined : "STOCK_AVAILABLE", page: undefined })}
         />
         <QuickFilter
           label="No Stock / No Incoming"
@@ -911,8 +817,7 @@ function Filters({
           disabled={positionOff}
           onClick={() =>
             patch({
-              position:
-                search.position === "NO_STOCK_NO_INCOMING" ? undefined : "NO_STOCK_NO_INCOMING",
+              position: search.position === "NO_STOCK_NO_INCOMING" ? undefined : "NO_STOCK_NO_INCOMING",
               page: undefined,
             })
           }
@@ -926,9 +831,7 @@ function Filters({
         <QuickFilter
           label="Product Issue"
           active={search.condition === "HAS"}
-          onClick={() =>
-            patch({ condition: search.condition === "HAS" ? undefined : "HAS", page: undefined })
-          }
+          onClick={() => patch({ condition: search.condition === "HAS" ? undefined : "HAS", page: undefined })}
         />
       </div>
       <form
@@ -945,112 +848,45 @@ function Filters({
           onChange={(e) => setQ(e.target.value)}
           aria-label="Search order, customer, account, SKU or reference"
         />
-        <select
-          className={cn(controlClass, statusOff && "opacity-50")}
-          disabled={statusOff}
-          title={statusOff ? (ignoredNote ?? undefined) : undefined}
-          value={search.status ?? ""}
-          onChange={(e) => patch({ status: e.target.value || undefined, page: undefined })}
-          aria-label="Status"
-        >
+        <select className={cn(controlClass, statusOff && "opacity-50")} disabled={statusOff} title={statusOff ? ignoredNote ?? undefined : undefined} value={search.status ?? ""} onChange={(e) => patch({ status: e.target.value || undefined, page: undefined })} aria-label="Status">
           {BACKORDER_STATUS_FILTERS.map((opt) => (
-            <option key={opt.value || "all"} value={opt.value}>
-              {opt.label}
-            </option>
+            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        <select
-          className={cn(controlClass, positionOff && "opacity-50")}
-          disabled={positionOff}
-          title={positionOff ? (ignoredNote ?? undefined) : undefined}
-          value={search.position ?? ""}
-          onChange={(e) => patch({ position: e.target.value || undefined, page: undefined })}
-          aria-label="Stock position"
-        >
+        <select className={cn(controlClass, positionOff && "opacity-50")} disabled={positionOff} title={positionOff ? ignoredNote ?? undefined : undefined} value={search.position ?? ""} onChange={(e) => patch({ position: e.target.value || undefined, page: undefined })} aria-label="Stock position">
           {BACKORDER_POSITION_FILTERS.map((opt) => (
-            <option key={opt.value || "all"} value={opt.value}>
-              {opt.label}
-            </option>
+            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        <select
-          className={cn(controlClass, ageOff && "opacity-50")}
-          disabled={ageOff}
-          title={ageOff ? (ignoredNote ?? undefined) : undefined}
-          value={search.ageDays ? String(search.ageDays) : ""}
-          onChange={(e) =>
-            patch({ ageDays: e.target.value ? Number(e.target.value) : undefined, page: undefined })
-          }
-          aria-label="Age"
-        >
+        <select className={cn(controlClass, ageOff && "opacity-50")} disabled={ageOff} title={ageOff ? ignoredNote ?? undefined : undefined} value={search.ageDays ? String(search.ageDays) : ""} onChange={(e) => patch({ ageDays: e.target.value ? Number(e.target.value) : undefined, page: undefined })} aria-label="Age">
           {BACKORDER_AGE_FILTERS.map((opt) => (
-            <option key={opt.value || "all"} value={opt.value}>
-              {opt.label}
-            </option>
+            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        <select
-          className={controlClass}
-          value={search.customerAccount ?? ""}
-          onChange={(e) => patch({ customerAccount: e.target.value || undefined, page: undefined })}
-          aria-label="Customer"
-        >
+        <select className={controlClass} value={search.customerAccount ?? ""} onChange={(e) => patch({ customerAccount: e.target.value || undefined, page: undefined })} aria-label="Customer">
           <option value="">All customers</option>
           {(data?.customers ?? []).map((c) => (
-            <option key={c.account} value={c.account}>
-              {c.name} ({c.account})
-            </option>
+            <option key={c.account} value={c.account}>{c.name} ({c.account})</option>
           ))}
         </select>
-        <select
-          className={controlClass}
-          value={search.brand ?? ""}
-          onChange={(e) => patch({ brand: e.target.value || undefined, page: undefined })}
-          aria-label="Brand"
-        >
+        <select className={controlClass} value={search.brand ?? ""} onChange={(e) => patch({ brand: e.target.value || undefined, page: undefined })} aria-label="Brand">
           <option value="">All brands</option>
           {(data?.brands ?? []).map((brand) => (
-            <option key={brand} value={brand}>
-              {brand}
-            </option>
+            <option key={brand} value={brand}>{brand}</option>
           ))}
         </select>
-        <select
-          className={controlClass}
-          value={search.condition ?? ""}
-          onChange={(e) =>
-            patch({
-              condition: (e.target.value as BackorderSearch["condition"]) || undefined,
-              page: undefined,
-            })
-          }
-          aria-label="Product condition"
-        >
+        <select className={controlClass} value={search.condition ?? ""} onChange={(e) => patch({ condition: (e.target.value as BackorderSearch["condition"]) || undefined, page: undefined })} aria-label="Product condition">
           {BACKORDER_CONDITION_FILTERS.map((opt) => (
-            <option key={opt.value || "all"} value={opt.value}>
-              {opt.label}
-            </option>
+            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        <select
-          className={controlClass}
-          value={search.catalogueType ?? ""}
-          onChange={(e) =>
-            patch({
-              catalogueType: (e.target.value as BackorderSearch["catalogueType"]) || undefined,
-              page: undefined,
-            })
-          }
-          aria-label="Catalogue type"
-        >
+        <select className={controlClass} value={search.catalogueType ?? ""} onChange={(e) => patch({ catalogueType: (e.target.value as BackorderSearch["catalogueType"]) || undefined, page: undefined })} aria-label="Catalogue type">
           <option value="">All catalogue types</option>
           <option value="CATALOGUE">Catalogue</option>
           <option value="EXTERNAL">External product</option>
           <option value="HISTORIC_ONLY">Historic/not current</option>
         </select>
-        <button type="submit" className={btnClass}>
-          Search
-        </button>
+        <button type="submit" className={btnClass}>Search</button>
       </form>
       {ignoredNote ? <p className="mt-2 text-[12px] text-steel">{ignoredNote}</p> : null}
       {chips.length ? (
@@ -1110,9 +946,7 @@ function QuickFilter({
       onClick={onClick}
       className={cn(
         "h-8 border px-3 text-[11px] font-semibold uppercase tracking-[0.12em]",
-        active
-          ? "border-primary bg-primary/15 text-foreground"
-          : "border-border bg-surface/40 text-steel hover:border-primary",
+        active ? "border-primary bg-primary/15 text-foreground" : "border-border bg-surface/40 text-steel hover:border-primary",
         disabled && "cursor-not-allowed opacity-50 hover:border-border",
       )}
     >
@@ -1128,8 +962,7 @@ function ImportNoticeBanner({ notice }: { notice: ImportNotice }) {
       : notice.tone === "bad"
         ? "border-destructive/40 bg-destructive/10 text-destructive"
         : "border-warn/40 bg-warn/10 text-ink";
-  const label =
-    notice.tone === "good" ? "Imported" : notice.tone === "bad" ? "Error" : "Not imported";
+  const label = notice.tone === "good" ? "Imported" : notice.tone === "bad" ? "Error" : "Not imported";
   return (
     <div className={cn("border px-4 py-3 text-[13px]", toneClass)} role="status">
       <p className="text-[10px] font-semibold uppercase tracking-[0.12em]">{label}</p>
@@ -1168,86 +1001,51 @@ function SettingsBody({
         <h3 className="font-display text-base font-semibold uppercase">Automatic import</h3>
         <dl className="mt-3 grid gap-2">
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Status
-            </dt>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Status</dt>
             <dd className="mt-1 flex items-center gap-2">
-              <span
-                className={cn("size-2 rounded-full", feed?.enabled ? "bg-good" : "bg-steel")}
-                aria-hidden
-              />
+              <span className={cn("size-2 rounded-full", feed?.enabled ? "bg-good" : "bg-steel")} aria-hidden />
               {feed?.enabled ? "Enabled" : "Disabled"}
             </dd>
           </div>
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Expected schedule
-            </dt>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Expected schedule</dt>
             <dd className="mt-1">{AUTOPART_216V_SCHEDULE_LABEL}</dd>
           </div>
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Latest report date
-            </dt>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Latest report date</dt>
             <dd className="mt-1">{freshness?.latestReportDateLabel ?? "Never"}</dd>
           </div>
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Report received
-            </dt>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Report received</dt>
             <dd className="mt-1">{freshness?.lastReceivedLabel ?? "Never"}</dd>
           </div>
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Last poll
-            </dt>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last poll</dt>
             <dd className="mt-1">{formatOrDash(formatOperationalDateTime(feed?.lastPolledAt))}</dd>
           </div>
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Last successful import
-            </dt>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last successful import</dt>
             <dd className="mt-1">{formatOrDash(formatOperationalDateTime(feed?.lastSuccessAt))}</dd>
           </div>
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Current snapshot imported
-            </dt>
-            <dd className="mt-1">
-              {formatOrDash(formatOperationalDateTime(freshness?.currentSnapshotImportedAt))}
-            </dd>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Current snapshot imported</dt>
+            <dd className="mt-1">{formatOrDash(formatOperationalDateTime(freshness?.currentSnapshotImportedAt))}</dd>
           </div>
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Last error
-            </dt>
-            <dd className="mt-1 whitespace-pre-wrap">
-              {feed?.lastError?.trim() ? feed.lastError : "None"}
-            </dd>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last error</dt>
+            <dd className="mt-1 whitespace-pre-wrap">{feed?.lastError?.trim() ? feed.lastError : "None"}</dd>
           </div>
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-              Current snapshot
-            </dt>
-            <dd className="mt-1">
-              {freshness?.filename ?? "—"}
-              {freshness?.sourceLabel ? ` · ${freshness.sourceLabel}` : ""}
-            </dd>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Current snapshot</dt>
+            <dd className="mt-1">{freshness?.filename ?? "—"}{freshness?.sourceLabel ? ` · ${freshness.sourceLabel}` : ""}</dd>
           </div>
         </dl>
         {data?.canManage ? (
-          <button
-            type="button"
-            className={`${primaryBtnClass} mt-4`}
-            disabled={busy}
-            onClick={onToggle}
-          >
+          <button type="button" className={`${primaryBtnClass} mt-4`} disabled={busy} onClick={onToggle}>
             {feed?.enabled ? "Disable automatic import" : "Enable automatic import"}
           </button>
         ) : (
-          <p className="mt-3 text-[12px] text-steel">
-            purchasing.manage is required to change automatic import.
-          </p>
+          <p className="mt-3 text-[12px] text-steel">purchasing.manage is required to change automatic import.</p>
         )}
       </section>
       <section>
@@ -1258,9 +1056,7 @@ function SettingsBody({
               <button type="button" className={btnClass} disabled={busy} onClick={onPoll}>
                 Poll mailbox
               </button>
-              <p className="mt-1 text-[12px] text-steel">
-                Check the configured Autopart mailbox now.
-              </p>
+              <p className="mt-1 text-[12px] text-steel">Check the configured Autopart mailbox now.</p>
             </div>
             <div>
               <input
@@ -1275,33 +1071,22 @@ function SettingsBody({
                   e.currentTarget.value = "";
                 }}
               />
-              <label
-                htmlFor={uploadId}
-                className={cn(btnClass, busy && "pointer-events-none opacity-50")}
-              >
+              <label htmlFor={uploadId} className={cn(btnClass, busy && "pointer-events-none opacity-50")}>
                 Upload 216V
               </label>
               <p className="mt-1 text-[12px] text-steel">Manually import an Autopart 216V CSV.</p>
             </div>
           </div>
         ) : (
-          <p className="mt-2 text-[12px] text-steel">
-            Upload and mailbox poll require purchasing.manage.
-          </p>
+          <p className="mt-2 text-[12px] text-steel">Upload and mailbox poll require purchasing.manage.</p>
         )}
       </section>
       <section>
         <h3 className="font-display text-base font-semibold uppercase">Export</h3>
         <p className="mt-1 text-[12px] text-steel">
-          Downloads the current filters, including search, with every field shown on the lines.
-          Descriptions and order references are not cut off.
+          Downloads the current filters, including search, with every field shown on the lines. Descriptions and order references are not cut off.
         </p>
-        <button
-          type="button"
-          className={`${btnClass} mt-3`}
-          disabled={exporting}
-          onClick={onExport}
-        >
+        <button type="button" className={`${btnClass} mt-3`} disabled={exporting} onClick={onExport}>
           {exporting ? "Exporting…" : "Export current view CSV"}
         </button>
       </section>
@@ -1309,15 +1094,7 @@ function SettingsBody({
   );
 }
 
-function Fact({
-  label,
-  value,
-  title,
-}: {
-  label: string;
-  value: string;
-  title?: string | undefined;
-}) {
+function Fact({ label, value, title }: { label: string; value: string; title?: string | undefined }) {
   return (
     <div>
       <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">{label}</dt>
@@ -1372,8 +1149,7 @@ function MovementPanel({
       </div>
       {cleared ? (
         <p className="border-b border-border/70 px-4 py-2 text-[12px] text-steel sm:px-6">
-          Cleared lines were outstanding in the previous snapshot and are absent from the current
-          one. They are history only and are not counted in current outstanding totals.
+          Cleared lines were outstanding in the previous snapshot and are absent from the current one. They are history only and are not counted in current outstanding totals.
         </p>
       ) : null}
       {movement.rows.length === 0 ? (
@@ -1426,27 +1202,18 @@ function MovementPanel({
                       }
                     }}
                   >
-                    <td className="px-3 py-2.5">
-                      <ChangeStatusBadge status={row.status} label={row.statusLabel} />
-                    </td>
-                    <td className="px-3 py-2.5 font-mono text-[12px] font-semibold">
-                      {row.orderNumber}
-                    </td>
+                    <td className="px-3 py-2.5"><ChangeStatusBadge status={row.status} label={row.statusLabel} /></td>
+                    <td className="px-3 py-2.5 font-mono text-[12px] font-semibold">{row.orderNumber}</td>
                     <td className="px-3 py-2.5">
                       {row.customerName}
                       {row.unmapped ? <QuietNote>Unmapped account</QuietNote> : null}
                     </td>
                     <td className="px-3 py-2.5 font-mono text-[12px]">{row.customerAccount}</td>
-                    <td
-                      className="max-w-[140px] truncate px-3 py-2.5"
-                      title={row.customerOrderRef || undefined}
-                    >
+                    <td className="max-w-[140px] truncate px-3 py-2.5" title={row.customerOrderRef || undefined}>
                       {row.customerOrderRef || "—"}
                     </td>
                     <td className="max-w-[220px] px-3 py-2.5">
-                      <span className="block truncate" title={row.description}>
-                        {row.description}
-                      </span>
+                      <span className="block truncate" title={row.description}>{row.description}</span>
                       <QuietNote>{row.productKindLabel}</QuietNote>
                     </td>
                     <td className="px-3 py-2.5">
@@ -1454,24 +1221,13 @@ function MovementPanel({
                       <ProductConditionBadge code={row.conditionCode} />
                     </td>
                     <td className="num px-3 py-2.5 text-right">{qty(row.previousQty)}</td>
-                    <td className="num px-3 py-2.5 text-right text-base font-semibold">
-                      {cleared ? "Cleared" : qty(row.currentQty)}
-                    </td>
-                    <td className="num px-3 py-2.5 text-right font-semibold">
-                      {formatAutopart216vChangeQty(row.changeQty)}
-                    </td>
+                    <td className="num px-3 py-2.5 text-right text-base font-semibold">{cleared ? "Cleared" : qty(row.currentQty)}</td>
+                    <td className="num px-3 py-2.5 text-right font-semibold">{formatAutopart216vChangeQty(row.changeQty)}</td>
                     <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.unitValue)}</td>
-                    <td className="num px-3 py-2.5 text-right text-steel">
-                      {gbp(row.previousValue)}
-                    </td>
-                    <td className="num px-3 py-2.5 text-right text-steel">
-                      {cleared ? "—" : gbp(row.currentValue)}
-                    </td>
+                    <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.previousValue)}</td>
+                    <td className="num px-3 py-2.5 text-right text-steel">{cleared ? "—" : gbp(row.currentValue)}</td>
                     <td className="px-3 py-2.5">{ukDate(row.firstSeenAt)}</td>
-                    <td className="px-3 py-2.5">
-                      {formatOperationalDateTime(row.clearedAt ?? row.lastChangedAt) ??
-                        ukDate(row.clearedAt ?? row.lastChangedAt)}
-                    </td>
+                    <td className="px-3 py-2.5">{formatOperationalDateTime(row.clearedAt ?? row.lastChangedAt) ?? ukDate(row.clearedAt ?? row.lastChangedAt)}</td>
                     {cleared ? null : (
                       <td className="px-3 py-2.5">
                         {row.position && row.positionLabel ? (
@@ -1495,12 +1251,7 @@ function MovementPanel({
               </tbody>
             </table>
           </div>
-          <Pager
-            page={movement.page}
-            pageSize={movement.pageSize}
-            total={movement.total}
-            onPage={onPage}
-          />
+          <Pager page={movement.page} pageSize={movement.pageSize} total={movement.total} onPage={onPage} />
         </>
       )}
     </section>
@@ -1513,8 +1264,7 @@ function ClearedDetailBody({ row }: { row: MovementRow }) {
       <section className="grid gap-2">
         <StatusBadge tone="good">Cleared</StatusBadge>
         <p className="text-[12px] text-steel">
-          Outstanding in the previous 216V snapshot and absent from the current snapshot. Not part
-          of current outstanding totals.
+          Outstanding in the previous 216V snapshot and absent from the current snapshot. Not part of current outstanding totals.
         </p>
       </section>
       <section className="grid gap-2">
@@ -1537,18 +1287,13 @@ function ClearedDetailBody({ row }: { row: MovementRow }) {
             <Fact
               label="Current Product Condition"
               value={row.conditionLabel}
-              title={
-                row.conditionCode
-                  ? `Autopart condition: ${row.conditionCode} — ${row.conditionLabel}`
-                  : undefined
-              }
+              title={row.conditionCode ? `Autopart condition: ${row.conditionCode} — ${row.conditionLabel}` : undefined}
             />
           ) : null}
         </dl>
         {row.conditionLabel ? (
           <p className="text-[12px] text-steel">
-            Current Autopart product master. This is not the condition at the time the backorder was
-            cleared.
+            Current Autopart product master. This is not the condition at the time the backorder was cleared.
           </p>
         ) : null}
       </section>
@@ -1559,10 +1304,7 @@ function ClearedDetailBody({ row }: { row: MovementRow }) {
           <Fact label="Unit value" value={gbp(row.unitValue)} />
           <Fact label="Previous outstanding value" value={gbp(row.previousValue)} />
           <Fact label="First seen" value={ukDate(row.firstSeenAt)} />
-          <Fact
-            label="Cleared at"
-            value={formatOperationalDateTime(row.clearedAt ?? row.lastChangedAt) ?? "—"}
-          />
+          <Fact label="Cleared at" value={formatOperationalDateTime(row.clearedAt ?? row.lastChangedAt) ?? "—"} />
         </dl>
       </section>
     </div>
@@ -1570,27 +1312,12 @@ function ClearedDetailBody({ row }: { row: MovementRow }) {
 }
 
 function LinesTable({
-  rows,
-  total,
-  page,
-  pageSize,
-  onPage,
-  onOpen,
+  rows, total, page, pageSize, onPage, onOpen,
 }: {
-  rows: LineRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-  onPage: (page: number) => void;
-  onOpen: (id: string) => void;
+  rows: LineRow[]; total: number; page: number; pageSize: number; onPage: (page: number) => void; onOpen: (id: string) => void;
 }) {
   if (!rows.length) {
-    return (
-      <EmptyState
-        title="No matching backorders"
-        body="Try clearing filters. CLEARED lines are history only and are not in today's outstanding totals."
-      />
-    );
+    return <EmptyState title="No matching backorders" body="Try clearing filters. CLEARED lines are history only and are not in today's outstanding totals." />;
   }
   return (
     <>
@@ -1598,29 +1325,17 @@ function LinesTable({
         <table className="w-full min-w-[1280px] text-left text-[13px]">
           <thead className="sticky top-0 z-10 bg-surface text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
             <tr className="border-b border-border/80">
-              <th className="px-3 pt-2 pb-0" colSpan={2}>
-                History
-              </th>
-              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={4}>
-                Order
-              </th>
-              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={2}>
-                Product
-              </th>
-              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={3}>
-                Backorder
-              </th>
-              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={3}>
-                Stock
-              </th>
+              <th className="px-3 pt-2 pb-0" colSpan={2}>History</th>
+              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={4}>Order</th>
+              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={2}>Product</th>
+              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={3}>Backorder</th>
+              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={3}>Stock</th>
               <th className="px-3 pt-2 pb-0"> </th>
             </tr>
             <tr className="bg-secondary/50">
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">First seen</th>
-              <th className="sticky left-0 z-20 border-l border-border/60 bg-secondary/50 px-3 py-2">
-                Order No
-              </th>
+              <th className="sticky left-0 z-20 border-l border-border/60 bg-secondary/50 px-3 py-2">Order No</th>
               <th className="px-3 py-2">Customer</th>
               <th className="px-3 py-2">Customer Account</th>
               <th className="px-3 py-2">Customer Order Ref</th>
@@ -1630,9 +1345,7 @@ function LinesTable({
               <th className="px-3 py-2 text-right">Unit Value</th>
               <th className="px-3 py-2 text-right">Outstanding Value</th>
               <th className="border-l border-border/60 px-3 py-2 text-right">Available</th>
-              <th className="px-3 py-2 text-right" title={INCOMING_SOURCE_HINT}>
-                Incoming
-              </th>
+              <th className="px-3 py-2 text-right" title={INCOMING_SOURCE_HINT}>Incoming</th>
               <th className="px-3 py-2">Position</th>
               <th className="px-3 py-2">Last Changed</th>
             </tr>
@@ -1654,27 +1367,14 @@ function LinesTable({
                   }
                 }}
               >
-                <td className="px-3 py-2.5">
-                  <ChangeStatusBadge status={row.status} label={row.statusLabel} />
-                </td>
+                <td className="px-3 py-2.5"><ChangeStatusBadge status={row.status} label={row.statusLabel} /></td>
                 <td className="px-3 py-2.5">{row.ageLabel}</td>
-                <td
-                  className={cn(
-                    "sticky left-0 z-10 px-3 py-2.5 font-mono text-[12px] font-semibold",
-                    i % 2 === 1 ? "bg-secondary/20" : "bg-background",
-                  )}
-                >
+                <td className={cn("sticky left-0 z-10 px-3 py-2.5 font-mono text-[12px] font-semibold", i % 2 === 1 ? "bg-secondary/20" : "bg-background")}>
                   {row.orderNumber}
                 </td>
                 <td className="px-3 py-2.5">
                   {row.companyId ? (
-                    <Link
-                      className="text-primary underline-offset-2 hover:underline"
-                      to="/admin/customers/$id"
-                      params={{ id: row.companyId }}
-                    >
-                      {row.customerName}
-                    </Link>
+                    <Link className="text-primary underline-offset-2 hover:underline" to="/admin/customers/$id" params={{ id: row.companyId }}>{row.customerName}</Link>
                   ) : (
                     <>
                       <span>{row.customerName}</span>
@@ -1683,20 +1383,13 @@ function LinesTable({
                   )}
                 </td>
                 <td className="px-3 py-2.5 font-mono text-[12px]">{row.customerAccount}</td>
-                <td
-                  className="max-w-[140px] truncate px-3 py-2.5"
-                  title={row.customerOrderRef || undefined}
-                >
+                <td className="max-w-[140px] truncate px-3 py-2.5" title={row.customerOrderRef || undefined}>
                   {row.customerOrderRef || "—"}
                 </td>
                 <td className="max-w-[220px] px-3 py-2.5">
-                  <span className="block truncate" title={row.description}>
-                    {row.description}
-                  </span>
+                  <span className="block truncate" title={row.description}>{row.description}</span>
                   {row.productKind === "EXTERNAL" ? (
-                    <StatusBadge tone="neutral" className="mt-1 normal-case tracking-normal">
-                      External product
-                    </StatusBadge>
+                    <StatusBadge tone="neutral" className="mt-1 normal-case tracking-normal">External product</StatusBadge>
                   ) : (
                     <QuietNote>{row.productKindLabel}</QuietNote>
                   )}
@@ -1705,25 +1398,15 @@ function LinesTable({
                   <div className="font-mono text-[12px] font-semibold">{row.sku}</div>
                   <ProductConditionBadge code={row.conditionCode} />
                 </td>
-                <td className="num px-3 py-2.5 text-right text-base font-semibold">
-                  {qty(row.outstandingQty)}
-                </td>
+                <td className="num px-3 py-2.5 text-right text-base font-semibold">{qty(row.outstandingQty)}</td>
                 <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.unitValue)}</td>
-                <td className="num px-3 py-2.5 text-right text-steel">
-                  {gbp(row.outstandingValue)}
-                </td>
-                <td className="num px-3 py-2.5 text-right text-base font-semibold">
-                  {row.availQty == null ? "—" : qty(row.availQty)}
-                </td>
-                <td className="num px-3 py-2.5 text-right text-base font-semibold">
-                  {row.incomingQty == null ? "—" : qty(row.incomingQty)}
-                </td>
+                <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.outstandingValue)}</td>
+                <td className="num px-3 py-2.5 text-right text-base font-semibold">{row.availQty == null ? "—" : qty(row.availQty)}</td>
+                <td className="num px-3 py-2.5 text-right text-base font-semibold">{row.incomingQty == null ? "—" : qty(row.incomingQty)}</td>
                 <td className="px-3 py-2.5">
                   <PositionCell row={row} />
                 </td>
-                <td className="px-3 py-2.5">
-                  {formatOperationalDateTime(row.lastChangedAt) ?? ukDate(row.lastChangedAt)}
-                </td>
+                <td className="px-3 py-2.5">{formatOperationalDateTime(row.lastChangedAt) ?? ukDate(row.lastChangedAt)}</td>
               </tr>
             ))}
           </tbody>
@@ -1734,16 +1417,9 @@ function LinesTable({
   );
 }
 
-function PositionCell({
-  row,
-}: {
-  row: Pick<
-    LineRow,
-    "position" | "positionLabel" | "coverSummary" | "availQty" | "incomingQty" | "outstandingQty"
-  >;
-}) {
+function PositionCell({ row }: { row: Pick<LineRow, "position" | "positionLabel" | "coverSummary" | "availQty" | "incomingQty" | "outstandingQty"> }) {
   const title = stockPositionHeadline(row.position);
-  const support =
+    const support =
     row.position === "STOCK_AVAILABLE"
       ? `${qty(row.availQty)} available against ${qty(row.outstandingQty)} backordered. Review allocation/despatch.`
       : row.position === "NO_STOCK_NO_INCOMING"
@@ -1760,75 +1436,37 @@ function PositionCell({
 }
 
 function SkuTable({
-  groups,
-  total,
-  page,
-  pageSize,
-  expanded,
-  onExpand,
-  onPage,
-  onOpen,
+  groups, total, page, pageSize, expanded, onExpand, onPage, onOpen,
 }: {
-  groups: Data["skus"]["rows"];
-  total: number;
-  page: number;
-  pageSize: number;
-  expanded: string | null;
-  onExpand: (key: string | null) => void;
-  onPage: (page: number) => void;
-  onOpen: (id: string) => void;
+  groups: Data["skus"]["rows"]; total: number; page: number; pageSize: number; expanded: string | null;
+  onExpand: (key: string | null) => void; onPage: (page: number) => void; onOpen: (id: string) => void;
 }) {
-  if (!groups.length)
-    return (
-      <EmptyState
-        title="No SKU backorder groups"
-        body="No outstanding 216V lines match the current filters."
-      />
-    );
+  if (!groups.length) return <EmptyState title="No SKU backorder groups" body="No outstanding 216V lines match the current filters." />;
   return (
     <>
       <div className="grid gap-3 px-4 py-4 sm:px-6">
         {groups.map((group) => (
           <section key={group.partMatchKey} className="border border-border bg-surface/40">
-            <button
-              type="button"
-              className="flex w-full flex-wrap items-start justify-between gap-4 px-4 py-4 text-left"
-              onClick={() => onExpand(expanded === group.partMatchKey ? null : group.partMatchKey)}
-            >
+            <button type="button" className="flex w-full flex-wrap items-start justify-between gap-4 px-4 py-4 text-left" onClick={() => onExpand(expanded === group.partMatchKey ? null : group.partMatchKey)}>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="font-mono text-[15px] font-semibold">{group.sku}</div>
                   <ProductConditionBadge code={group.conditionCode} />
                 </div>
-                <div className="font-display text-lg font-semibold uppercase">
-                  {group.description}
-                </div>
+                <div className="font-display text-lg font-semibold uppercase">{group.description}</div>
                 {group.productKind === "EXTERNAL" ? (
-                  <StatusBadge tone="neutral" className="mt-1 normal-case tracking-normal">
-                    External product
-                  </StatusBadge>
+                  <StatusBadge tone="neutral" className="mt-1 normal-case tracking-normal">External product</StatusBadge>
                 ) : (
                   <QuietNote>{group.productKindLabel}</QuietNote>
                 )}
                 <div className="mt-3">
-                  <div className="num font-display text-2xl font-semibold">
-                    {qty(group.outstandingQty)} backordered
-                  </div>
-                  <div className="text-[12px] text-steel">
-                    {qty(group.orders)} order · {qty(group.customers)} customer
-                    {group.customers === 1 ? "" : "s"}
-                  </div>
+                  <div className="num font-display text-2xl font-semibold">{qty(group.outstandingQty)} backordered</div>
+                  <div className="text-[12px] text-steel">{qty(group.orders)} order · {qty(group.customers)} customer{group.customers === 1 ? "" : "s"}</div>
                 </div>
               </div>
               <dl className="grid min-w-[220px] grid-cols-2 gap-x-6 gap-y-2 text-[13px]">
-                <Fact
-                  label="Available"
-                  value={group.availQty == null ? "—" : qty(group.availQty)}
-                />
-                <Fact
-                  label="Incoming"
-                  value={group.incomingQty == null ? "—" : qty(group.incomingQty)}
-                />
+                <Fact label="Available" value={group.availQty == null ? "—" : qty(group.availQty)} />
+                <Fact label="Incoming" value={group.incomingQty == null ? "—" : qty(group.incomingQty)} />
                 <Fact label="Oldest first seen" value={group.oldestAgeLabel} />
                 <div className="col-span-2">
                   <PositionCell
@@ -1857,33 +1495,14 @@ function SkuTable({
                 </thead>
                 <tbody>
                   {group.lines.map((line) => (
-                    <tr
-                      key={line.id}
-                      className="cursor-pointer border-t border-border/70 hover:bg-secondary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      tabIndex={0}
-                      onClick={() => onOpen(line.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          onOpen(line.id);
-                        }
-                      }}
-                    >
-                      <td className="px-3 py-2 font-mono text-[12px] font-semibold">
-                        {line.orderNumber}
-                      </td>
+                    <tr key={line.id} className="cursor-pointer border-t border-border/70 hover:bg-secondary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" tabIndex={0} onClick={() => onOpen(line.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(line.id); } }}>
+                      <td className="px-3 py-2 font-mono text-[12px] font-semibold">{line.orderNumber}</td>
                       <td className="px-3 py-2">
                         {line.customerName}
-                        {line.unmapped ? (
-                          <span className="ml-2 text-[11px] text-steel/80">Unmapped account</span>
-                        ) : null}
+                        {line.unmapped ? <span className="ml-2 text-[11px] text-steel/80">Unmapped account</span> : null}
                       </td>
-                      <td className="num px-3 py-2 text-right font-semibold">
-                        {qty(line.outstandingQty)}
-                      </td>
-                      <td className="num px-3 py-2 text-right text-steel">
-                        {gbp(line.outstandingValue)}
-                      </td>
+                      <td className="num px-3 py-2 text-right font-semibold">{qty(line.outstandingQty)}</td>
+                      <td className="num px-3 py-2 text-right text-steel">{gbp(line.outstandingValue)}</td>
                       <td className="px-3 py-2">{line.ageLabel}</td>
                     </tr>
                   ))}
@@ -1899,27 +1518,12 @@ function SkuTable({
 }
 
 function CustomerTable({
-  groups,
-  total,
-  page,
-  pageSize,
-  onPage,
-  onOpen,
+  groups, total, page, pageSize, onPage, onOpen,
 }: {
-  groups: Data["customerGroups"]["rows"];
-  total: number;
-  page: number;
-  pageSize: number;
-  onPage: (page: number) => void;
-  onOpen: (id: string) => void;
+  groups: Data["customerGroups"]["rows"]; total: number; page: number; pageSize: number;
+  onPage: (page: number) => void; onOpen: (id: string) => void;
 }) {
-  if (!groups.length)
-    return (
-      <EmptyState
-        title="No customer backorder groups"
-        body="No outstanding 216V lines match the current filters."
-      />
-    );
+  if (!groups.length) return <EmptyState title="No customer backorder groups" body="No outstanding 216V lines match the current filters." />;
   return (
     <>
       <div className="overflow-x-auto">
@@ -1938,22 +1542,10 @@ function CustomerTable({
           </thead>
           <tbody>
             {groups.map((group, i) => (
-              <tr
-                key={group.customerAccount}
-                className={cn(
-                  "border-t border-border/80 align-top",
-                  i % 2 === 1 && "bg-secondary/20",
-                )}
-              >
+              <tr key={group.customerAccount} className={cn("border-t border-border/80 align-top", i % 2 === 1 && "bg-secondary/20")}>
                 <td className="px-3 py-2.5">
                   {group.companyId ? (
-                    <Link
-                      className="text-primary underline-offset-2 hover:underline"
-                      to="/admin/customers/$id"
-                      params={{ id: group.companyId }}
-                    >
-                      {group.customerName}
-                    </Link>
+                    <Link className="text-primary underline-offset-2 hover:underline" to="/admin/customers/$id" params={{ id: group.companyId }}>{group.customerName}</Link>
                   ) : (
                     <>
                       <span>{group.customerName}</span>
@@ -1965,15 +1557,11 @@ function CustomerTable({
                 <td className="num px-3 py-2.5 text-right font-semibold">{qty(group.orders)}</td>
                 <td className="num px-3 py-2.5 text-right font-semibold">{qty(group.lines)}</td>
                 <td className="num px-3 py-2.5 text-right font-semibold">{qty(group.units)}</td>
-                <td className="num px-3 py-2.5 text-right text-steel">
-                  {gbp(group.outstandingValue)}
-                </td>
+                <td className="num px-3 py-2.5 text-right text-steel">{gbp(group.outstandingValue)}</td>
                 <td className="px-3 py-2.5">{group.oldestAgeLabel}</td>
                 <td className="px-3 py-2.5 text-[12px] text-steel">
                   {group.attentionCount > 0 ? (
-                    <span className="font-semibold text-warn">
-                      {qty(group.attentionCount)} need review
-                    </span>
+                    <span className="font-semibold text-warn">{qty(group.attentionCount)} need review</span>
                   ) : (
                     "None"
                   )}
@@ -1982,12 +1570,7 @@ function CustomerTable({
                   ) : null}
                   <div className="mt-2 grid gap-1">
                     {group.lineRows.slice(0, 6).map((line) => (
-                      <button
-                        key={line.id}
-                        type="button"
-                        className="text-left text-primary hover:underline"
-                        onClick={() => onOpen(line.id)}
-                      >
+                      <button key={line.id} type="button" className="text-left text-primary hover:underline" onClick={() => onOpen(line.id)}>
                         {line.orderNumber} · {line.sku} · {qty(line.outstandingQty)}
                       </button>
                     ))}
@@ -2043,10 +1626,7 @@ function AttentionBoard({ data, onOpen }: { data: Data; onOpen: (id: string) => 
   ];
   return (
     <div className="grid gap-6 px-4 py-5 sm:px-6">
-      <p className="text-[13px] text-steel">
-        Attention is a work queue. Rules are visible and deterministic. There is no hidden score.
-        Incoming has no invented ETA.
-      </p>
+      <p className="text-[13px] text-steel">Attention is a work queue. Rules are visible and deterministic. There is no hidden score. Incoming has no invented ETA.</p>
       {sections.map((section) => (
         <section
           key={section.id}
@@ -2055,14 +1635,7 @@ function AttentionBoard({ data, onOpen }: { data: Data; onOpen: (id: string) => 
             section.tone === "bad" ? "border-destructive/50" : "border-border",
           )}
         >
-          <header
-            className={cn(
-              "border-b px-4 py-3",
-              section.tone === "bad"
-                ? "border-destructive/30 bg-destructive/10"
-                : "border-border/70 bg-warn/5",
-            )}
-          >
+          <header className={cn("border-b px-4 py-3", section.tone === "bad" ? "border-destructive/30 bg-destructive/10" : "border-border/70 bg-warn/5")}>
             <h2 className="font-display text-lg font-semibold uppercase">
               {section.title}
               <span className="num ml-2 text-base text-steel">{section.rows.length}</span>
@@ -2075,25 +1648,16 @@ function AttentionBoard({ data, onOpen }: { data: Data; onOpen: (id: string) => 
             <ul className="divide-y divide-border/70">
               {section.rows.map((row) => (
                 <li key={`${section.id}-${row.id}`}>
-                  <button
-                    type="button"
-                    className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left hover:bg-secondary/30"
-                    onClick={() => onOpen(row.id)}
-                  >
+                  <button type="button" className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left hover:bg-secondary/30" onClick={() => onOpen(row.id)}>
                     <span>
                       <span className="font-mono text-[12px] font-semibold">{row.orderNumber}</span>
-                      {" · "}
-                      {row.customerName}
-                      {" · "}
+                      {" · "}{row.customerName}{" · "}
                       <span className="font-mono">{row.sku}</span>
                       <ProductConditionBadge code={row.conditionCode} />
                       {" · "}
                       <span className="num font-semibold">{qty(row.outstandingQty)}</span> units
                     </span>
-                    <StockPositionBadge
-                      position={row.position}
-                      label={stockPositionHeadline(row.position)}
-                    />
+                    <StockPositionBadge position={row.position} label={stockPositionHeadline(row.position)} />
                   </button>
                 </li>
               ))}
@@ -2125,19 +1689,12 @@ function LineDetailBody({ detail }: { detail: LineDetail }) {
           <Fact label="Part number" value={line.sku} />
           <Fact label="Description" value={line.description} />
           <Fact label="Catalogue type" value={line.productKindLabel} />
-          <Fact
-            label="AutopartProduct"
-            value={line.autopartProductId ? "Matched" : "Not in AutopartProduct master"}
-          />
+          <Fact label="AutopartProduct" value={line.autopartProductId ? "Matched" : "Not in AutopartProduct master"} />
           {line.conditionLabel ? (
             <Fact
               label="Product Condition"
               value={line.conditionLabel}
-              title={
-                line.conditionCode
-                  ? `Autopart condition: ${line.conditionCode} — ${line.conditionLabel}`
-                  : undefined
-              }
+              title={line.conditionCode ? `Autopart condition: ${line.conditionCode} — ${line.conditionLabel}` : undefined}
             />
           ) : null}
         </dl>
@@ -2148,10 +1705,7 @@ function LineDetailBody({ detail }: { detail: LineDetail }) {
           <Fact label="Outstanding qty" value={qty(line.outstandingQty)} />
           <Fact label="Unit value" value={gbp(line.unitValue)} />
           <Fact label="Outstanding value" value={gbp(line.outstandingValue)} />
-          <Fact
-            label="Backorder first seen"
-            value={`${line.ageLabel} (${ukDate(line.firstSeenAt)})`}
-          />
+          <Fact label="Backorder first seen" value={`${line.ageLabel} (${ukDate(line.firstSeenAt)})`} />
           <Fact label="Last seen" value={ukDate(line.lastSeenAt)} />
           <Fact label="Last changed" value={ukDate(line.lastChangedAt)} />
         </dl>
@@ -2164,38 +1718,23 @@ function LineDetailBody({ detail }: { detail: LineDetail }) {
             value={line.availQty == null ? "—" : qty(line.availQty)}
           />
           <Fact label={FBA_STOCK_LABEL} value={qty(detail.fbaQty)} />
-          <Fact
-            label="Total Stock"
-            value={line.availQty == null ? "—" : qty(line.availQty + detail.fbaQty)}
-          />
+          <Fact label="Total Stock" value={line.availQty == null ? "—" : qty(line.availQty + detail.fbaQty)} />
           <Fact label="Physical" value={line.physicalQty == null ? "—" : qty(line.physicalQty)} />
           <Fact label="Incoming" value={line.incomingQty == null ? "—" : qty(line.incomingQty)} />
-          <Fact
-            label="Stock-feed timestamp"
-            value={line.stockFeedAt ? (formatOperationalDateTime(line.stockFeedAt) ?? "—") : "—"}
-          />
+          <Fact label="Stock-feed timestamp" value={line.stockFeedAt ? formatOperationalDateTime(line.stockFeedAt) ?? "—" : "—"} />
         </dl>
         <PositionCell row={line} />
         <p className="text-[12px] text-steel">{detail.stockDisclaimer}</p>
-        <p className="text-[12px] text-steel">
-          Incoming is Autopart P/Ord Qty. Arrival date is not available.
-        </p>
-        <p className="text-[12px] text-steel">
-          Amazon FBA stock is company-owned and does not cover this customer backorder.
-        </p>
+        <p className="text-[12px] text-steel">Incoming is Autopart P/Ord Qty. Arrival date is not available.</p>
+        <p className="text-[12px] text-steel">Amazon FBA stock is company-owned and does not cover this customer backorder.</p>
       </section>
       <section className="grid gap-2">
         <h3 className="font-display text-base font-semibold uppercase">History</h3>
-        <p className="text-[12px] text-steel">
-          Daily outstanding quantity from each successful 216V snapshot.
-        </p>
+        <p className="text-[12px] text-steel">Daily outstanding quantity from each successful 216V snapshot.</p>
         <ul className="font-mono text-[13px]">
           {detail.timeline.map((point) => (
             <li key={`${point.date}-${point.status}`}>
-              {formatDate(point.date) ?? point.date}
-              {"  "}
-              {point.qty}
-              {point.status === "CLEARED" ? "  CLEARED" : ""}
+              {formatDate(point.date) ?? point.date}{"  "}{point.qty}{point.status === "CLEARED" ? "  CLEARED" : ""}
             </li>
           ))}
         </ul>
