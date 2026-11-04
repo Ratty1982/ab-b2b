@@ -251,6 +251,13 @@ function publicRun(run: {
     heartbeatAt: run.heartbeatAt?.toISOString() ?? null,
     completedAt: run.completedAt?.toISOString() ?? null,
     createdAt: run.createdAt.toISOString(),
+    setupLinks: [] as Array<{
+      accountCode: string;
+      companyId: string;
+      companyName: string;
+      companyStatus: string;
+      setupPath: string;
+    }>,
   };
 }
 
@@ -294,11 +301,55 @@ export async function previewAutopartProspectConversion(actorUserId: string) {
   return publicRun(run);
 }
 
+async function setupLinksForRun(run: {
+  status: string;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+}) {
+  if (run.status !== "COMMITTED" && run.status !== "RUNNING") return [];
+  const from = run.startedAt ?? run.createdAt;
+  const to = run.completedAt ?? new Date();
+  const accounts = await prisma.autopartAccount.findMany({
+    where: {
+      classification: "TRADE_CANDIDATE",
+      companyId: { not: null },
+      company: {
+        OR: [
+          {
+            createdAt: { gte: from, lte: to },
+            notes: { contains: "Source AUTOPART/407EXP" },
+          },
+          {
+            createdAt: { gte: from, lte: to },
+            notes: { contains: "Created from the Autopart customer master" },
+          },
+        ],
+      },
+    },
+    orderBy: { accountCode: "asc" },
+    take: 200,
+    select: {
+      accountCode: true,
+      company: { select: { id: true, name: true, status: true } },
+    },
+  });
+  return accounts
+    .filter((row) => row.company)
+    .map((row) => ({
+      accountCode: row.accountCode,
+      companyId: row.company!.id,
+      companyName: row.company!.name,
+      companyStatus: row.company!.status as string,
+      setupPath: `/admin/customers/setup?companyId=${row.company!.id}`,
+    }));
+}
+
 export async function getAutopartProspectConversion(actorUserId: string, runId: string) {
   await requireConvert(actorUserId);
   const run = await prisma.autopartProspectConversionRun.findUnique({ where: { id: runId } });
   if (!run) throw new AuthError("Conversion run was not found", "NOT_FOUND", 404);
-  return publicRun(run);
+  return { ...publicRun(run), setupLinks: await setupLinksForRun(run) };
 }
 
 export async function getLatestAutopartProspectConversion(actorUserId: string) {
@@ -306,7 +357,8 @@ export async function getLatestAutopartProspectConversion(actorUserId: string) {
   const run = await prisma.autopartProspectConversionRun.findFirst({
     orderBy: { createdAt: "desc" },
   });
-  return run ? publicRun(run) : null;
+  if (!run) return null;
+  return { ...publicRun(run), setupLinks: await setupLinksForRun(run) };
 }
 
 export async function confirmAutopartProspectConversion(
