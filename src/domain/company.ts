@@ -41,6 +41,46 @@ export const companyCreateSchema = z.object({
   externalRef: z.string().trim().max(120).optional().nullable(),
 });
 
+const optionalEmail = z.string().trim().email().max(320).optional().nullable().or(z.literal(""));
+
+/** Optional primary contact created in the same transaction as the company. */
+export const companySetupContactSchema = z
+  .object({
+    firstName: z.string().trim().min(1).max(100),
+    lastName: z.string().trim().min(1).max(100),
+    email: optionalEmail,
+    phone: z.string().trim().max(40).optional().nullable(),
+    jobTitle: z.string().trim().max(120).optional().nullable(),
+  })
+  .optional()
+  .nullable();
+
+/** Optional trading address created in the same transaction as the company. */
+export const companySetupAddressSchema = z
+  .object({
+    line1: z.string().trim().min(1).max(200),
+    line2: z.string().trim().max(200).optional().nullable(),
+    town: z.string().trim().min(1).max(120),
+    county: z.string().trim().max(120).optional().nullable(),
+    postcode: z.string().trim().min(1).max(20),
+    country: z.string().trim().length(2).default("GB"),
+  })
+  .optional()
+  .nullable();
+
+/**
+ * Company creation plus the contact and address the guided setup can collect.
+ * Both relations stay optional so the existing quick-create path is unchanged.
+ */
+export const companyCreateWithSetupSchema = companyCreateSchema.extend({
+  contact: companySetupContactSchema,
+  address: companySetupAddressSchema,
+  /** Staff confirmed that a strong name/email/phone match is still a separate customer. */
+  confirmDespiteDuplicates: z.boolean().optional(),
+  /** Internal create paths (Autopart mapping) that must not inherit the wizard gate. */
+  skipDuplicateCustomerCheck: z.boolean().optional(),
+});
+
 /**
  * Partial update — NO create-schema defaults.
  *

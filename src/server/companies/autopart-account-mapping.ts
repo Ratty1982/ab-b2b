@@ -998,6 +998,7 @@ export async function createCompanyAndMapAutopartAccount(
     phone: input.phone ?? null,
     salesRepId: input.salesRepId ?? null,
     status: "PROSPECT",
+    skipDuplicateCustomerCheck: true,
   });
 
   const mapped = await mapAutopartCustomerAccount(actorUserId, {

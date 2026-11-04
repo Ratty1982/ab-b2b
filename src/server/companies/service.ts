@@ -18,7 +18,7 @@ import { normaliseAssignedAutopartCode } from "@/domain/autopart-account-verific
 import { describeCompanyAutopartMapping } from "@/server/companies/autopart-account-verification";
 import { loadCustomerOnboarding } from "@/server/companies/customer-onboarding";
 import {
-  companyCreateSchema,
+  companyCreateWithSetupSchema,
   companyDeleteSchema,
   companyListQuerySchema,
   companyUpdateSchema,
@@ -467,8 +467,21 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
 }
 
 export async function createCompany(actorUserId: string, raw: unknown) {
-  const profile = await requireSystemPermission(actorUserId, "companies.create");
-  const input = companyCreateSchema.parse(raw);
+  await requireSystemPermission(actorUserId, "companies.create");
+  const input = companyCreateWithSetupSchema.parse(raw);
+  if (input.contact) await requireSystemPermission(actorUserId, "contacts.create");
+  if (input.address) await requireSystemPermission(actorUserId, "companies.edit");
+
+  if (!input.skipDuplicateCustomerCheck) {
+    const { assertNoStrongCustomerDuplicates } =
+      await import("@/server/companies/customer-duplicates");
+    await assertNoStrongCustomerDuplicates({
+      name: input.name,
+      email: input.primaryEmail,
+      phone: input.phone,
+      confirmDespiteDuplicates: input.confirmDespiteDuplicates,
+    });
+  }
 
   if (input.accountNumber) {
     const clash = await prisma.company.findUnique({ where: { accountNumber: input.accountNumber } });
@@ -507,6 +520,60 @@ export async function createCompany(actorUserId: string, raw: unknown) {
       });
     }
 
+    if (input.contact) {
+      const contact = await tx.contact.create({
+        data: {
+          companyId: created.id,
+          firstName: input.contact.firstName,
+          lastName: input.contact.lastName,
+          email: emptyToNull(input.contact.email),
+          phone: emptyToNull(input.contact.phone),
+          jobTitle: emptyToNull(input.contact.jobTitle),
+          isPrimary: true,
+          isPurchasing: true,
+        },
+      });
+      await tx.activity.create({
+        data: {
+          companyId: created.id,
+          userId: actorUserId,
+          type: "SYSTEM",
+          subject: "Contact created",
+          body: `${contact.firstName} ${contact.lastName}`,
+          metadata: { action: "contact.created", contactId: contact.id },
+        },
+      });
+    }
+
+    if (input.address) {
+      const address = await tx.address.create({
+        data: {
+          companyId: created.id,
+          type: "REGISTERED",
+          label: "Registered / trading",
+          line1: input.address.line1,
+          line2: emptyToNull(input.address.line2),
+          town: input.address.town,
+          county: emptyToNull(input.address.county),
+          postcode: input.address.postcode,
+          country: input.address.country,
+          isDefault: true,
+          isDefaultBilling: true,
+          isDefaultDelivery: true,
+        },
+      });
+      await tx.activity.create({
+        data: {
+          companyId: created.id,
+          userId: actorUserId,
+          type: "SYSTEM",
+          subject: "Address created",
+          body: address.postcode,
+          metadata: { action: "address.created", addressId: address.id },
+        },
+      });
+    }
+
     await tx.activity.create({
       data: {
         companyId: created.id,
@@ -529,6 +596,38 @@ export async function createCompany(actorUserId: string, raw: unknown) {
     companyId: company.id,
     after: { name: company.name, status: company.status },
   });
+  if (input.contact) {
+    const contact = await prisma.contact.findFirst({
+      where: { companyId: company.id, isPrimary: true },
+      select: { id: true, firstName: true, lastName: true, email: true },
+    });
+    if (contact) {
+      await recordAuditEvent({
+        action: "contact.created",
+        entityType: "Contact",
+        entityId: contact.id,
+        actorUserId,
+        companyId: company.id,
+        after: { firstName: contact.firstName, lastName: contact.lastName, email: contact.email },
+      });
+    }
+  }
+  if (input.address) {
+    const address = await prisma.address.findFirst({
+      where: { companyId: company.id, isDefaultDelivery: true },
+      select: { id: true, postcode: true },
+    });
+    if (address) {
+      await recordAuditEvent({
+        action: "address.created",
+        entityType: "Address",
+        entityId: address.id,
+        actorUserId,
+        companyId: company.id,
+        after: { postcode: address.postcode },
+      });
+    }
+  }
 
   const full = await prisma.company.findUniqueOrThrow({
     where: { id: company.id },

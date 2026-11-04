@@ -204,6 +204,16 @@ function CustomerWorkspace() {
       <div className="p-4 sm:p-6">
         {tab === "Overview" ? (
           <div className="grid gap-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[13px] text-steel">Continue the guided setup on this customer. It does not create another company.</p>
+            <Link
+              to="/admin/customers/setup"
+              search={{ companyId: company.id }}
+              className="inline-flex min-h-11 items-center rounded-md border border-border px-4 text-[13px] font-bold uppercase"
+            >
+              Continue guided setup
+            </Link>
+          </div>
           <CustomerOnboardingOverview
             companyId={company.id}
             onboarding={data.onboarding}
