@@ -346,7 +346,7 @@ function pushSample<T>(list: T[], row: T) {
   if (list.length < SAMPLE_LIMIT) list.push(row);
 }
 
-/** Staff-facing status. A unique assigned ID is Verified even before the timestamp is stored. */
+/** Staff-facing status. A saved ID is verified only after a verification timestamp is stored. */
 export function autopartMappingDisplay(input: {
   decision: AutopartVerificationDecision;
   reason: string | null;
@@ -365,6 +365,14 @@ export function autopartMappingDisplay(input: {
       verified: false,
       verificationRecorded: false,
       attention: input.reason,
+      verifiedByLabel: null,
+    };
+  }
+  if (input.decision === "ELIGIBLE") {
+    return {
+      verified: false,
+      verificationRecorded: false,
+      attention: "This sales account is saved and has not been verified.",
       verifiedByLabel: null,
     };
   }

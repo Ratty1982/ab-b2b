@@ -437,7 +437,7 @@ describe("automatic Autopart account verification", () => {
     );
   });
 
-  it("verifies a new unambiguous assignment and clears verification with the ID", async () => {
+  it("stores a new unambiguous assignment without verifying it", async () => {
     const company = await prisma.company.create({
       data: { name: `Future ${suffix}`, status: "PROSPECT", paymentTerms: "7 Days" },
     });
@@ -447,8 +447,11 @@ describe("automatic Autopart account verification", () => {
       code: ` 0${suffix} `,
     });
     expect(assigned.code).toBe(`0${suffix}`);
-    expect(assigned.verified).toBe(true);
+    expect(assigned.verified).toBe(false);
     expect(assigned.verifiedBy).toBeNull();
+    const saved = await prisma.company.findUniqueOrThrow({ where: { id: company.id } });
+    expect(saved.autopartCustomerCodeVerifiedAt).toBeNull();
+    expect(saved.autopartCustomerCodeVerifiedById).toBeNull();
     const row = await prisma.company.findUniqueOrThrow({ where: { id: company.id } });
     expect(row.status).toBe("PROSPECT");
     expect(row.paymentTerms).toBe("7 Days");

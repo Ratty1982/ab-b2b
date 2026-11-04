@@ -100,10 +100,23 @@ export async function getCompanyAutopartAccount(
   return serializeAutopart(row);
 }
 
+function verificationAudit(row: {
+  autopartCustomerCode: string | null;
+  autopartCustomerCodeVerifiedAt: Date | null;
+  autopartCustomerCodeVerifiedById: string | null;
+}) {
+  return {
+    autopartCustomerCode: row.autopartCustomerCode,
+    verifiedAt: row.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
+    verifiedById: row.autopartCustomerCodeVerifiedById,
+    verification: row.autopartCustomerCodeVerifiedAt ? "verified" : "not_verified",
+  };
+}
+
 /**
- * Set or clear the Autopart customer code.
- * An unambiguous ID is verified as part of the assignment. Clearing removes verification.
- * A conflicting ID is rejected and is not stored as unverified.
+ * Save or clear the sales account code. Saving does not verify it.
+ * A code that is already verified is left unchanged. Replacing it requires
+ * link-and-verify, which records the staff member.
  */
 export async function setCompanyAutopartCustomerCode(actorUserId: string, raw: unknown) {
   const input = setSchema.parse(raw);
@@ -135,11 +148,8 @@ export async function setCompanyAutopartCustomerCode(actorUserId: string, raw: u
       entityId: input.companyId,
       actorUserId,
       companyId: input.companyId,
-      before: {
-        autopartCustomerCode: before.autopartCustomerCode,
-        verifiedAt: before.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
-      },
-      after: { autopartCustomerCode: null, verifiedAt: null },
+      before: verificationAudit(before),
+      after: { autopartCustomerCode: null, verifiedAt: null, verifiedById: null, verification: "not_verified" },
     });
     return serializeAutopart(updated);
   }
@@ -147,43 +157,38 @@ export async function setCompanyAutopartCustomerCode(actorUserId: string, raw: u
   const normalised = await assertUnambiguousAutopartCode(next, input.companyId);
   const sameKey =
     normaliseAssignedAutopartCode(before.autopartCustomerCode).key === normalised.key;
-  if (sameKey && before.autopartCustomerCodeVerifiedAt) {
+  if (sameKey) {
     return serializeAutopart(before);
   }
+  if (before.autopartCustomerCode && before.autopartCustomerCodeVerifiedAt) {
+    throw new AuthError(
+      "This customer already has a verified sales account. Use Verify / link to replace it. The verified account was not changed.",
+      "AUTOPART_CODE_VERIFIED",
+      409,
+    );
+  }
 
-  const verifiedAt = new Date();
   try {
     const updated = await prisma.company.update({
       where: { id: input.companyId },
       data: {
-        autopartCustomerCode: sameKey ? before.autopartCustomerCode : normalised.display,
-        autopartCustomerCodeVerifiedAt: verifiedAt,
+        autopartCustomerCode: normalised.display,
+        autopartCustomerCodeVerifiedAt: null,
         autopartCustomerCodeVerifiedById: null,
       },
       select: autopartSelect,
     });
 
-    const action = sameKey
-      ? "company.autopart_account.verified"
-      : before.autopartCustomerCode
-        ? "company.autopart_account.changed"
-        : "company.autopart_account.set";
-
     await recordAuditEvent({
-      action,
+      action: before.autopartCustomerCode
+        ? "company.autopart_account.changed"
+        : "company.autopart_account.assigned",
       entityType: "Company",
       entityId: input.companyId,
       actorUserId,
       companyId: input.companyId,
-      before: {
-        autopartCustomerCode: before.autopartCustomerCode,
-        verifiedAt: before.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
-      },
-      after: {
-        autopartCustomerCode: updated.autopartCustomerCode,
-        verifiedAt: updated.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
-        verifiedById: null,
-      },
+      before: verificationAudit(before),
+      after: verificationAudit(updated),
     });
 
     return serializeAutopart(updated);
@@ -266,12 +271,21 @@ export async function linkAndVerifyCompanyAutopartCustomerCode(
   });
   if (!before) throw new AuthError("Company not found", "NOT_FOUND", 404);
 
+  const sameKey =
+    normaliseAssignedAutopartCode(before.autopartCustomerCode).key === normalised.key;
+  if (sameKey && before.autopartCustomerCodeVerifiedAt && before.autopartCustomerCodeVerifiedById) {
+    return serializeAutopart(before);
+  }
+
   try {
     const updated = await prisma.company.update({
       where: { id: input.companyId },
       data: {
         autopartCustomerCode: normalised.display,
-        autopartCustomerCodeVerifiedAt: new Date(),
+        autopartCustomerCodeVerifiedAt:
+          sameKey && before.autopartCustomerCodeVerifiedAt
+            ? before.autopartCustomerCodeVerifiedAt
+            : new Date(),
         autopartCustomerCodeVerifiedById: actorUserId,
       },
       select: autopartSelect,

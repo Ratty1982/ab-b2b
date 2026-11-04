@@ -273,7 +273,7 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
         where: { id: company.id },
         data: {
           autopartCustomerCodeVerifiedAt: verifiedAt,
-          autopartCustomerCodeVerifiedById: null,
+          autopartCustomerCodeVerifiedById: actorUserId,
         },
       });
       await recordAuditEvent({
@@ -285,7 +285,7 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
         after: {
           autopartCustomerCode: company.autopartCustomerCode,
           verifiedAt: verifiedAt.toISOString(),
-          verifiedById: null,
+          verifiedById: actorUserId,
         },
       });
       return {
@@ -354,7 +354,7 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
       data: {
         autopartCustomerCode: code,
         autopartCustomerCodeVerifiedAt: new Date(),
-        autopartCustomerCodeVerifiedById: null,
+        autopartCustomerCodeVerifiedById: actorUserId,
       },
     });
     binding = {
@@ -372,7 +372,7 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
         where: { id: company.id },
         data: {
           autopartCustomerCodeVerifiedAt: new Date(),
-          autopartCustomerCodeVerifiedById: null,
+          autopartCustomerCodeVerifiedById: actorUserId,
         },
       });
     }
@@ -400,7 +400,7 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
         where: { id: company.id },
         data: {
           autopartCustomerCodeVerifiedAt: verifiedAt,
-          autopartCustomerCodeVerifiedById: null,
+          autopartCustomerCodeVerifiedById: actorUserId,
         },
       });
       await recordAuditEvent({
@@ -412,7 +412,7 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
         after: {
           autopartCustomerCode: company.autopartCustomerCode,
           verifiedAt: verifiedAt.toISOString(),
-          verifiedById: null,
+          verifiedById: actorUserId,
         },
       });
     }

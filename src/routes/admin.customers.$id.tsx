@@ -47,6 +47,7 @@ import { updateCompanyMembershipFn } from "@/server/workspace/fns";
 import { cn } from "@/lib/utils";
 import { InstantText } from "@/components/ab/InstantText";
 import { formatDate, formatOrDash } from "@/lib/datetime";
+import { CustomerOnboardingOverview } from "@/components/ab/CustomerOnboardingOverview";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/admin/customers/$id")({
@@ -202,12 +203,21 @@ function CustomerWorkspace() {
 
       <div className="p-4 sm:p-6">
         {tab === "Overview" ? (
+          <div className="grid gap-6">
+          <CustomerOnboardingOverview
+            companyId={company.id}
+            onboarding={data.onboarding}
+            availableTabs={tabs}
+            onOpenTab={(next) => setTab(next as (typeof tabs)[number])}
+          />
           <div className="grid gap-6 lg:grid-cols-2">
+            <div id="customer-status">
             <CustomerStatusPanel
               company={company}
               canEdit={Boolean(permissions.canEdit)}
               onChanged={reload}
             />
+            </div>
             <section className="border border-border bg-surface/40 p-5">
               <h2 className="font-display text-lg uppercase">Company details</h2>
               <dl className="mt-4 grid gap-3 text-[13px]">
@@ -296,6 +306,7 @@ function CustomerWorkspace() {
                 </button>
               </section>
             ) : null}
+          </div>
           </div>
         ) : null}
 
@@ -1053,7 +1064,13 @@ function AutopartAccountEditor({
           <dt className="text-steel">Status</dt>
           <dd>
             <StatusBadge tone={verified ? "good" : needsReview ? "warn" : "neutral"}>
-              {verified ? "Verified" : needsReview ? "Needs review" : "Not assigned"}
+              {verified
+                ? "Verified"
+                : account.attention && !/not been verified/i.test(account.attention)
+                  ? "Needs review"
+                  : account.code
+                    ? "Not verified"
+                    : "Not assigned"}
             </StatusBadge>
           </dd>
         </div>
@@ -1084,10 +1101,11 @@ function AutopartAccountEditor({
           {account.attention}
         </p>
       ) : null}
-      {verified && account.verificationRecorded === false ? (
+      {account.code && !verified ? (
         <p className="text-[12px] text-steel">
-          This assigned ID is unique, so it is shown as verified. The timestamp is stored when an
-          administrator runs the approved bulk verification. That does not approve portal access.
+          Saving a sales account does not verify it. Verification records the staff member and the
+          time. A unique saved code stays unverified until then. Bulk verification is a separate
+          administrator action and does not approve portal access.
         </p>
       ) : null}
 
@@ -1154,7 +1172,7 @@ function AutopartAccountEditor({
                     r.data.code
                       ? r.data.verified
                         ? "Autopart ID saved and verified"
-                        : "Autopart ID saved"
+                        : "Sales account saved. It is not verified yet."
                       : "Autopart ID cleared",
                   );
                   await onChanged();

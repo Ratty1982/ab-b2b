@@ -433,7 +433,13 @@ function AccountMapping({
                   setSaving(false);
                   if (!result.ok) toast.error(result.error);
                   else {
-                    toast.success(result.data.code ? "Sales account saved" : "Sales account cleared");
+                    toast.success(
+                      result.data.code
+                        ? result.data.verified
+                          ? "Sales account saved"
+                          : "Sales account saved. It is not verified yet."
+                        : "Sales account cleared",
+                    );
                     await onChanged();
                   }
                 });
