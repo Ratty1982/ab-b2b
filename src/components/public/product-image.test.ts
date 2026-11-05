@@ -32,7 +32,7 @@ describe("public product image presentation", () => {
     expect(productImageSurfaceClass(false)).toBe(PRODUCT_IMAGE_MISSING_SURFACE_CLASS);
     expect(PRODUCT_IMAGE_MISSING_SURFACE_CLASS).toContain("bg-surface");
     expect(PRODUCT_IMAGE_MISSING_SURFACE_CLASS).not.toContain("product-studio");
-    expect(PRODUCT_IMAGE_LOGO_SRC).toBe("/brand/ab-logo.jpg");
+    expect(PRODUCT_IMAGE_LOGO_SRC).toBe("/brand/ab-logo.png");
     expect(PRODUCT_IMAGE_PLACEHOLDER_LABEL.toLowerCase()).toContain("coming soon");
   });
 

@@ -3,7 +3,7 @@ import { mediaContainClass } from "@/lib/media-presentation";
 import { cn } from "@/lib/utils";
 
 /** First-party brand mark — served from /public/brand (no Lovable CDN). */
-const LOGO_SRC = "/brand/ab-logo.jpg";
+const LOGO_SRC = "/brand/ab-logo.png";
 
 export function Logo({
   to = "/",
@@ -33,7 +33,7 @@ export function Logo({
         width={isHeader ? 58 : 36}
         height={isHeader ? 56 : 36}
         className={cn(
-          "shrink-0 rounded-sm bg-white",
+          "shrink-0 rounded-sm",
           mediaContainClass,
           isHeader ? "h-14 w-auto max-w-[11rem]" : "size-9",
         )}
