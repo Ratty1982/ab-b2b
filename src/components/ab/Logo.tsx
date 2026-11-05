@@ -1,9 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import { mediaContainClass } from "@/lib/media-presentation";
+import { useSiteHeaderLogoSrc } from "@/lib/site-branding";
 import { cn } from "@/lib/utils";
-
-/** First-party brand mark — served from /public/brand (no Lovable CDN). */
-const LOGO_SRC = "/brand/ab-logo.jpg";
+import { DEFAULT_SITE_HEADER_LOGO_SRC } from "@/domain/site-branding";
 
 export function Logo({
   to = "/",
@@ -11,6 +10,8 @@ export function Logo({
   className,
   markOnly = false,
   size = "default",
+  /** Optional override — defaults to configured site branding / static fallback. */
+  src,
 }: {
   to?: string;
   subtitle?: string | null;
@@ -18,7 +19,10 @@ export function Logo({
   markOnly?: boolean;
   /** `header` ≈ 56px visual height for the public site chrome. */
   size?: "default" | "header";
+  src?: string;
 }) {
+  const configuredSrc = useSiteHeaderLogoSrc();
+  const logoSrc = src || configuredSrc || DEFAULT_SITE_HEADER_LOGO_SRC;
   const isHeader = size === "header";
   return (
     <Link
@@ -28,7 +32,7 @@ export function Logo({
       data-logo-size={size}
     >
       <img
-        src={LOGO_SRC}
+        src={logoSrc}
         alt=""
         width={isHeader ? 58 : 36}
         height={isHeader ? 56 : 36}

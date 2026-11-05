@@ -62,7 +62,9 @@ describe("admin settings workspace structure", () => {
   });
 
   it("places panels in the intended tabs", () => {
-    expect(src).toMatch(/function GeneralTab[\s\S]*PlatformDefaultsSection/);
+    expect(src).toMatch(
+      /function GeneralTab[\s\S]*WebsiteBrandingSettingsPanel[\s\S]*PlatformDefaultsSection/,
+    );
     expect(src).toMatch(/function TradeTab[\s\S]*TradeTestingPanel[\s\S]*TradeOrderingSettingsPanel/);
     expect(src).toMatch(/function EmailTab[\s\S]*EmailSettingsPanel/);
     expect(src).toMatch(/function AutopartTab[\s\S]*AutopartOngoingSalesFeedPanel/);

@@ -15,6 +15,12 @@ import { Toaster } from "@/components/ui/sonner";
 import { absoluteCanonical } from "@/domain/public-origin";
 import { getClientSession, type ClientSession } from "@/server/auth/session";
 import { getPublicOrigin } from "@/server/http/public-origin";
+import { getPublicSiteBrandingFn } from "@/server/phase2/fns";
+import { SiteBrandingProvider } from "@/lib/site-branding";
+import {
+  DEFAULT_SITE_HEADER_LOGO_SRC,
+  type PublicSiteBranding,
+} from "@/domain/site-branding";
 
 function NotFoundComponent() {
   return (
@@ -82,6 +88,14 @@ export type RootRouterContext = {
   session: ClientSession;
   /** APP_URL origin. Empty until beforeLoad. Cookies stay host-only. */
   publicOrigin: string;
+  /** Website header logo (CmsMedia or static fallback). */
+  siteBranding: PublicSiteBranding;
+};
+
+const FALLBACK_SITE_BRANDING: PublicSiteBranding = {
+  headerLogoSrc: DEFAULT_SITE_HEADER_LOGO_SRC,
+  isCustom: false,
+  cacheKey: null,
 };
 
 export const Route = createRootRouteWithContext<RootRouterContext>()({
@@ -92,12 +106,24 @@ export const Route = createRootRouteWithContext<RootRouterContext>()({
   headers: () => ({
     "Cache-Control": "private, no-store",
   }),
-  beforeLoad: async (): Promise<{ session: ClientSession; publicOrigin: string }> => {
+  beforeLoad: async (): Promise<{
+    session: ClientSession;
+    publicOrigin: string;
+    siteBranding: PublicSiteBranding;
+  }> => {
     // Same createServerFn + getRequestHeaders path as product pricing.
     // Do not swallow failures into a silent guest — that caused YOUR PRICE
     // (loader cookies worked) while the public header stayed anonymous.
-    const [session, publicOrigin] = await Promise.all([getClientSession(), getPublicOrigin()]);
-    return { session, publicOrigin };
+    const [session, publicOrigin, brandingResult] = await Promise.all([
+      getClientSession(),
+      getPublicOrigin(),
+      getPublicSiteBrandingFn().catch(() => ({ ok: false as const })),
+    ]);
+    const siteBranding =
+      brandingResult && "ok" in brandingResult && brandingResult.ok
+        ? brandingResult.data
+        : FALLBACK_SITE_BRANDING;
+    return { session, publicOrigin, siteBranding };
   },
   head: ({ matches }) => {
     const origin = matches[0]?.context.publicOrigin ?? "";
@@ -152,13 +178,15 @@ function RootShell({ children }: { children: ReactNode }) {
 }
 
 function RootComponent() {
-  const { queryClient } = Route.useRouteContext();
+  const { queryClient, siteBranding } = Route.useRouteContext();
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
-      <Toaster />
+      <SiteBrandingProvider branding={siteBranding ?? FALLBACK_SITE_BRANDING}>
+        {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+        <Outlet />
+        <Toaster />
+      </SiteBrandingProvider>
     </QueryClientProvider>
   );
 }
