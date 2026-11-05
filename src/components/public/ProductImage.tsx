@@ -1,7 +1,7 @@
 import { PUBLIC_AVAILABILITY_LABEL, type PublicAvailability } from "@/domain/availability";
 import { cn } from "@/lib/utils";
 
-export const PRODUCT_IMAGE_LOGO_SRC = "/brand/ab-logo.jpg";
+export const PRODUCT_IMAGE_LOGO_SRC = "/brand/ab-logo.png";
 export const PRODUCT_IMAGE_PLACEHOLDER_LABEL = "Image coming soon";
 /** Live product media: contain, ~85% of the stage, never cropped, never edge-to-edge. */
 export const PRODUCT_IMAGE_FIT_CLASS =
