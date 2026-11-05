@@ -42,14 +42,28 @@ export function startAutopart216vScheduler(): void {
       const result = await run216vScheduledPollIfEnabled();
       console.info("[ab:216v]", { event: "AUTOPART_216V_SCHEDULE_TICK", window: key, ...result });
       await prisma.autopartBackorderFeedSettings
-        .update({ where: { id: "default" }, data: { lastPolledAt: new Date() } })
+        .update({
+          where: { id: "default" },
+          data: {
+            lastPolledAt: new Date(),
+            // Tick already patches lastError inside the poll; keep the clock fresh here.
+          },
+        })
         .catch(() => undefined);
     })()
-      .catch((error) => {
+      .catch(async (error) => {
+        const message = error instanceof Error ? error.message : String(error);
         console.error("[ab:216v]", {
           event: "AUTOPART_216V_SCHEDULE_FAILED",
-          error: error instanceof Error ? error.message : error,
+          error: message,
         });
+        await prisma.autopartBackorderFeedSettings
+          .upsert({
+            where: { id: "default" },
+            create: { id: "default", lastPolledAt: new Date(), lastError: message },
+            update: { lastPolledAt: new Date(), lastError: message },
+          })
+          .catch(() => undefined);
       })
       .finally(() => {
         ticking = false;

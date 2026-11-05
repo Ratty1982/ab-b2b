@@ -103,21 +103,29 @@ function emptyResult(partial?: Partial<BackorderPollResult>): BackorderPollResul
   };
 }
 
+/**
+ * Filename + .csv/.txt decide whether to download. MIME is advisory only.
+ * Outlook / Autopart often label a real 216V CSV as application/force-download,
+ * application/download, or another non-CSV type — rejecting those skipped the
+ * daily file before content detection could run.
+ */
 export function isAutopart216vAttachmentCandidate(filename: string, mime?: string | null): boolean {
   if (!isTxtOrCsvAttachment(filename)) return false;
   const n = normaliseAttachmentFilename(filename);
+  if (isAutopart216vFilename(filename)) return true;
   const mimeBase = String(mime ?? "")
     .split(";")[0]
     ?.trim()
     .toLowerCase();
   if (
     mimeBase &&
-    !/text\/|csv|excel|octet-stream/.test(mimeBase) &&
+    !/text\/|csv|excel|octet-stream|download|binary|file/.test(mimeBase) &&
     mimeBase !== "application/vnd.ms-excel"
   ) {
+    // Non-216V name with a clearly alien MIME (e.g. PDF/image) — skip.
     return false;
   }
-  return isAutopart216vFilename(filename) || n.endsWith(".csv") || n.endsWith(".txt");
+  return n.endsWith(".csv") || n.endsWith(".txt");
 }
 
 export async function process216vEmailBatch(input: {
@@ -281,7 +289,20 @@ async function run216vMailboxPoll(
   }
   const base = await loadImapRuntimeConfig();
   if (!base) {
-    throw new AuthError("IMAP is not configured (host/username/password required)", "CONFIG", 400);
+    const failed = emptyResult({
+      ran: false,
+      reason: "IMAP is not configured (host/username/password required)",
+      errors: ["IMAP is not configured (host/username/password required)"],
+    });
+    await prisma.autopartBackorderFeedSettings.update({
+      where: { id: "default" },
+      data: backorderFeedPatchAfterPoll(failed),
+    });
+    // Manual poll still surfaces a hard error; the scheduler must not throw away lastError.
+    if (source === "EMAIL") {
+      throw new AuthError(failed.reason!, "CONFIG", 400);
+    }
+    return failed;
   }
   const imapSettings = await getOrCreateImapSettings();
   const allowed = parseAllowedSenders(
@@ -297,12 +318,30 @@ async function run216vMailboxPoll(
     select: { receiptKey: true, emailUid: true },
     take: 8000,
   });
-  const emails = await fetchUnprocessedStockEmails(config, {
-    processedReceiptKeys: new Set(receipts.map((r) => r.receiptKey)),
-    processedUids: new Set(receipts.map((r) => r.emailUid)),
-    skipConsumed: false,
-    acceptAttachment: isAutopart216vAttachmentCandidate,
-  });
+  let emails;
+  try {
+    emails = await fetchUnprocessedStockEmails(config, {
+      processedReceiptKeys: new Set(receipts.map((r) => r.receiptKey)),
+      processedUids: new Set(receipts.map((r) => r.emailUid)),
+      skipConsumed: false,
+      acceptAttachment: isAutopart216vAttachmentCandidate,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "IMAP mailbox poll failed";
+    const failed = emptyResult({
+      ran: true,
+      errors: [message],
+      notes: [message],
+    });
+    await prisma.autopartBackorderFeedSettings.update({
+      where: { id: "default" },
+      data: backorderFeedPatchAfterPoll(failed),
+    });
+    if (source === "EMAIL") {
+      throw new AuthError(message, "IMAP", 502);
+    }
+    return failed;
+  }
   const result = await process216vEmailBatch({ emails, actorUserId, source });
   await prisma.autopartBackorderFeedSettings.update({
     where: { id: "default" },
