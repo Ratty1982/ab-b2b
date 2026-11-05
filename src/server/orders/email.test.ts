@@ -73,6 +73,21 @@ describe("part-despatch email quantities", () => {
     expect(bodies.text).not.toMatch(/Exact item quantities will appear/);
   });
 
+  it("lists only newly confirmed invoice quantities when provided", () => {
+    const bodies = buildOrderPartDespatchedCustomerBodies(snapshot(), {
+      lineQuantitiesKnown: true,
+      newlyDespatchedLines: [{ sku: "A", name: "Widget A", qty: 3 }],
+      stillToComeLines: [
+        { sku: "A", name: "Widget A", qty: 1 },
+        { sku: "B", name: "Widget B", qty: 4 },
+      ],
+    });
+    expect(bodies.text).toContain("3 × Widget A");
+    expect(bodies.text).not.toContain("6 × Widget A");
+    expect(bodies.text).toContain("1 × Widget A");
+    expect(bodies.text).toContain("4 × Widget B");
+  });
+
   it("does not invent SKU quantities when line detail is unknown", () => {
     const bodies = buildOrderPartDespatchedCustomerBodies(snapshot(), { lineQuantitiesKnown: false });
     expect(bodies.text).toMatch(/Exact item quantities will appear/);

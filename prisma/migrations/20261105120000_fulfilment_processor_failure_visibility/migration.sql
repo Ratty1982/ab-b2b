@@ -1,0 +1,12 @@
+-- Additive only: nullable columns for post-import fulfilment processor visibility.
+-- Does NOT alter fulfilmentMode, fulfilmentFrom, enabled, configured, or any order/stock rows.
+ALTER TABLE "AutopartOngoingSalesFeedSettings"
+  ADD COLUMN IF NOT EXISTS "fulfilmentLastError" TEXT,
+  ADD COLUMN IF NOT EXISTS "fulfilmentLastErrorAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "fulfilmentLastErrorImportRunId" TEXT,
+  ADD COLUMN IF NOT EXISTS "fulfilmentLastErrorFeed" TEXT;
+
+ALTER TABLE "AutopartCustomerImportRun"
+  ADD COLUMN IF NOT EXISTS "fulfilmentProcessorStatus" TEXT,
+  ADD COLUMN IF NOT EXISTS "fulfilmentProcessorError" TEXT,
+  ADD COLUMN IF NOT EXISTS "fulfilmentProcessorAt" TIMESTAMP(3);

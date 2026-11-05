@@ -440,6 +440,105 @@ export function fulfilmentFingerprint(evaluation: OrderFulfilmentEvaluation): st
   return `${evaluation.conceptually}#${docs}#${lines}`;
 }
 
+export type DispatchNotificationAction =
+  | {
+      kind: "FULL";
+      remainingAfterBackorder: boolean;
+    }
+  | {
+      kind: "PART";
+      invoiceExternalRef: string;
+      /** Newly confirmed units for this invoice only — never cumulative prior despatches. */
+      newlyDespatchedLines: Array<{ sku: string; name: string; qty: number }>;
+      stillToComeLines: Array<{ sku: string; name: string; qty: number }>;
+    };
+
+/**
+ * Decide customer notifications from authoritative fulfilment evidence.
+ *
+ * Gate is new matched evidence (`canApply` + new fingerprint), not statusChanged alone.
+ * PARTIAL → PARTIAL quantity growth notifies once per newly confirmed invoice document.
+ * Identical replays (`alreadySameFingerprint`) queue nothing.
+ *
+ * Never fall back to previously applied / already-included invoices when
+ * `newInvoiceDocumentNumbers` is empty — that would restate prior despatches
+ * as though newly confirmed.
+ */
+export function plan504TrmDispatchNotifications(input: {
+  previousStatus: string;
+  evaluation: OrderFulfilmentEvaluation;
+  alreadySameFingerprint: boolean;
+}): DispatchNotificationAction[] {
+  const { previousStatus, evaluation, alreadySameFingerprint } = input;
+  if (previousStatus === "CANCELLED") return [];
+  if (!evaluation.canApply || alreadySameFingerprint) return [];
+
+  if (evaluation.conceptually === "DISPATCHED") {
+    return [
+      {
+        kind: "FULL",
+        remainingAfterBackorder: previousStatus === "PARTIALLY_DESPATCHED",
+      },
+    ];
+  }
+
+  if (evaluation.conceptually !== "PARTIALLY_DESPATCHED") return [];
+
+  // Only newly confirmed invoice references. Empty list → no PART email.
+  const refs = evaluation.newInvoiceDocumentNumbers;
+  if (!refs.length) return [];
+
+  const stillToComeLines = evaluation.lines
+    .filter((l) => l.remainingQty > 0)
+    .map((l) => ({ sku: l.sku, name: l.name, qty: l.remainingQty }));
+
+  const actions: DispatchNotificationAction[] = [];
+  for (const ref of refs) {
+    const newlyDespatchedLines = newlyConfirmedDispatchLines(evaluation, ref);
+    if (!newlyDespatchedLines.length) continue;
+    actions.push({
+      kind: "PART",
+      invoiceExternalRef: ref,
+      newlyDespatchedLines,
+      stillToComeLines,
+    });
+  }
+  return actions;
+}
+
+/**
+ * Units confirmed by one invoice document only.
+ * Quantities are capped to the order line qty so over-invoicing never emails
+ * more units than the customer ordered as “newly despatched”.
+ */
+export function newlyConfirmedDispatchLines(
+  evaluation: OrderFulfilmentEvaluation,
+  invoiceExternalRef: string,
+): Array<{ sku: string; name: string; qty: number }> {
+  const needle = invoiceExternalRef.trim().toUpperCase();
+  const doc = evaluation.documents.find(
+    (d) => d.includedInFulfilment && d.documentReference.trim().toUpperCase() === needle,
+  );
+  if (!doc) return [];
+  const byItem = new Map<string, number>();
+  for (const contribution of doc.contributions) {
+    if (contribution.unmatched || !contribution.matchedOrderItemId) continue;
+    if (contribution.units <= 0) continue;
+    byItem.set(
+      contribution.matchedOrderItemId,
+      (byItem.get(contribution.matchedOrderItemId) ?? 0) + contribution.units,
+    );
+  }
+  const lines: Array<{ sku: string; name: string; qty: number }> = [];
+  for (const line of evaluation.lines) {
+    const raw = byItem.get(line.orderItemId) ?? 0;
+    const qty = Math.min(raw, Math.max(0, line.orderedQty), Math.max(0, line.despatchedQty));
+    if (qty <= 0) continue;
+    lines.push({ sku: line.sku, name: line.name, qty });
+  }
+  return lines;
+}
+
 export function describeCreditsHandling(): string {
   return [
     "Credits remain signed on AutopartSalesLine (negative units / sales).",

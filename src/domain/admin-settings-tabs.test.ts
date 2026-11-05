@@ -103,10 +103,13 @@ describe("504/TRM fulfilment settings surfaces", () => {
     expect(ongoing).toContain("get504TrmFulfilmentSettingsFn");
     expect(ongoing).toContain("update504TrmFulfilmentSettingsFn");
     expect(ongoing).toContain("preview504TrmFulfilmentFn");
+    expect(ongoing).toContain("evaluate504TrmFulfilmentReadonlyFn");
+    expect(ongoing).toContain("retry504TrmFulfilmentProcessorFn");
     expect(ongoing).toContain('data-admin-section="autopart-504-trm-fulfilment"');
     expect(ongoing).toContain("No automatic order fulfilment");
     expect(ongoing).toContain("Evaluate without changing orders");
     expect(ongoing).toContain("Fulfil eligible orders using 504 + TRM21QC");
+    expect(ongoing).toContain("Read-only diagnosis");
     expect(ongoing).not.toContain("retire504c");
     expect(ongoing).not.toContain("504C may still despatch");
     expect(order).toContain("autopartFulfilment");

@@ -417,10 +417,17 @@ ${emailParagraph("Status: SUBMITTED (received / pending Autopart handoff — not
 /**
  * Partial despatch notification.
  * When line quantities are unknown, do not invent SKU despatch qty.
+ * Prefer `newlyDespatchedLines` so successive PARTIAL invoices only list
+ * units confirmed on that invoice — never restate prior despatches as new.
  */
 export function buildOrderPartDespatchedCustomerBodies(
   order: OrderEmailSnapshot,
-  opts: { lineQuantitiesKnown: boolean; footer?: EmailFooterMeta },
+  opts: {
+    lineQuantitiesKnown: boolean;
+    footer?: EmailFooterMeta;
+    newlyDespatchedLines?: Array<{ sku: string; name: string; qty: number }>;
+    stillToComeLines?: Array<{ sku: string; name: string; qty: number }>;
+  },
 ): {
   subject: string;
   text: string;
@@ -431,28 +438,36 @@ export function buildOrderPartDespatchedCustomerBodies(
   const backorderItems = order.items.filter((i) => (i.backorderQtyAtOrder ?? 0) > 0);
 
   const despatchedLines = opts.lineQuantitiesKnown
-    ? order.items
-        .map((i) => {
-          const despatched =
-            i.despatchedQty != null
-              ? Math.max(0, Math.trunc(i.despatchedQty))
-              : Math.max(0, i.qty - (i.backorderQtyAtOrder ?? 0));
-          return despatched > 0 ? `${despatched} × ${i.name}` : null;
-        })
-        .filter((line): line is string => Boolean(line))
+    ? opts.newlyDespatchedLines?.length
+      ? opts.newlyDespatchedLines
+          .filter((l) => l.qty > 0)
+          .map((l) => `${Math.trunc(l.qty)} × ${l.name}`)
+      : order.items
+          .map((i) => {
+            const despatched =
+              i.despatchedQty != null
+                ? Math.max(0, Math.trunc(i.despatchedQty))
+                : Math.max(0, i.qty - (i.backorderQtyAtOrder ?? 0));
+            return despatched > 0 ? `${despatched} × ${i.name}` : null;
+          })
+          .filter((line): line is string => Boolean(line))
     : [];
 
   const stillLines = opts.lineQuantitiesKnown
-    ? order.items
-        .map((i) => {
-          const despatched =
-            i.despatchedQty != null
-              ? Math.max(0, Math.trunc(i.despatchedQty))
-              : Math.max(0, i.qty - (i.backorderQtyAtOrder ?? 0));
-          const remaining = Math.max(0, i.qty - despatched);
-          return remaining > 0 ? `${remaining} × ${i.name}` : null;
-        })
-        .filter((line): line is string => Boolean(line))
+    ? opts.stillToComeLines
+      ? opts.stillToComeLines
+          .filter((l) => l.qty > 0)
+          .map((l) => `${Math.trunc(l.qty)} × ${l.name}`)
+      : order.items
+          .map((i) => {
+            const despatched =
+              i.despatchedQty != null
+                ? Math.max(0, Math.trunc(i.despatchedQty))
+                : Math.max(0, i.qty - (i.backorderQtyAtOrder ?? 0));
+            const remaining = Math.max(0, i.qty - despatched);
+            return remaining > 0 ? `${remaining} × ${i.name}` : null;
+          })
+          .filter((line): line is string => Boolean(line))
     : backorderItems.map((i) => `${i.backorderQtyAtOrder} × ${i.name}`);
 
   const unknownNote =

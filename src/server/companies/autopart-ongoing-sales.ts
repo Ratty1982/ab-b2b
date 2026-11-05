@@ -1204,15 +1204,40 @@ export async function confirmAutopart504Import(
     }
 
     if (!raw.customerScope) {
-      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
-        recordAuditEvent({
-          action: "autopart.504_trm_fulfilment_failed",
-          entityType: "AutopartCustomerImportRun",
-          entityId: run.id,
+      try {
+        await run504TrmFulfilmentAfterImport(actorUserId);
+        await prisma.autopartCustomerImportRun
+          .update({
+            where: { id: run.id },
+            data: {
+              fulfilmentProcessorStatus: "SUCCESS",
+              fulfilmentProcessorError: null,
+              fulfilmentProcessorAt: new Date(),
+            },
+          })
+          .catch(() => undefined);
+      } catch (err) {
+        const { record504TrmFulfilmentProcessorFailure } = await import(
+          "@/server/orders/autopart-504-trm-fulfilment"
+        );
+        await record504TrmFulfilmentProcessorFailure({
           actorUserId: actorUserId ?? null,
-          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "504" },
-        }),
-      );
+          importRunId: run.id,
+          feed: "504",
+          error: err,
+        });
+      }
+    } else {
+      await prisma.autopartCustomerImportRun
+        .update({
+          where: { id: run.id },
+          data: {
+            fulfilmentProcessorStatus: "SKIPPED",
+            fulfilmentProcessorError: null,
+            fulfilmentProcessorAt: new Date(),
+          },
+        })
+        .catch(() => undefined);
     }
 
     await persistImportDiagnostics(run.id, diagnosticDrafts);
@@ -1980,15 +2005,40 @@ export async function confirmAutopartTrm21qcImport(
     });
 
     if (!raw.customerScope) {
-      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
-        recordAuditEvent({
-          action: "autopart.504_trm_fulfilment_failed",
-          entityType: "AutopartCustomerImportRun",
-          entityId: run.id,
+      try {
+        await run504TrmFulfilmentAfterImport(actorUserId);
+        await prisma.autopartCustomerImportRun
+          .update({
+            where: { id: run.id },
+            data: {
+              fulfilmentProcessorStatus: "SUCCESS",
+              fulfilmentProcessorError: null,
+              fulfilmentProcessorAt: new Date(),
+            },
+          })
+          .catch(() => undefined);
+      } catch (err) {
+        const { record504TrmFulfilmentProcessorFailure } = await import(
+          "@/server/orders/autopart-504-trm-fulfilment"
+        );
+        await record504TrmFulfilmentProcessorFailure({
           actorUserId: actorUserId ?? null,
-          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "TRM21QC" },
-        }),
-      );
+          importRunId: run.id,
+          feed: "TRM21QC",
+          error: err,
+        });
+      }
+    } else {
+      await prisma.autopartCustomerImportRun
+        .update({
+          where: { id: run.id },
+          data: {
+            fulfilmentProcessorStatus: "SKIPPED",
+            fulfilmentProcessorError: null,
+            fulfilmentProcessorAt: new Date(),
+          },
+        })
+        .catch(() => undefined);
     }
 
     return finished;
@@ -2031,6 +2081,9 @@ export async function listOngoingSalesImportRuns(actorUserId: string, limit = 25
       diagnostics: true,
       issues: true,
       dryRun: true,
+      fulfilmentProcessorStatus: true,
+      fulfilmentProcessorError: true,
+      fulfilmentProcessorAt: true,
       _count: { select: { rowDiagnostics: true } },
     },
   });
@@ -2046,6 +2099,8 @@ export async function listOngoingSalesImportRuns(actorUserId: string, limit = 25
           errors?: number;
         }
       | undefined;
+    const fulfilmentFailed = run.fulfilmentProcessorStatus === "FAILED";
+    const baseAttention = importRunNeedsAttention(run.diagnostics, run.issues);
     return {
       id: run.id,
       type: run.type,
@@ -2070,8 +2125,15 @@ export async function listOngoingSalesImportRuns(actorUserId: string, limit = 25
             : "MANUAL_UPLOAD",
       hasRowDiagnostics: run._count.rowDiagnostics > 0 || Boolean(diag["hasRowDiagnostics"]),
       dryRun: run.dryRun,
-      attentionRequired: importRunNeedsAttention(run.diagnostics, run.issues),
-      attentionReason: typeof diag["attentionReason"] === "string" ? diag["attentionReason"] : null,
+      fulfilmentProcessorStatus: run.fulfilmentProcessorStatus,
+      fulfilmentProcessorError: run.fulfilmentProcessorError,
+      fulfilmentProcessorAt: run.fulfilmentProcessorAt,
+      attentionRequired: baseAttention || fulfilmentFailed,
+      attentionReason: fulfilmentFailed
+        ? run.fulfilmentProcessorError ?? "Order fulfilment processor failed after import"
+        : typeof diag["attentionReason"] === "string"
+          ? diag["attentionReason"]
+          : null,
     };
   });
 }

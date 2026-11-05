@@ -14,6 +14,7 @@ import {
   upsertPendingEmail,
 } from "@/server/email/transactional";
 import { getEmailFooterMeta } from "@/server/email/settings";
+import { recordAuditEvent } from "@/server/audit/record";
 
 /**
  * Queue + attempt ORDER_DESPATCHED for an order.
@@ -21,7 +22,7 @@ import { getEmailFooterMeta } from "@/server/email/settings";
  */
 export async function enqueueOrderDespatchedEmail(
   orderId: string,
-  opts?: { remainingAfterBackorder?: boolean },
+  opts?: { remainingAfterBackorder?: boolean; actorUserId?: string | null },
 ): Promise<{
   queued: boolean;
   sent: boolean;
@@ -30,6 +31,17 @@ export async function enqueueOrderDespatchedEmail(
 }> {
   const snapshot = await loadOrderEmailSnapshot(orderId);
   if (!snapshot?.contact.email) {
+    await recordAuditEvent({
+      action: "order.despatch_email_failed",
+      entityType: "Order",
+      entityId: orderId,
+      actorUserId: opts?.actorUserId ?? null,
+      metadata: {
+        error: "order snapshot missing contact email",
+        source: "AUTOPART_504_TRM",
+        purpose: "ORDER_DESPATCHED",
+      },
+    });
     return {
       queued: false,
       sent: false,
@@ -54,9 +66,37 @@ export async function enqueueOrderDespatchedEmail(
   });
 
   const result = await safeAttemptDetailed(upsert.id);
+  if (!result.emailSent) {
+    const detail =
+      result.emailStatus === "DEFERRED"
+        ? "Transactional email delivery is disabled"
+        : result.emailStatus === "FAILED"
+          ? "SMTP or delivery failure"
+          : `email status ${result.emailStatus}`;
+    await recordAuditEvent({
+      action: "order.despatch_email_failed",
+      entityType: "Order",
+      entityId: orderId,
+      actorUserId: opts?.actorUserId ?? null,
+      metadata: {
+        error: detail,
+        source: "AUTOPART_504_TRM",
+        purpose: "ORDER_DESPATCHED",
+        emailId: upsert.id,
+        emailStatus: result.emailStatus,
+        queuedNew: upsert.created,
+      },
+    });
+    return {
+      queued: upsert.created,
+      sent: false,
+      emailId: upsert.id,
+      detail,
+    };
+  }
   return {
     queued: upsert.created,
-    sent: result.emailSent,
+    sent: true,
     emailId: upsert.id,
   };
 }
