@@ -18,9 +18,11 @@ import { parseExactAbOrderReference } from "@/domain/autopart-504-trm-fulfilment
 import {
   evaluateOrder504TrmFulfilment,
   fulfilmentFingerprint,
+  plan504TrmDispatchNotifications,
   type FulfilmentDocumentInput,
   type OrderFulfilmentEvaluation,
 } from "@/domain/autopart-504-trm-fulfilment";
+import { planReservationConsumption } from "@/domain/manual-order-resolution";
 import { recordFulfilmentEvent } from "@/server/orders/fulfilment";
 import { enqueueOrderDespatchedEmail } from "@/server/orders/despatch-email";
 import { enqueueOrderPartDespatchedEmail } from "@/server/orders/part-despatch-email";
@@ -34,6 +36,10 @@ export type Autopart504TrmFulfilmentPublicSettings = {
   fulfilmentFrom: string | null;
   fulfilmentLastPreviewAt: string | null;
   fulfilmentLastAppliedAt: string | null;
+  fulfilmentLastError: string | null;
+  fulfilmentLastErrorAt: string | null;
+  fulfilmentLastErrorImportRunId: string | null;
+  fulfilmentLastErrorFeed: string | null;
 };
 
 export type Autopart504TrmFulfilmentPreview = {
@@ -86,6 +92,10 @@ export async function read504TrmFulfilmentSettings(): Promise<{
   fulfilmentFrom: Date | null;
   fulfilmentLastPreviewAt: Date | null;
   fulfilmentLastAppliedAt: Date | null;
+  fulfilmentLastError: string | null;
+  fulfilmentLastErrorAt: Date | null;
+  fulfilmentLastErrorImportRunId: string | null;
+  fulfilmentLastErrorFeed: string | null;
 }> {
   const ongoing = await prisma.autopartOngoingSalesFeedSettings.upsert({
     where: { id: "default" },
@@ -97,6 +107,51 @@ export async function read504TrmFulfilmentSettings(): Promise<{
     fulfilmentFrom: ongoing.fulfilmentFrom,
     fulfilmentLastPreviewAt: ongoing.fulfilmentLastPreviewAt,
     fulfilmentLastAppliedAt: ongoing.fulfilmentLastAppliedAt,
+    fulfilmentLastError: ongoing.fulfilmentLastError,
+    fulfilmentLastErrorAt: ongoing.fulfilmentLastErrorAt,
+    fulfilmentLastErrorImportRunId: ongoing.fulfilmentLastErrorImportRunId,
+    fulfilmentLastErrorFeed: ongoing.fulfilmentLastErrorFeed,
+  };
+}
+
+/** Truly read-only settings load — never upserts or stamps clocks. */
+export async function read504TrmFulfilmentSettingsReadonly(): Promise<{
+  fulfilmentMode: Autopart504TrmFulfilmentMode;
+  fulfilmentFrom: Date | null;
+  fulfilmentLastPreviewAt: Date | null;
+  fulfilmentLastAppliedAt: Date | null;
+  fulfilmentLastError: string | null;
+  fulfilmentLastErrorAt: Date | null;
+  fulfilmentLastErrorImportRunId: string | null;
+  fulfilmentLastErrorFeed: string | null;
+}> {
+  const ongoing = await prisma.autopartOngoingSalesFeedSettings.findUnique({
+    where: { id: "default" },
+  });
+  return {
+    fulfilmentMode: ongoing?.fulfilmentMode ?? "OFF",
+    fulfilmentFrom: ongoing?.fulfilmentFrom ?? null,
+    fulfilmentLastPreviewAt: ongoing?.fulfilmentLastPreviewAt ?? null,
+    fulfilmentLastAppliedAt: ongoing?.fulfilmentLastAppliedAt ?? null,
+    fulfilmentLastError: ongoing?.fulfilmentLastError ?? null,
+    fulfilmentLastErrorAt: ongoing?.fulfilmentLastErrorAt ?? null,
+    fulfilmentLastErrorImportRunId: ongoing?.fulfilmentLastErrorImportRunId ?? null,
+    fulfilmentLastErrorFeed: ongoing?.fulfilmentLastErrorFeed ?? null,
+  };
+}
+
+function toPublicSettings(
+  row: Awaited<ReturnType<typeof read504TrmFulfilmentSettings>>,
+): Autopart504TrmFulfilmentPublicSettings {
+  return {
+    fulfilmentMode: row.fulfilmentMode,
+    fulfilmentFrom: row.fulfilmentFrom?.toISOString() ?? null,
+    fulfilmentLastPreviewAt: row.fulfilmentLastPreviewAt?.toISOString() ?? null,
+    fulfilmentLastAppliedAt: row.fulfilmentLastAppliedAt?.toISOString() ?? null,
+    fulfilmentLastError: row.fulfilmentLastError,
+    fulfilmentLastErrorAt: row.fulfilmentLastErrorAt?.toISOString() ?? null,
+    fulfilmentLastErrorImportRunId: row.fulfilmentLastErrorImportRunId,
+    fulfilmentLastErrorFeed: row.fulfilmentLastErrorFeed,
   };
 }
 
@@ -104,13 +159,7 @@ export async function get504TrmFulfilmentSettingsForActor(
   userId: string,
 ): Promise<Autopart504TrmFulfilmentPublicSettings> {
   await requireFulfilmentAdmin(userId);
-  const row = await read504TrmFulfilmentSettings();
-  return {
-    fulfilmentMode: row.fulfilmentMode,
-    fulfilmentFrom: row.fulfilmentFrom?.toISOString() ?? null,
-    fulfilmentLastPreviewAt: row.fulfilmentLastPreviewAt?.toISOString() ?? null,
-    fulfilmentLastAppliedAt: row.fulfilmentLastAppliedAt?.toISOString() ?? null,
-  };
+  return toPublicSettings(await read504TrmFulfilmentSettings());
 }
 
 export async function update504TrmFulfilmentSettings(
@@ -163,12 +212,88 @@ export async function update504TrmFulfilmentSettings(
     },
   });
 
-  return {
+  return toPublicSettings({
     fulfilmentMode: ongoing.fulfilmentMode,
-    fulfilmentFrom: ongoing.fulfilmentFrom?.toISOString() ?? null,
-    fulfilmentLastPreviewAt: ongoing.fulfilmentLastPreviewAt?.toISOString() ?? null,
-    fulfilmentLastAppliedAt: ongoing.fulfilmentLastAppliedAt?.toISOString() ?? null,
-  };
+    fulfilmentFrom: ongoing.fulfilmentFrom,
+    fulfilmentLastPreviewAt: ongoing.fulfilmentLastPreviewAt,
+    fulfilmentLastAppliedAt: ongoing.fulfilmentLastAppliedAt,
+    fulfilmentLastError: ongoing.fulfilmentLastError,
+    fulfilmentLastErrorAt: ongoing.fulfilmentLastErrorAt,
+    fulfilmentLastErrorImportRunId: ongoing.fulfilmentLastErrorImportRunId,
+    fulfilmentLastErrorFeed: ongoing.fulfilmentLastErrorFeed,
+  });
+}
+
+export async function record504TrmFulfilmentProcessorFailure(input: {
+  actorUserId: string | null;
+  importRunId?: string | null;
+  feed: "504" | "TRM21QC" | "RETRY" | "SCHEDULE";
+  error: unknown;
+}): Promise<void> {
+  const message = input.error instanceof Error ? input.error.message : String(input.error);
+  const now = new Date();
+  await prisma.autopartOngoingSalesFeedSettings.upsert({
+    where: { id: "default" },
+    create: {
+      id: "default",
+      fulfilmentFrom: now,
+      fulfilmentLastError: message.slice(0, 2000),
+      fulfilmentLastErrorAt: now,
+      fulfilmentLastErrorImportRunId: input.importRunId ?? null,
+      fulfilmentLastErrorFeed: input.feed,
+    },
+    update: {
+      fulfilmentLastError: message.slice(0, 2000),
+      fulfilmentLastErrorAt: now,
+      fulfilmentLastErrorImportRunId: input.importRunId ?? null,
+      fulfilmentLastErrorFeed: input.feed,
+    },
+  });
+  if (input.importRunId) {
+    await prisma.autopartCustomerImportRun
+      .update({
+        where: { id: input.importRunId },
+        data: {
+          fulfilmentProcessorStatus: "FAILED",
+          fulfilmentProcessorError: message.slice(0, 2000),
+          fulfilmentProcessorAt: now,
+        },
+      })
+      .catch(() => undefined);
+  }
+  await recordAuditEvent({
+    action: "autopart.504_trm_fulfilment_failed",
+    entityType: input.importRunId ? "AutopartCustomerImportRun" : "AutopartOngoingSalesFeedSettings",
+    entityId: input.importRunId ?? "default",
+    actorUserId: input.actorUserId,
+    metadata: { error: message, feed: input.feed, importRunId: input.importRunId ?? null },
+  });
+}
+
+export async function clear504TrmFulfilmentProcessorFailure(input?: {
+  importRunId?: string | null;
+}): Promise<void> {
+  await prisma.autopartOngoingSalesFeedSettings.updateMany({
+    where: { id: "default" },
+    data: {
+      fulfilmentLastError: null,
+      fulfilmentLastErrorAt: null,
+      fulfilmentLastErrorImportRunId: null,
+      fulfilmentLastErrorFeed: null,
+    },
+  });
+  if (input?.importRunId) {
+    await prisma.autopartCustomerImportRun
+      .update({
+        where: { id: input.importRunId },
+        data: {
+          fulfilmentProcessorStatus: "SUCCESS",
+          fulfilmentProcessorError: null,
+          fulfilmentProcessorAt: new Date(),
+        },
+      })
+      .catch(() => undefined);
+  }
 }
 
 function moneyOrZero(raw: string | null | undefined): string {
@@ -313,21 +438,61 @@ function previewFromEvaluations(
   };
 }
 
-async function consumeReservations(tx: Prisma.TransactionClient, orderId: string) {
+/**
+ * Consume ACTIVE reservations only for newly despatched units.
+ * Matches manual-resolution policy: leftover undelivered reserved qty stays ACTIVE.
+ * Backordered lines never held a reservation, so they are unaffected.
+ */
+async function consumeReservationsForDespatchDeltas(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  deltas: Array<{ orderItemId: string; variantId: string | null; quantity: number }>,
+) {
+  const increaseTotal = deltas.reduce((sum, delta) => sum + Math.max(0, delta.quantity), 0);
+  if (increaseTotal <= 0) return 0;
+
   const reservations = await tx.orderStockReservation.findMany({
     where: { orderId, status: "ACTIVE" },
-    select: { id: true, inventoryId: true, quantity: true },
+    orderBy: { id: "asc" },
+    select: { id: true, orderItemId: true, variantId: true, inventoryId: true, quantity: true },
   });
-  for (const res of reservations) {
-    await tx.orderStockReservation.update({
-      where: { id: res.id },
-      data: { status: "CONSUMED", consumedAt: new Date() },
-    });
+  if (!reservations.length) return 0;
+
+  const taken = planReservationConsumption(reservations, deltas);
+  let units = 0;
+  const now = new Date();
+  for (const reservation of reservations) {
+    const take = taken.get(reservation.id) ?? 0;
+    if (take <= 0) continue;
+    units += take;
     await tx.inventory.update({
-      where: { id: res.inventoryId },
-      data: { qtyReserved: { decrement: res.quantity } },
+      where: { id: reservation.inventoryId },
+      data: { qtyReserved: { decrement: take } },
     });
+    if (take >= reservation.quantity) {
+      await tx.orderStockReservation.update({
+        where: { id: reservation.id },
+        data: { status: "CONSUMED", consumedAt: now },
+      });
+    } else {
+      await tx.orderStockReservation.update({
+        where: { id: reservation.id },
+        data: { quantity: reservation.quantity - take },
+      });
+      await tx.orderStockReservation.create({
+        data: {
+          orderId,
+          orderItemId: reservation.orderItemId,
+          variantId: reservation.variantId,
+          inventoryId: reservation.inventoryId,
+          quantity: take,
+          status: "CONSUMED",
+          consumedAt: now,
+        },
+      });
+    }
   }
+  return units;
 }
 
 async function ensureInvoice(
@@ -494,19 +659,35 @@ async function applyEvaluation(
 
   const previousStatus = order.status;
   let emailsQueued = 0;
-  const emailActions: Array<
-    | { kind: "FULL"; remainingAfterBackorder: boolean }
-    | { kind: "PART"; invoiceExternalRef: string }
-  > = [];
+  const evidenceApplied = evaluation.canApply && !alreadySame;
+  const emailActions = plan504TrmDispatchNotifications({
+    previousStatus,
+    evaluation,
+    alreadySameFingerprint: Boolean(alreadySame),
+  });
 
   await prisma.$transaction(async (tx) => {
+    const despatchDeltas: Array<{
+      orderItemId: string;
+      variantId: string | null;
+      quantity: number;
+    }> = [];
+
     for (const line of evaluation.lines) {
       const item = await tx.orderItem.findFirst({
         where: { id: line.orderItemId, orderId: evaluation.orderId },
-        select: { id: true, qty: true, despatchedQty: true },
+        select: { id: true, qty: true, despatchedQty: true, variantId: true },
       });
       if (!item) continue;
       const next = Math.max(item.despatchedQty, Math.min(item.qty, line.despatchedQty));
+      const increase = next - item.despatchedQty;
+      if (increase > 0) {
+        despatchDeltas.push({
+          orderItemId: item.id,
+          variantId: item.variantId,
+          quantity: increase,
+        });
+      }
       if (next !== item.despatchedQty) {
         await tx.orderItem.update({
           where: { id: item.id },
@@ -528,11 +709,8 @@ async function applyEvaluation(
       });
     }
 
-    if (
-      evaluation.canApply &&
-      (previousStatus === "CONFIRMED" || previousStatus === "PICKING")
-    ) {
-      await consumeReservations(tx, evaluation.orderId);
+    if (evaluation.canApply && despatchDeltas.length) {
+      await consumeReservationsForDespatchDeltas(tx, evaluation.orderId, despatchDeltas);
     }
 
     let firstInvoiceId: string | null = null;
@@ -565,7 +743,7 @@ async function applyEvaluation(
       }
     }
 
-    if (evaluation.canApply && !alreadySame) {
+    if (evidenceApplied) {
       const kind = evaluation.conceptually === "DISPATCHED" ? "DESPATCHED" : "PART_DESPATCHED";
       await recordFulfilmentEvent(tx, {
         orderId: evaluation.orderId,
@@ -597,35 +775,12 @@ async function applyEvaluation(
     }
   });
 
-  const statusChanged =
-    evaluation.nextStatus != null &&
-    evaluation.nextStatus !== previousStatus &&
-    evaluation.canApply;
-  const isNewFulfilment = statusChanged && !alreadySame;
-
-  if (isNewFulfilment) {
-    if (evaluation.conceptually === "DISPATCHED") {
-      const remainingAfterBackorder = previousStatus === "PARTIALLY_DESPATCHED";
-      emailActions.push({ kind: "FULL", remainingAfterBackorder });
-    } else if (evaluation.conceptually === "PARTIALLY_DESPATCHED") {
-      const refs = evaluation.newInvoiceDocumentNumbers.length
-        ? evaluation.newInvoiceDocumentNumbers
-        : evaluation.documents.filter((d) => d.includedInFulfilment).map((d) => d.documentReference);
-      for (const ref of refs) {
-        emailActions.push({ kind: "PART", invoiceExternalRef: ref });
-      }
-    }
-  }
-
-  if (previousStatus === "CANCELLED") {
-    emailActions.length = 0;
-  }
-
   for (const action of emailActions) {
     try {
       if (action.kind === "FULL") {
         const sent = await enqueueOrderDespatchedEmail(evaluation.orderId, {
           remainingAfterBackorder: action.remainingAfterBackorder,
+          actorUserId,
         });
         if (sent.queued) emailsQueued += 1;
       } else {
@@ -633,6 +788,9 @@ async function applyEvaluation(
           orderId: evaluation.orderId,
           invoiceExternalRef: action.invoiceExternalRef,
           lineQuantitiesKnown: true,
+          newlyDespatchedLines: action.newlyDespatchedLines,
+          stillToComeLines: action.stillToComeLines,
+          actorUserId,
         });
         if (sent.queued) emailsQueued += 1;
       }
@@ -647,7 +805,7 @@ async function applyEvaluation(
     }
   }
 
-  if (isNewFulfilment) {
+  if (evidenceApplied) {
     await recordAuditEvent({
       action:
         evaluation.conceptually === "DISPATCHED"
@@ -702,14 +860,13 @@ async function applyEvaluation(
     });
   }
 
-  return { mutated: Boolean(isNewFulfilment || (evaluation.canApply && !alreadySame)), emailsQueued };
+  return { mutated: Boolean(evidenceApplied), emailsQueued };
 }
 
-async function evaluateAll(orderIds?: string[]): Promise<{
-  settings: Awaited<ReturnType<typeof read504TrmFulfilmentSettings>>;
-  evaluations: OrderFulfilmentEvaluation[];
-}> {
-  const settings = await read504TrmFulfilmentSettings();
+async function evaluateAll(
+  orderIds: string[] | undefined,
+  settings: Awaited<ReturnType<typeof read504TrmFulfilmentSettingsReadonly>>,
+): Promise<OrderFulfilmentEvaluation[]> {
   const { orders, docs } = await loadCandidateOrders(orderIds);
   const evaluations: OrderFulfilmentEvaluation[] = [];
 
@@ -735,14 +892,19 @@ async function evaluateAll(orderIds?: string[]): Promise<{
     );
   }
 
-  return { settings, evaluations };
+  return evaluations;
 }
 
+/**
+ * Audited admin preview. Intentionally stamps fulfilmentLastPreviewAt and writes an audit row.
+ * For a no-side-effect readiness check use evaluate504TrmFulfilmentReadonly instead.
+ */
 export async function preview504TrmFulfilment(
   actorUserId: string,
 ): Promise<Autopart504TrmFulfilmentPreview> {
   await requireFulfilmentAdmin(actorUserId);
-  const { settings, evaluations } = await evaluateAll();
+  const settings = await read504TrmFulfilmentSettings();
+  const evaluations = await evaluateAll(undefined, settings);
   const preview = previewFromEvaluations(settings.fulfilmentMode, settings.fulfilmentFrom, evaluations);
   await prisma.autopartOngoingSalesFeedSettings.update({
     where: { id: "default" },
@@ -758,16 +920,35 @@ export async function preview504TrmFulfilment(
       wouldBecomePartial: preview.wouldBecomePartial,
       wouldBecomeDespatched: preview.wouldBecomeDespatched,
       reviewRequired: preview.reviewRequired,
+      sideEffects: ["fulfilmentLastPreviewAt", "audit"],
     },
   });
   return preview;
+}
+
+/**
+ * Truly read-only fulfilment evaluation for dispatch readiness diagnostics.
+ * Does not upsert settings, stamp clocks, write audits, mutate orders, or send email.
+ */
+export async function evaluate504TrmFulfilmentReadonly(
+  actorUserId: string,
+  opts?: { orderIds?: string[] },
+): Promise<Autopart504TrmFulfilmentPreview & { readOnly: true }> {
+  await requireFulfilmentAdmin(actorUserId);
+  const settings = await read504TrmFulfilmentSettingsReadonly();
+  const evaluations = await evaluateAll(opts?.orderIds, settings);
+  return {
+    ...previewFromEvaluations(settings.fulfilmentMode, settings.fulfilmentFrom, evaluations),
+    readOnly: true,
+  };
 }
 
 async function run504TrmFulfilmentInner(
   actorUserId: string | null,
   opts?: { orderIds?: string[] },
 ): Promise<Autopart504TrmFulfilmentRunResult> {
-  const { settings, evaluations } = await evaluateAll(opts?.orderIds);
+  const settings = await read504TrmFulfilmentSettings();
+  const evaluations = await evaluateAll(opts?.orderIds, settings);
   const preview = previewFromEvaluations(settings.fulfilmentMode, settings.fulfilmentFrom, evaluations);
 
   if (settings.fulfilmentMode === "OFF") {
@@ -792,7 +973,13 @@ async function run504TrmFulfilmentInner(
 
   await prisma.autopartOngoingSalesFeedSettings.update({
     where: { id: "default" },
-    data: { fulfilmentLastAppliedAt: new Date() },
+    data: {
+      fulfilmentLastAppliedAt: new Date(),
+      fulfilmentLastError: null,
+      fulfilmentLastErrorAt: null,
+      fulfilmentLastErrorImportRunId: null,
+      fulfilmentLastErrorFeed: null,
+    },
   });
 
   return { mode: "ACTIVE", applied: true, preview, emailsQueued, ordersMutated };
@@ -815,6 +1002,44 @@ export async function run504TrmFulfilmentAfterImport(
     return await applying;
   } finally {
     applying = null;
+  }
+}
+
+/**
+ * Safe staff retry after a visible fulfilment processor failure.
+ * Re-runs evaluation/apply only — does not replay 504/TRM financial imports.
+ * Duplicate-safe via fulfilment fingerprints and email idempotency keys.
+ */
+export async function retry504TrmFulfilmentProcessor(
+  actorUserId: string,
+  opts?: { importRunId?: string | null },
+): Promise<Autopart504TrmFulfilmentRunResult> {
+  await requireFulfilmentAdmin(actorUserId);
+  try {
+    const result = await run504TrmFulfilmentAfterImport(actorUserId);
+    await clear504TrmFulfilmentProcessorFailure({ importRunId: opts?.importRunId ?? null });
+    await recordAuditEvent({
+      action: "autopart.504_trm_fulfilment_retry",
+      entityType: opts?.importRunId ? "AutopartCustomerImportRun" : "AutopartOngoingSalesFeedSettings",
+      entityId: opts?.importRunId ?? "default",
+      actorUserId,
+      metadata: {
+        applied: result.applied,
+        mode: result.mode,
+        ordersMutated: result.ordersMutated,
+        emailsQueued: result.emailsQueued,
+        financialImportReplayed: false,
+      },
+    });
+    return result;
+  } catch (error) {
+    await record504TrmFulfilmentProcessorFailure({
+      actorUserId,
+      importRunId: opts?.importRunId ?? null,
+      feed: "RETRY",
+      error,
+    });
+    throw error;
   }
 }
 

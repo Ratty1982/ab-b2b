@@ -15,12 +15,16 @@ import {
   upsertPendingEmail,
 } from "@/server/email/transactional";
 import { getEmailFooterMeta } from "@/server/email/settings";
+import { recordAuditEvent } from "@/server/audit/record";
 
 export async function enqueueOrderPartDespatchedEmail(input: {
   orderId: string;
   /** Autopart document number — scopes idempotency per invoice. */
   invoiceExternalRef: string;
   lineQuantitiesKnown: boolean;
+  newlyDespatchedLines?: Array<{ sku: string; name: string; qty: number }>;
+  stillToComeLines?: Array<{ sku: string; name: string; qty: number }>;
+  actorUserId?: string | null;
 }): Promise<{
   queued: boolean;
   sent: boolean;
@@ -29,6 +33,18 @@ export async function enqueueOrderPartDespatchedEmail(input: {
 }> {
   const snapshot = await loadOrderEmailSnapshot(input.orderId);
   if (!snapshot?.contact.email) {
+    await recordAuditEvent({
+      action: "order.despatch_email_failed",
+      entityType: "Order",
+      entityId: input.orderId,
+      actorUserId: input.actorUserId ?? null,
+      metadata: {
+        error: "order snapshot missing contact email",
+        source: "AUTOPART_504_TRM",
+        purpose: "ORDER_PART_DESPATCHED",
+        invoiceExternalRef: input.invoiceExternalRef,
+      },
+    });
     return {
       queued: false,
       sent: false,
@@ -40,6 +56,8 @@ export async function enqueueOrderPartDespatchedEmail(input: {
   const footer = await getEmailFooterMeta();
   const bodies = buildOrderPartDespatchedCustomerBodies(snapshot, {
     lineQuantitiesKnown: input.lineQuantitiesKnown,
+    ...(input.newlyDespatchedLines ? { newlyDespatchedLines: input.newlyDespatchedLines } : {}),
+    ...(input.stillToComeLines ? { stillToComeLines: input.stillToComeLines } : {}),
     footer,
   });
   const upsert = await upsertPendingEmail({
@@ -54,9 +72,38 @@ export async function enqueueOrderPartDespatchedEmail(input: {
   });
 
   const result = await safeAttemptDetailed(upsert.id);
+  if (!result.emailSent) {
+    const detail =
+      result.emailStatus === "DEFERRED"
+        ? "Transactional email delivery is disabled"
+        : result.emailStatus === "FAILED"
+          ? "SMTP or delivery failure"
+          : `email status ${result.emailStatus}`;
+    await recordAuditEvent({
+      action: "order.despatch_email_failed",
+      entityType: "Order",
+      entityId: input.orderId,
+      actorUserId: input.actorUserId ?? null,
+      metadata: {
+        error: detail,
+        source: "AUTOPART_504_TRM",
+        purpose: "ORDER_PART_DESPATCHED",
+        invoiceExternalRef: input.invoiceExternalRef,
+        emailId: upsert.id,
+        emailStatus: result.emailStatus,
+        queuedNew: upsert.created,
+      },
+    });
+    return {
+      queued: upsert.created,
+      sent: false,
+      emailId: upsert.id,
+      detail,
+    };
+  }
   return {
     queued: upsert.created,
-    sent: result.emailSent,
+    sent: true,
     emailId: upsert.id,
   };
 }

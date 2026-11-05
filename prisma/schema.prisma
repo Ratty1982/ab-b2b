@@ -3006,6 +3006,12 @@ model AutopartOngoingSalesFeedSettings {
   fulfilmentFrom             DateTime?
   fulfilmentLastPreviewAt    DateTime?
   fulfilmentLastAppliedAt    DateTime?
+  /// Last post-import fulfilment processor failure (financial import may still have succeeded).
+  fulfilmentLastError            String?
+  fulfilmentLastErrorAt          DateTime?
+  fulfilmentLastErrorImportRunId String?
+  /// 504 | TRM21QC | RETRY | SCHEDULE
+  fulfilmentLastErrorFeed        String?
   updatedAt                  DateTime @updatedAt
   updatedByUserId            String?
 }
@@ -3158,6 +3164,11 @@ model AutopartCustomerImportRun {
   createdById     String?
   createdAt       DateTime                     @default(now())
   completedAt     DateTime?
+  /// Post-import 504/TRM fulfilment processor outcome (independent of financial import commit).
+  /// SUCCESS | FAILED | SKIPPED | null when not applicable.
+  fulfilmentProcessorStatus String?
+  fulfilmentProcessorError  String?
+  fulfilmentProcessorAt     DateTime?
 
   company             Company?                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy           User?                      @relation("AutopartCustomerImportCreator", fields: [createdById], references: [id], onDelete: SetNull)

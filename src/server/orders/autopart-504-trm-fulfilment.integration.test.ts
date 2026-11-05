@@ -6,8 +6,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import {
+  evaluate504TrmFulfilmentReadonly,
   getAutopartFulfilmentForOrder,
   preview504TrmFulfilment,
+  record504TrmFulfilmentProcessorFailure,
+  retry504TrmFulfilmentProcessor,
   run504TrmFulfilmentAfterImport,
   update504TrmFulfilmentSettings,
 } from "@/server/orders/autopart-504-trm-fulfilment";
@@ -138,16 +141,18 @@ async function createConfirmedOrder(orderNumber: string, sku: string) {
       },
     },
   });
+  const orderItem = await prisma.orderItem.findFirstOrThrow({ where: { orderId: order.id } });
   const reservation = await prisma.orderStockReservation.create({
     data: {
       orderId: order.id,
+      orderItemId: orderItem.id,
       variantId: variant.id,
       inventoryId: inventory.id,
       quantity: 10,
       status: "ACTIVE",
     },
   });
-  return { company, order, inventory, reservation, sku };
+  return { company, order, inventory, reservation, sku, orderItem };
 }
 
 async function attach504TrmEvidence(input: {
@@ -267,11 +272,17 @@ describe("504 + TRM fulfilment modes", () => {
     expect(after.status).toBe("PARTIALLY_DESPATCHED");
     const item = await prisma.orderItem.findFirstOrThrow({ where: { orderId: order.id } });
     expect(item.despatchedQty).toBe(6);
-    const res = await prisma.orderStockReservation.findUniqueOrThrow({ where: { id: reservation.id } });
-    expect(res.status).toBe("CONSUMED");
+    const activeLeft = await prisma.orderStockReservation.findMany({
+      where: { orderId: order.id, status: "ACTIVE" },
+    });
+    const consumed = await prisma.orderStockReservation.findMany({
+      where: { orderId: order.id, status: "CONSUMED" },
+    });
+    expect(activeLeft.reduce((sum, row) => sum + row.quantity, 0)).toBe(4);
+    expect(consumed.reduce((sum, row) => sum + row.quantity, 0)).toBe(6);
     const inv = await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } });
     expect(inv.qtyOnHand).toBe(100);
-    expect(inv.qtyReserved).toBe(0);
+    expect(inv.qtyReserved).toBe(4);
 
     const view = await getAutopartFulfilmentForOrder(order.id);
     expect(view?.statusLabel).toBe("Partially despatched");
@@ -299,13 +310,177 @@ describe("504 + TRM fulfilment modes", () => {
       }),
     ).toBe(emailsBeforeReplay);
     expect(await prisma.invoice.count({ where: { orderId: order.id } })).toBe(invoicesBeforeReplay);
-    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).qtyReserved).toBe(0);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).qtyReserved).toBe(4);
+    expect(reservation.id).toBeTruthy();
 
     const legacy = await prisma.autopart504cFeedSettings.findUnique({ where: { id: "default" } });
     if (legacy) {
       expect(legacy.runtimeMode).toBe("RETIRED");
       expect(legacy.enabled).toBe(false);
     }
+
+    await parkFulfilmentOff();
+  });
+
+  it("sends successive PARTIAL emails then remaining completion, and keeps leftover reservations", async () => {
+    const orderNumber = await uniqueAbOrderNumber();
+    const sku = `SKU-TRM-${orderNumber.slice(-6)}`;
+    const { order, company, inventory } = await createConfirmedOrder(orderNumber, sku);
+    const suffix = orderNumber.slice(-6);
+
+    await update504TrmFulfilmentSettings(adminId, {
+      fulfilmentMode: "ACTIVE",
+      fulfilmentFrom: new Date(Date.now() - 86400000).toISOString(),
+    });
+
+    await attach504TrmEvidence({
+      companyId: company.id,
+      orderId: order.id,
+      orderNumber,
+      sku,
+      document: `SS${suffix}1`,
+      units: 3,
+      salesNet: "3.00",
+      goodsNet: "3.00",
+    });
+    const first = await run504TrmFulfilmentAfterImport(adminId);
+    expect(first.ordersMutated).toBe(1);
+    expect(first.emailsQueued).toBeGreaterThanOrEqual(1);
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe(
+      "PARTIALLY_DESPATCHED",
+    );
+    expect(
+      await prisma.transactionalEmail.count({
+        where: {
+          entityId: order.id,
+          purpose: "ORDER_PART_DESPATCHED",
+          idempotencyKey: `ORDER_PART_DESPATCHED:${order.id}:SS${suffix}1`,
+        },
+      }),
+    ).toBe(1);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).qtyReserved).toBe(7);
+
+    await attach504TrmEvidence({
+      companyId: company.id,
+      orderId: order.id,
+      orderNumber,
+      sku,
+      document: `SS${suffix}2`,
+      units: 3,
+      salesNet: "3.00",
+      goodsNet: "3.00",
+    });
+    const second = await run504TrmFulfilmentAfterImport(adminId);
+    expect(second.ordersMutated).toBe(1);
+    expect(second.emailsQueued).toBeGreaterThanOrEqual(1);
+    expect(
+      await prisma.transactionalEmail.count({
+        where: {
+          entityId: order.id,
+          purpose: "ORDER_PART_DESPATCHED",
+        },
+      }),
+    ).toBe(2);
+    const secondMail = await prisma.transactionalEmail.findUniqueOrThrow({
+      where: { idempotencyKey: `ORDER_PART_DESPATCHED:${order.id}:SS${suffix}2` },
+    });
+    expect(secondMail.textBody).toContain("3 × Widget A");
+    expect(secondMail.textBody).not.toMatch(/6 × Widget A/);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).qtyReserved).toBe(4);
+
+    await attach504TrmEvidence({
+      companyId: company.id,
+      orderId: order.id,
+      orderNumber,
+      sku,
+      document: `SS${suffix}3`,
+      units: 2,
+      salesNet: "2.00",
+      goodsNet: "2.00",
+    });
+    const third = await run504TrmFulfilmentAfterImport(adminId);
+    expect(third.ordersMutated).toBe(1);
+    expect(
+      await prisma.transactionalEmail.count({
+        where: { entityId: order.id, purpose: "ORDER_PART_DESPATCHED" },
+      }),
+    ).toBe(3);
+    expect((await prisma.orderItem.findFirstOrThrow({ where: { orderId: order.id } })).despatchedQty).toBe(8);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).qtyReserved).toBe(2);
+
+    await attach504TrmEvidence({
+      companyId: company.id,
+      orderId: order.id,
+      orderNumber,
+      sku,
+      document: `SS${suffix}4`,
+      units: 2,
+      salesNet: "2.00",
+      goodsNet: "2.00",
+    });
+    const finalRun = await run504TrmFulfilmentAfterImport(adminId);
+    expect(finalRun.ordersMutated).toBe(1);
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("DISPATCHED");
+    expect(
+      await prisma.transactionalEmail.count({
+        where: { entityId: order.id, purpose: "ORDER_DESPATCHED" },
+      }),
+    ).toBe(1);
+    const completion = await prisma.transactionalEmail.findUniqueOrThrow({
+      where: { idempotencyKey: `ORDER_DESPATCHED:${order.id}` },
+    });
+    expect(completion.subject).toMatch(/remaining/i);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).qtyReserved).toBe(0);
+    expect(
+      await prisma.orderStockReservation.count({ where: { orderId: order.id, status: "ACTIVE" } }),
+    ).toBe(0);
+
+    const dup = await run504TrmFulfilmentAfterImport(adminId);
+    expect(dup.ordersMutated).toBe(0);
+    expect(dup.emailsQueued).toBe(0);
+    expect(
+      await prisma.transactionalEmail.count({
+        where: { entityId: order.id, purpose: { in: ["ORDER_PART_DESPATCHED", "ORDER_DESPATCHED"] } },
+      }),
+    ).toBe(4);
+
+    await parkFulfilmentOff();
+  });
+
+  it("read-only diagnosis does not stamp preview clocks; retry clears visible failure", async () => {
+    const before = await prisma.autopartOngoingSalesFeedSettings.findUnique({ where: { id: "default" } });
+    const beforePreviewAt = before?.fulfilmentLastPreviewAt?.toISOString() ?? null;
+
+    const diagnosis = await evaluate504TrmFulfilmentReadonly(adminId);
+    expect(diagnosis.readOnly).toBe(true);
+
+    const afterDiagnosis = await prisma.autopartOngoingSalesFeedSettings.findUnique({
+      where: { id: "default" },
+    });
+    expect(afterDiagnosis?.fulfilmentLastPreviewAt?.toISOString() ?? null).toBe(beforePreviewAt);
+
+    await record504TrmFulfilmentProcessorFailure({
+      actorUserId: adminId,
+      importRunId: null,
+      feed: "RETRY",
+      error: new Error("simulated fulfilment processor failure"),
+    });
+    const failed = await prisma.autopartOngoingSalesFeedSettings.findUniqueOrThrow({
+      where: { id: "default" },
+    });
+    expect(failed.fulfilmentLastError).toMatch(/simulated fulfilment processor failure/);
+
+    await update504TrmFulfilmentSettings(adminId, {
+      fulfilmentMode: "OFF",
+      fulfilmentFrom: new Date(Date.now() - 86400000).toISOString(),
+    });
+    const retried = await retry504TrmFulfilmentProcessor(adminId);
+    expect(retried.mode).toBe("OFF");
+    expect(retried.applied).toBe(false);
+    const cleared = await prisma.autopartOngoingSalesFeedSettings.findUniqueOrThrow({
+      where: { id: "default" },
+    });
+    expect(cleared.fulfilmentLastError).toBeNull();
 
     await parkFulfilmentOff();
   });

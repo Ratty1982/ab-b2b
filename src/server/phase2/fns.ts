@@ -3721,6 +3721,37 @@ export const preview504TrmFulfilmentFn = createServerFn({ method: "POST" }).hand
   }
 });
 
+/** Truly read-only fulfilment evaluation — no clock stamps, audits, or mutations. */
+export const evaluate504TrmFulfilmentReadonlyFn = createServerFn({ method: "GET" }).handler(
+  async () => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/orders/autopart-504-trm-fulfilment");
+      return { ok: true as const, data: await feed.evaluate504TrmFulfilmentReadonly(userId) };
+    } catch (e) {
+      return toError(e);
+    }
+  },
+);
+
+/** Retry fulfilment processor only — does not replay 504/TRM financial imports. */
+export const retry504TrmFulfilmentProcessorFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { importRunId?: string | null })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/orders/autopart-504-trm-fulfilment");
+      return {
+        ok: true as const,
+        data: await feed.retry504TrmFulfilmentProcessor(userId, {
+          importRunId: data?.importRunId ?? null,
+        }),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 /* ─── Ongoing Autopart 504 + TRM21QC ─────────────────────────────────────── */
 
 export const getOngoingSalesFeedSettingsFn = createServerFn({ method: "GET" }).handler(async () => {

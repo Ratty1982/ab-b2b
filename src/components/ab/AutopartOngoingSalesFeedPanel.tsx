@@ -10,6 +10,7 @@ import {
   confirmAutopart504Fn,
   confirmAutopartTrm21qcFn,
   exportOngoingSalesImportDiagnosticsCsvFn,
+  evaluate504TrmFulfilmentReadonlyFn,
   get504TrmFulfilmentSettingsFn,
   getOngoingSalesFeedSettingsFn,
   getOngoingSalesImportRunDetailFn,
@@ -20,6 +21,7 @@ import {
   preview504TrmFulfilmentFn,
   previewAutopart504Fn,
   previewAutopartTrm21qcFn,
+  retry504TrmFulfilmentProcessorFn,
   update504TrmFulfilmentSettingsFn,
   updateOngoingSalesFeedSettingsFn,
 } from "@/server/phase2/fns";
@@ -241,7 +243,41 @@ export function AutopartOngoingSalesFeedPanel() {
       return;
     }
     setFulfilmentPreview(res.data);
-    toast.success("504/TRM fulfilment preview generated — no orders were mutated");
+    toast.success(
+      "Audited fulfilment preview generated — orders unchanged; last-preview clock updated",
+    );
+    await load();
+  }
+
+  async function diagnoseFulfilmentReadonly() {
+    setBusy("fulfilment-diagnose");
+    const res = await evaluate504TrmFulfilmentReadonlyFn();
+    setBusy(null);
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
+    setFulfilmentPreview(res.data);
+    toast.success("Read-only fulfilment diagnosis — no clocks, audits, or orders changed");
+  }
+
+  async function retryFulfilmentProcessor(importRunId?: string | null) {
+    setBusy("fulfilment-retry");
+    const res = await retry504TrmFulfilmentProcessorFn({
+      data: { importRunId: importRunId ?? fulfilment?.fulfilmentLastErrorImportRunId ?? null },
+    });
+    setBusy(null);
+    if (!res.ok) {
+      toast.error(res.error);
+      await load();
+      return;
+    }
+    toast.success(
+      res.data.applied
+        ? `Fulfilment retry finished — ${res.data.ordersMutated} order(s) updated`
+        : `Fulfilment retry finished in ${res.data.mode} mode — no orders mutated`,
+    );
+    await load();
   }
 
   async function on504File(file: File | null) {
@@ -478,7 +514,7 @@ export function AutopartOngoingSalesFeedPanel() {
               onChange={(e) => setFulfilmentFromDraft(e.target.value)}
             />
           </Field>
-          <div className="flex items-end gap-2">
+          <div className="flex flex-wrap items-end gap-2">
             <button
               type="button"
               className={buttonClass(true)}
@@ -493,15 +529,52 @@ export function AutopartOngoingSalesFeedPanel() {
               disabled={!!busy}
               onClick={() => void previewFulfilment()}
             >
-              {busy === "fulfilment-preview" ? "Previewing…" : "Preview fulfilment"}
+              {busy === "fulfilment-preview" ? "Previewing…" : "Audited preview"}
+            </button>
+            <button
+              type="button"
+              className={buttonClass()}
+              disabled={!!busy}
+              onClick={() => void diagnoseFulfilmentReadonly()}
+            >
+              {busy === "fulfilment-diagnose" ? "Diagnosing…" : "Read-only diagnosis"}
             </button>
           </div>
         </div>
+        {fulfilment?.fulfilmentLastError ? (
+          <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-[12px]">
+            <p className="font-semibold text-destructive">Fulfilment processor failure</p>
+            <p className="mt-1 text-steel">
+              {fulfilment.fulfilmentLastErrorFeed
+                ? `Feed ${fulfilment.fulfilmentLastErrorFeed} · `
+                : ""}
+              {fulfilment.fulfilmentLastErrorAt
+                ? formatOperationalDateTime(fulfilment.fulfilmentLastErrorAt)
+                : ""}
+              {fulfilment.fulfilmentLastErrorImportRunId
+                ? ` · Import ${fulfilment.fulfilmentLastErrorImportRunId.slice(0, 10)}…`
+                : ""}
+            </p>
+            <p className="mt-1">{fulfilment.fulfilmentLastError}</p>
+            <p className="mt-1 text-steel">
+              Financial 504/TRM import was kept. Retry fulfilment only — it will not replay the
+              import file.
+            </p>
+            <button
+              type="button"
+              className={cn(buttonClass(), "mt-2")}
+              disabled={!!busy}
+              onClick={() => void retryFulfilmentProcessor()}
+            >
+              {busy === "fulfilment-retry" ? "Retrying…" : "Retry fulfilment processor"}
+            </button>
+          </div>
+        ) : null}
         {fulfilment && (fulfilment.fulfilmentLastPreviewAt || fulfilment.fulfilmentLastAppliedAt) ? (
           <p className="text-[12px] text-steel">
             {[
               fulfilment.fulfilmentLastPreviewAt
-                ? `Last preview ${formatOperationalDateTime(fulfilment.fulfilmentLastPreviewAt)}`
+                ? `Last audited preview ${formatOperationalDateTime(fulfilment.fulfilmentLastPreviewAt)}`
                 : null,
               fulfilment.fulfilmentLastAppliedAt
                 ? `Last applied ${formatOperationalDateTime(fulfilment.fulfilmentLastAppliedAt)}`
@@ -513,7 +586,11 @@ export function AutopartOngoingSalesFeedPanel() {
         ) : null}
         {fulfilmentPreview ? (
           <div className="rounded-md border border-border bg-surface/30 p-3 text-[12px]">
-            <p className="font-semibold">Preview — no orders mutated</p>
+            <p className="font-semibold">
+              {"readOnly" in fulfilmentPreview && fulfilmentPreview.readOnly
+                ? "Read-only diagnosis — no clocks or audits written"
+                : "Audited preview — no orders mutated"}
+            </p>
             <p className="mt-1 text-steel">
               Matched {fulfilmentPreview.ordersMatched} · Would partial{" "}
               {fulfilmentPreview.wouldBecomePartial} · Would despatch{" "}
@@ -715,12 +792,18 @@ export function AutopartOngoingSalesFeedPanel() {
                     <StatusBadge tone={runStatusTone(run.status, run.attentionRequired)}>
                       {runStatusLabel(run.status, run.attentionRequired)}
                     </StatusBadge>
+                    {run.fulfilmentProcessorStatus === "FAILED" ? (
+                      <StatusBadge tone="bad">Fulfilment failed</StatusBadge>
+                    ) : null}
                     <span className="text-steel">
                       Inserted {run.rowsImported} · Updated {run.rowsUpdated}
                       {run.rowsUnchanged ? ` · Unchanged ${run.rowsUnchanged}` : ""}
                       {" · "}Skipped {run.rowsSkipped}
                       {run.warnings ? ` · Warnings ${run.warnings}` : ""}
                       {run.errors ? ` · Errors ${run.errors}` : ""}
+                      {run.fulfilmentProcessorStatus === "FAILED"
+                        ? " · Fulfilment processor failed"
+                        : ""}
                     </span>
                   </span>
                 </button>
