@@ -1838,7 +1838,14 @@ export async function searchQuoteProducts(
   } as const;
 
   const exact = await prisma.productVariant.findMany({
-    where: { ...visibility, sku: { equals: q, mode: "insensitive" } },
+    where: {
+      ...visibility,
+      OR: [
+        { sku: { equals: q, mode: "insensitive" } },
+        { barcode: { equals: q, mode: "insensitive" } },
+        { mpn: { equals: q, mode: "insensitive" } },
+      ],
+    },
     take: 20,
     include,
     orderBy: { sku: "asc" },
@@ -1852,6 +1859,8 @@ export async function searchQuoteProducts(
             ...visibility,
             OR: [
               { sku: { contains: q, mode: "insensitive" } },
+              { barcode: { contains: q, mode: "insensitive" } },
+              { mpn: { contains: q, mode: "insensitive" } },
               { product: { name: { contains: q, mode: "insensitive" } } },
               { product: { brand: { name: { contains: q, mode: "insensitive" } } } },
             ],

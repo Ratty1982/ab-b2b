@@ -43,7 +43,7 @@ import {
 import type { OrderAmendmentEmailFeedback } from "@/domain/order-updated-email";
 import { recordAuditEvent } from "@/server/audit/record";
 import { loadOrderUpdatedEmailOutcome, sendOrderEmailsAfterCommit } from "@/server/email/transactional";
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { acceptQuoteOnBehalf } from "@/server/quotes/service";
@@ -128,6 +128,11 @@ export type SalesOrderWorkspace = {
   }>;
   /** Customer's assigned representative. Null when the account has none. */
   assignedSalesRep: { name: string; code: string } | null;
+  /**
+   * True when the staff user may save a one-off delivery address onto the customer profile.
+   * Requires companies.edit (or admin.access). Order placement itself does not require this.
+   */
+  canSaveCustomerAddress: boolean;
 };
 
 export type SalesOrderPriceChange = {
@@ -577,6 +582,7 @@ async function workspaceFor(profile: LoadedAccessProfile, draft: DraftRow): Prom
     contactReady: priced.contactReady,
     addressReady: priced.addressReady,
     assignedSalesRep,
+    canSaveCustomerAddress: grants(profile, "companies.edit", "admin.access"),
     ...choices,
   };
 }
@@ -908,6 +914,7 @@ export async function getSalesOrderDraft(actorUserId: string, raw: unknown) {
       addresses: [],
       quotes: [],
       assignedSalesRep: await loadAssignedSalesRep(draft.companyId),
+      canSaveCustomerAddress: grants(profile, "companies.edit", "admin.access"),
     } satisfies SalesOrderWorkspace;
   }
   return workspaceFor(profile, draft);
@@ -1035,12 +1042,16 @@ export async function searchSalesOrderProducts(actorUserId: string, raw: unknown
     product: { select: { name: true, brand: { select: { name: true } } } },
   } as const;
 
-  // Exact SKU / product code first (case + whitespace normalised). Exact hits are not buried by pagination.
+  // Exact product code first: SKU, barcode (EAN), or MPN. Exact hits are not buried by pagination.
   const exactVariants = q
     ? await prisma.productVariant.findMany({
         where: {
           ...productVisibility,
-          sku: { equals: q, mode: "insensitive" },
+          OR: [
+            { sku: { equals: q, mode: "insensitive" } },
+            { barcode: { equals: q, mode: "insensitive" } },
+            { mpn: { equals: q, mode: "insensitive" } },
+          ],
         },
         take: 20,
         orderBy: { sku: "asc" },
@@ -1056,6 +1067,8 @@ export async function searchSalesOrderProducts(actorUserId: string, raw: unknown
             ...productVisibility,
             OR: [
               { sku: { contains: q, mode: "insensitive" } },
+              { barcode: { contains: q, mode: "insensitive" } },
+              { mpn: { contains: q, mode: "insensitive" } },
               { product: { name: { contains: q, mode: "insensitive" } } },
               { product: { brand: { name: { contains: q, mode: "insensitive" } } } },
             ],
@@ -1340,6 +1353,24 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
   const input = placeSalesOrderSchema.parse(raw);
   const draft = await loadOwnedDraft(actorUserId, input.draftId, false);
 
+  // Explain permission gaps before placement — never place then surprise-fail on optional save.
+  if (input.saveAddressToProfile) {
+    if (!grants(profile, "companies.edit", "admin.access")) {
+      throw new AuthError(
+        "You can place this order, but saving the delivery address to the customer profile needs the companies.edit permission. Untick “Save to customer profile” to place without saving, or ask an administrator for access.",
+        "FORBIDDEN",
+        403,
+      );
+    }
+    if (input.fulfilmentChoice === "COLLECTION" || !input.oneOffAddress) {
+      throw new AuthError(
+        "Only a new one-off delivery address can be saved to the customer profile",
+        "VALIDATION",
+        400,
+      );
+    }
+  }
+
   const existing = await prisma.order.findFirst({
     where: {
       OR: [
@@ -1365,7 +1396,19 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     }
     if (!sameSalesOrderSubmission(existing, draft, actorUserId)) salesOrderIdempotencyConflict();
     await repairCrmFromOrder(existing);
-    return { ok: true, alreadyPlaced: true, order: toConfirmation(existing, existing.company.name) };
+    // Idempotent retry: order already exists — still try optional address save once (deduped).
+    const retrySave = await maybeSaveOneOffAddressAfterPlace({
+      actorUserId,
+      companyId: draft.companyId,
+      orderId: existing.id,
+      input,
+    });
+    return {
+      ok: true,
+      alreadyPlaced: true,
+      order: toConfirmation(existing, existing.company.name),
+      ...retrySave,
+    };
   }
   const company = await requireOrderableCompany(profile, draft.companyId);
   if (draft.status !== "OPEN") {
@@ -1632,45 +1675,65 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     orderId: created.order.id,
   });
 
-  let savedAddressId: string | null = null;
-  let savedAddressError: string | null = null;
-  if (
-    input.saveAddressToProfile &&
-    input.oneOffAddress &&
-    input.fulfilmentChoice !== "COLLECTION"
-  ) {
-    try {
-      savedAddressId = await saveOneOffAddressToCompanyProfile({
-        actorUserId,
-        companyId: company.id,
-        oneOff: input.oneOffAddress,
-        asDefaultDelivery: Boolean(input.saveAddressAsDefaultDelivery),
-      });
-    } catch (error) {
-      savedAddressError =
-        error instanceof AuthError
-          ? error.message
-          : "Order placed, but the address could not be saved to the customer profile";
-    }
-  }
+  const saveResult = await maybeSaveOneOffAddressAfterPlace({
+    actorUserId,
+    companyId: company.id,
+    orderId: created.order.id,
+    input,
+  });
 
   return {
     ok: true,
     alreadyPlaced: false,
     order: confirmation,
-    savedAddressId,
-    savedAddressError,
+    ...saveResult,
   };
+}
+
+async function maybeSaveOneOffAddressAfterPlace(input: {
+  actorUserId: string;
+  companyId: string;
+  orderId: string;
+  input: PlaceSalesOrderInput;
+}): Promise<{ savedAddressId: string | null; savedAddressError: string | null }> {
+  if (
+    !input.input.saveAddressToProfile ||
+    !input.input.oneOffAddress ||
+    input.input.fulfilmentChoice === "COLLECTION"
+  ) {
+    return { savedAddressId: null, savedAddressError: null };
+  }
+  try {
+    const savedAddressId = await saveOneOffAddressToCompanyProfile({
+      actorUserId: input.actorUserId,
+      companyId: input.companyId,
+      orderId: input.orderId,
+      oneOff: input.input.oneOffAddress,
+      asDefaultDelivery: Boolean(input.input.saveAddressAsDefaultDelivery),
+    });
+    return { savedAddressId, savedAddressError: null };
+  } catch (error) {
+    // Order already committed — never roll it back for optional address save failure.
+    return {
+      savedAddressId: null,
+      savedAddressError:
+        error instanceof AuthError
+          ? error.message
+          : "Order placed, but the address could not be saved to the customer profile",
+    };
+  }
 }
 
 /**
  * Persist a one-off delivery address after a successful order place.
  * Skips near-duplicates (same normalised postcode + line1). Never runs inside the order txn
- * so a failed place cannot leave orphan addresses.
+ * so a failed place cannot leave orphan addresses, and order retries cannot create duplicates.
+ * Idempotent per order via audit lookup ORDER_ADDRESS_SAVE:{orderId}.
  */
 async function saveOneOffAddressToCompanyProfile(input: {
   actorUserId: string;
   companyId: string;
+  orderId: string;
   oneOff: {
     line1: string;
     line2?: string | null;
@@ -1683,34 +1746,84 @@ async function saveOneOffAddressToCompanyProfile(input: {
   };
   asDefaultDelivery: boolean;
 }): Promise<string> {
-  const { createAddress } = await import("@/server/companies/service");
+  const prior = await prisma.auditEvent.findFirst({
+    where: {
+      action: "order.delivery_address_saved_to_profile",
+      entityType: "Order",
+      entityId: input.orderId,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { after: true },
+  });
+  const priorAddressId =
+    prior?.after && typeof prior.after === "object" && prior.after !== null
+      ? String((prior.after as { addressId?: unknown }).addressId ?? "")
+      : "";
+  if (priorAddressId) {
+    if (input.asDefaultDelivery) {
+      const { updateAddress } = await import("@/server/companies/service");
+      await updateAddress(input.actorUserId, {
+        id: priorAddressId,
+        companyId: input.companyId,
+        isDefaultDelivery: true,
+      });
+    }
+    return priorAddressId;
+  }
+
+  const { createAddress, updateAddress } = await import("@/server/companies/service");
   const normPostcode = input.oneOff.postcode.replace(/\s+/g, "").toUpperCase();
   const normLine1 = input.oneOff.line1.trim().toLowerCase();
   const existing = await prisma.address.findMany({
     where: { companyId: input.companyId },
-    select: { id: true, line1: true, postcode: true },
+    select: { id: true, line1: true, postcode: true, isDefaultDelivery: true },
   });
   const duplicate = existing.find(
     (row) =>
       row.postcode.replace(/\s+/g, "").toUpperCase() === normPostcode &&
       row.line1.trim().toLowerCase() === normLine1,
   );
-  if (duplicate) return duplicate.id;
 
-  const created = await createAddress(input.actorUserId, {
+  let addressId: string;
+  if (duplicate) {
+    addressId = duplicate.id;
+    if (input.asDefaultDelivery && !duplicate.isDefaultDelivery) {
+      await updateAddress(input.actorUserId, {
+        id: duplicate.id,
+        companyId: input.companyId,
+        isDefaultDelivery: true,
+      });
+    }
+  } else {
+    const created = await createAddress(input.actorUserId, {
+      companyId: input.companyId,
+      type: "DELIVERY",
+      label: null,
+      line1: input.oneOff.line1,
+      line2: input.oneOff.line2 ?? null,
+      town: input.oneOff.town,
+      county: input.oneOff.county ?? null,
+      postcode: input.oneOff.postcode,
+      country: input.oneOff.country ?? "GB",
+      contactName: input.oneOff.contactName ?? null,
+      contactPhone: input.oneOff.contactPhone ?? null,
+      isDefaultBilling: false,
+      isDefaultDelivery: input.asDefaultDelivery,
+    });
+    addressId = created.id;
+  }
+
+  await recordAuditEvent({
+    action: "order.delivery_address_saved_to_profile",
+    entityType: "Order",
+    entityId: input.orderId,
+    actorUserId: input.actorUserId,
     companyId: input.companyId,
-    type: "DELIVERY",
-    label: null,
-    line1: input.oneOff.line1,
-    line2: input.oneOff.line2 ?? null,
-    town: input.oneOff.town,
-    county: input.oneOff.county ?? null,
-    postcode: input.oneOff.postcode,
-    country: input.oneOff.country ?? "GB",
-    contactName: input.oneOff.contactName ?? null,
-    contactPhone: input.oneOff.contactPhone ?? null,
-    isDefaultBilling: false,
-    isDefaultDelivery: input.asDefaultDelivery,
+    after: {
+      addressId,
+      asDefaultDelivery: input.asDefaultDelivery,
+      reusedExisting: Boolean(duplicate),
+    },
   });
-  return created.id;
+  return addressId;
 }

@@ -490,9 +490,16 @@ function NewSalesOrder() {
               country: "GB",
             },
         saveAddressToProfile:
-          fulfilmentChoice === "DELIVERY" && useOneOff ? saveAddressToProfile : false,
+          fulfilmentChoice === "DELIVERY" &&
+          useOneOff &&
+          workspace.canSaveCustomerAddress
+            ? saveAddressToProfile
+            : false,
         saveAddressAsDefaultDelivery:
-          fulfilmentChoice === "DELIVERY" && useOneOff && saveAddressToProfile
+          fulfilmentChoice === "DELIVERY" &&
+          useOneOff &&
+          workspace.canSaveCustomerAddress &&
+          saveAddressToProfile
             ? saveAddressAsDefaultDelivery
             : false,
         poNumber: poNumber || null,
@@ -756,32 +763,40 @@ function NewSalesOrder() {
                       <input className={salesOrderControlClass} placeholder="Town" value={oneOff.town} onChange={(e) => { setOneOff({ ...oneOff, town: e.target.value }); setAuthorised(false); }} />
                       <input className={salesOrderControlClass} placeholder="County" value={oneOff.county} onChange={(e) => { setOneOff({ ...oneOff, county: e.target.value }); setAuthorised(false); }} />
                       <input className={salesOrderControlClass} placeholder="Postcode" value={oneOff.postcode} onChange={(e) => { setOneOff({ ...oneOff, postcode: e.target.value }); setAuthorised(false); }} />
-                      <label className="col-span-full flex min-h-11 items-center gap-3 text-[15px]">
-                        <input
-                          type="checkbox"
-                          className="size-5"
-                          checked={saveAddressToProfile}
-                          onChange={(e) => {
-                            setSaveAddressToProfile(e.target.checked);
-                            if (!e.target.checked) setSaveAddressAsDefaultDelivery(false);
-                          }}
-                        />
-                        Save to customer profile
-                      </label>
-                      {saveAddressToProfile ? (
-                        <label className="col-span-full flex min-h-11 items-center gap-3 text-[15px]">
-                          <input
-                            type="checkbox"
-                            className="size-5"
-                            checked={saveAddressAsDefaultDelivery}
-                            onChange={(e) => setSaveAddressAsDefaultDelivery(e.target.checked)}
-                          />
-                          Set as default delivery address
-                        </label>
-                      ) : null}
-                      <p className="col-span-full text-[13px] text-steel">
-                        The order keeps this delivery address even if the profile address is edited later. Address is only saved after the order is placed successfully.
-                      </p>
+                      {workspace.canSaveCustomerAddress ? (
+                        <>
+                          <label className="col-span-full flex min-h-11 items-center gap-3 text-[15px]">
+                            <input
+                              type="checkbox"
+                              className="size-5"
+                              checked={saveAddressToProfile}
+                              onChange={(e) => {
+                                setSaveAddressToProfile(e.target.checked);
+                                if (!e.target.checked) setSaveAddressAsDefaultDelivery(false);
+                              }}
+                            />
+                            Save to customer profile
+                          </label>
+                          {saveAddressToProfile ? (
+                            <label className="col-span-full flex min-h-11 items-center gap-3 text-[15px]">
+                              <input
+                                type="checkbox"
+                                className="size-5"
+                                checked={saveAddressAsDefaultDelivery}
+                                onChange={(e) => setSaveAddressAsDefaultDelivery(e.target.checked)}
+                              />
+                              Set as default delivery address
+                            </label>
+                          ) : null}
+                          <p className="col-span-full text-[13px] text-steel">
+                            The order keeps this delivery address even if the profile address is edited later. Address is only saved after the order is placed successfully.
+                          </p>
+                        </>
+                      ) : (
+                        <p className="col-span-full text-[13px] text-steel">
+                          One-off address for this order only. Saving to the customer profile needs companies.edit permission.
+                        </p>
+                      )}
                     </div>
                   ) : fulfilmentChoice === "DELIVERY" ? (
                     <select className={salesOrderControlClass} value={addressId} onChange={(e) => { setAddressId(e.target.value); setAuthorised(false); }}>

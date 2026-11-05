@@ -142,15 +142,21 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
       ]
     : undefined;
 
-  let exactSkuProductFilter: Prisma.ProductWhereInput | undefined;
+  let exactCodeProductFilter: Prisma.ProductWhereInput | undefined;
   if (q) {
     const exactVariants = await prisma.productVariant.findMany({
-      where: { sku: { equals: q, mode: "insensitive" } },
+      where: {
+        OR: [
+          { sku: { equals: q, mode: "insensitive" } },
+          { barcode: { equals: q, mode: "insensitive" } },
+          { mpn: { equals: q, mode: "insensitive" } },
+        ],
+      },
       select: { productId: true },
       take: 50,
     });
     if (exactVariants.length > 0) {
-      exactSkuProductFilter = {
+      exactCodeProductFilter = {
         id: { in: [...new Set(exactVariants.map((row) => row.productId))] },
       };
     }
@@ -166,8 +172,8 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
       : {}),
     ...(raw.featured === true || raw.featured === false ? { isFeatured: raw.featured } : {}),
     ...sdsFilterWhere(raw.sds),
-    ...(exactSkuProductFilter
-      ? exactSkuProductFilter
+    ...(exactCodeProductFilter
+      ? exactCodeProductFilter
       : q
         ? {
             OR: [
@@ -1168,19 +1174,23 @@ export async function listPublicProducts(input: {
 
   const { normaliseProductSearchQuery } = await import("@/domain/product-search-exact");
   const q = normaliseProductSearchQuery(input.q);
-  let exactSkuProductFilter: Prisma.ProductWhereInput | undefined;
+  let exactCodeProductFilter: Prisma.ProductWhereInput | undefined;
   if (q) {
     const exactVariants = await prisma.productVariant.findMany({
       where: {
         isActive: true,
-        sku: { equals: q, mode: "insensitive" },
+        OR: [
+          { sku: { equals: q, mode: "insensitive" } },
+          { barcode: { equals: q, mode: "insensitive" } },
+          { mpn: { equals: q, mode: "insensitive" } },
+        ],
         product: { ...publicWhere },
       },
       select: { productId: true },
       take: 50,
     });
     if (exactVariants.length > 0) {
-      exactSkuProductFilter = {
+      exactCodeProductFilter = {
         id: { in: [...new Set(exactVariants.map((row) => row.productId))] },
       };
     }
@@ -1190,13 +1200,15 @@ export async function listPublicProducts(input: {
     ...publicWhere,
     ...(input.brandSlug ? { brand: { slug: input.brandSlug, isActive: true } } : {}),
     ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
-    ...(exactSkuProductFilter
-      ? exactSkuProductFilter
+    ...(exactCodeProductFilter
+      ? exactCodeProductFilter
       : q
         ? {
             OR: [
               { name: { contains: q, mode: "insensitive" } },
               { variants: { some: { sku: { contains: q, mode: "insensitive" } } } },
+              { variants: { some: { barcode: { contains: q, mode: "insensitive" } } } },
+              { variants: { some: { mpn: { contains: q, mode: "insensitive" } } } },
             ],
           }
         : {}),

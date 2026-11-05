@@ -29,6 +29,8 @@ export const TRADE_APPROVAL_SIDE_EFFECTS = [
   "Creates the primary contact and trading address from the submitted application.",
   "Creates or links a trade portal user for the applicant email and prepares an activation invitation.",
   "May send an activation email immediately (or defer / fail delivery — check the result).",
+  "Notifies internal trade-application recipients that the account was authorised (no activation tokens).",
+  "Stores the agreed credit limit when you enter one — informational only; never blocks orders.",
   "Sets a verified Autopart sales code only when you explicitly confirm verification below.",
   "After approval you continue guided customer setup for the same company — another company is not created.",
 ] as const;
