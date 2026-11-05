@@ -694,4 +694,60 @@ describe("dispatch notification planning", () => {
       { sku: "A", name: "A", qty: 3 },
     ]);
   });
+
+  it("does not fall back to previously applied invoices when newInvoiceDocumentNumbers is empty", () => {
+    const evaluation = evaluateOrder504TrmFulfilment({
+      orderId: "o1",
+      orderNumber: "AB-100001",
+      orderStatus: "PARTIALLY_DESPATCHED",
+      items: [item("a", "A", 10)],
+      fulfilmentFrom: from,
+      alreadyAppliedDocumentNumbers: ["SS1", "SS2"],
+      documents: [
+        invoiceDoc({
+          ref: "SS1",
+          order: "AB-100001",
+          goods: "3.00",
+          lines: [{ sku: "A", units: 3, salesNet: "3.00" }],
+        }),
+        invoiceDoc({
+          ref: "SS2",
+          order: "AB-100001",
+          goods: "3.00",
+          lines: [{ sku: "A", units: 3, salesNet: "3.00" }],
+        }),
+      ],
+    });
+    expect(evaluation.newInvoiceDocumentNumbers).toEqual([]);
+    expect(evaluation.conceptually).toBe("PARTIALLY_DESPATCHED");
+    expect(
+      plan504TrmDispatchNotifications({
+        previousStatus: "PARTIALLY_DESPATCHED",
+        evaluation,
+        alreadySameFingerprint: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("caps newly confirmed email quantities to ordered units on over-fulfilment invoices", () => {
+    const evaluation = evaluateOrder504TrmFulfilment({
+      orderId: "o1",
+      orderNumber: "AB-100001",
+      orderStatus: "CONFIRMED",
+      items: [item("a", "A", 10)],
+      fulfilmentFrom: from,
+      documents: [
+        invoiceDoc({
+          ref: "SS1",
+          order: "AB-100001",
+          goods: "12.00",
+          lines: [{ sku: "A", units: 12, salesNet: "12.00" }],
+        }),
+      ],
+    });
+    expect(evaluation.overFulfilment).toBe(true);
+    expect(newlyConfirmedDispatchLines(evaluation, "SS1")).toEqual([
+      { sku: "A", name: "A", qty: 10 },
+    ]);
+  });
 });

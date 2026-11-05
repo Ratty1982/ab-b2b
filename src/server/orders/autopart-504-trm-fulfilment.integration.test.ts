@@ -447,17 +447,28 @@ describe("504 + TRM fulfilment modes", () => {
     await parkFulfilmentOff();
   });
 
-  it("read-only diagnosis does not stamp preview clocks; retry clears visible failure", async () => {
-    const before = await prisma.autopartOngoingSalesFeedSettings.findUnique({ where: { id: "default" } });
-    const beforePreviewAt = before?.fulfilmentLastPreviewAt?.toISOString() ?? null;
+  it("read-only diagnosis does not stamp preview clocks; OFF retry keeps failure; ACTIVE retry clears it", async () => {
+    const fromIso = new Date(Date.now() - 86400000).toISOString();
+    await update504TrmFulfilmentSettings(adminId, {
+      fulfilmentMode: "ACTIVE",
+      fulfilmentFrom: fromIso,
+    });
+    const before = await prisma.autopartOngoingSalesFeedSettings.findUniqueOrThrow({
+      where: { id: "default" },
+    });
+    const beforePreviewAt = before.fulfilmentLastPreviewAt?.toISOString() ?? null;
+    const beforeFrom = before.fulfilmentFrom?.toISOString() ?? null;
+    expect(before.fulfilmentMode).toBe("ACTIVE");
 
     const diagnosis = await evaluate504TrmFulfilmentReadonly(adminId);
     expect(diagnosis.readOnly).toBe(true);
 
-    const afterDiagnosis = await prisma.autopartOngoingSalesFeedSettings.findUnique({
+    const afterDiagnosis = await prisma.autopartOngoingSalesFeedSettings.findUniqueOrThrow({
       where: { id: "default" },
     });
-    expect(afterDiagnosis?.fulfilmentLastPreviewAt?.toISOString() ?? null).toBe(beforePreviewAt);
+    expect(afterDiagnosis.fulfilmentLastPreviewAt?.toISOString() ?? null).toBe(beforePreviewAt);
+    expect(afterDiagnosis.fulfilmentMode).toBe("ACTIVE");
+    expect(afterDiagnosis.fulfilmentFrom?.toISOString() ?? null).toBe(beforeFrom);
 
     await record504TrmFulfilmentProcessorFailure({
       actorUserId: adminId,
@@ -469,18 +480,39 @@ describe("504 + TRM fulfilment modes", () => {
       where: { id: "default" },
     });
     expect(failed.fulfilmentLastError).toMatch(/simulated fulfilment processor failure/);
+    expect(failed.fulfilmentMode).toBe("ACTIVE");
+    expect(failed.fulfilmentFrom?.toISOString() ?? null).toBe(beforeFrom);
+
+    await update504TrmFulfilmentSettings(adminId, { fulfilmentMode: "OFF" });
+    const offRetry = await retry504TrmFulfilmentProcessor(adminId);
+    expect(offRetry.mode).toBe("OFF");
+    expect(offRetry.applied).toBe(false);
+    const stillFailed = await prisma.autopartOngoingSalesFeedSettings.findUniqueOrThrow({
+      where: { id: "default" },
+    });
+    expect(stillFailed.fulfilmentLastError).toMatch(/simulated fulfilment processor failure/);
 
     await update504TrmFulfilmentSettings(adminId, {
-      fulfilmentMode: "OFF",
-      fulfilmentFrom: new Date(Date.now() - 86400000).toISOString(),
+      fulfilmentMode: "ACTIVE",
+      fulfilmentFrom: fromIso,
     });
-    const retried = await retry504TrmFulfilmentProcessor(adminId);
-    expect(retried.mode).toBe("OFF");
-    expect(retried.applied).toBe(false);
+    const activeRetry = await retry504TrmFulfilmentProcessor(adminId);
+    expect(activeRetry.mode).toBe("ACTIVE");
+    expect(activeRetry.applied).toBe(true);
     const cleared = await prisma.autopartOngoingSalesFeedSettings.findUniqueOrThrow({
       where: { id: "default" },
     });
     expect(cleared.fulfilmentLastError).toBeNull();
+    expect(cleared.fulfilmentMode).toBe("ACTIVE");
+    expect(cleared.fulfilmentFrom?.toISOString() ?? null).toBe(beforeFrom);
+
+    // Concurrent callers share one in-flight apply (no duplicate second mutation).
+    const concurrent = await Promise.all([
+      run504TrmFulfilmentAfterImport(adminId),
+      run504TrmFulfilmentAfterImport(adminId),
+    ]);
+    expect(concurrent.every((row) => row.mode === "ACTIVE")).toBe(true);
+    expect(concurrent.reduce((sum, row) => sum + row.ordersMutated, 0)).toBe(0);
 
     await parkFulfilmentOff();
   });

@@ -1,4 +1,5 @@
--- Persist visible post-import fulfilment processor failures without replaying financial imports.
+-- Additive only: nullable columns for post-import fulfilment processor visibility.
+-- Does NOT alter fulfilmentMode, fulfilmentFrom, enabled, configured, or any order/stock rows.
 ALTER TABLE "AutopartOngoingSalesFeedSettings"
   ADD COLUMN IF NOT EXISTS "fulfilmentLastError" TEXT,
   ADD COLUMN IF NOT EXISTS "fulfilmentLastErrorAt" TIMESTAMP(3),

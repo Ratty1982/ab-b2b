@@ -232,17 +232,11 @@ export async function record504TrmFulfilmentProcessorFailure(input: {
 }): Promise<void> {
   const message = input.error instanceof Error ? input.error.message : String(input.error);
   const now = new Date();
-  await prisma.autopartOngoingSalesFeedSettings.upsert({
+  // updateMany only — never upsert/create a settings row (would default mode to OFF
+  // and invent a fulfilmentFrom, which must not disturb production ACTIVE settings).
+  await prisma.autopartOngoingSalesFeedSettings.updateMany({
     where: { id: "default" },
-    create: {
-      id: "default",
-      fulfilmentFrom: now,
-      fulfilmentLastError: message.slice(0, 2000),
-      fulfilmentLastErrorAt: now,
-      fulfilmentLastErrorImportRunId: input.importRunId ?? null,
-      fulfilmentLastErrorFeed: input.feed,
-    },
-    update: {
+    data: {
       fulfilmentLastError: message.slice(0, 2000),
       fulfilmentLastErrorAt: now,
       fulfilmentLastErrorImportRunId: input.importRunId ?? null,
@@ -1009,6 +1003,9 @@ export async function run504TrmFulfilmentAfterImport(
  * Safe staff retry after a visible fulfilment processor failure.
  * Re-runs evaluation/apply only — does not replay 504/TRM financial imports.
  * Duplicate-safe via fulfilment fingerprints and email idempotency keys.
+ *
+ * Clears the recorded failure only when ACTIVE apply completed successfully.
+ * OFF / PREVIEW retries must leave the failure visible — they did not apply.
  */
 export async function retry504TrmFulfilmentProcessor(
   actorUserId: string,
@@ -1017,7 +1014,10 @@ export async function retry504TrmFulfilmentProcessor(
   await requireFulfilmentAdmin(actorUserId);
   try {
     const result = await run504TrmFulfilmentAfterImport(actorUserId);
-    await clear504TrmFulfilmentProcessorFailure({ importRunId: opts?.importRunId ?? null });
+    const clearedFailure = result.mode === "ACTIVE" && result.applied;
+    if (clearedFailure) {
+      await clear504TrmFulfilmentProcessorFailure({ importRunId: opts?.importRunId ?? null });
+    }
     await recordAuditEvent({
       action: "autopart.504_trm_fulfilment_retry",
       entityType: opts?.importRunId ? "AutopartCustomerImportRun" : "AutopartOngoingSalesFeedSettings",
@@ -1029,6 +1029,7 @@ export async function retry504TrmFulfilmentProcessor(
         ordersMutated: result.ordersMutated,
         emailsQueued: result.emailsQueued,
         financialImportReplayed: false,
+        failureCleared: clearedFailure,
       },
     });
     return result;

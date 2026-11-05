@@ -459,6 +459,10 @@ export type DispatchNotificationAction =
  * Gate is new matched evidence (`canApply` + new fingerprint), not statusChanged alone.
  * PARTIAL → PARTIAL quantity growth notifies once per newly confirmed invoice document.
  * Identical replays (`alreadySameFingerprint`) queue nothing.
+ *
+ * Never fall back to previously applied / already-included invoices when
+ * `newInvoiceDocumentNumbers` is empty — that would restate prior despatches
+ * as though newly confirmed.
  */
 export function plan504TrmDispatchNotifications(input: {
   previousStatus: string;
@@ -480,9 +484,8 @@ export function plan504TrmDispatchNotifications(input: {
 
   if (evaluation.conceptually !== "PARTIALLY_DESPATCHED") return [];
 
-  const refs = evaluation.newInvoiceDocumentNumbers.length
-    ? evaluation.newInvoiceDocumentNumbers
-    : evaluation.documents.filter((d) => d.includedInFulfilment).map((d) => d.documentReference);
+  // Only newly confirmed invoice references. Empty list → no PART email.
+  const refs = evaluation.newInvoiceDocumentNumbers;
   if (!refs.length) return [];
 
   const stillToComeLines = evaluation.lines
@@ -503,7 +506,11 @@ export function plan504TrmDispatchNotifications(input: {
   return actions;
 }
 
-/** Units confirmed by one invoice document only. */
+/**
+ * Units confirmed by one invoice document only.
+ * Quantities are capped to the order line qty so over-invoicing never emails
+ * more units than the customer ordered as “newly despatched”.
+ */
 export function newlyConfirmedDispatchLines(
   evaluation: OrderFulfilmentEvaluation,
   invoiceExternalRef: string,
@@ -524,7 +531,8 @@ export function newlyConfirmedDispatchLines(
   }
   const lines: Array<{ sku: string; name: string; qty: number }> = [];
   for (const line of evaluation.lines) {
-    const qty = byItem.get(line.orderItemId) ?? 0;
+    const raw = byItem.get(line.orderItemId) ?? 0;
+    const qty = Math.min(raw, Math.max(0, line.orderedQty), Math.max(0, line.despatchedQty));
     if (qty <= 0) continue;
     lines.push({ sku: line.sku, name: line.name, qty });
   }
