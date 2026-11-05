@@ -5,8 +5,15 @@
  */
 
 import { londonBusinessDate, londonCivilTime } from "@/domain/stock-schedule";
-import { isLondonWorkingDayOngoing, londonIsoWeekdayOngoing } from "@/domain/autopart-ongoing-sales-schedule";
-import { is216vWeekendCivilDate, previous216vWorkingDate, verified216vReportDate } from "@/domain/autopart-216v-report-date";
+import {
+  isLondonWorkingDayOngoing,
+  londonIsoWeekdayOngoing,
+} from "@/domain/autopart-ongoing-sales-schedule";
+import {
+  is216vWeekendCivilDate,
+  previous216vWorkingDate,
+  verified216vReportDate,
+} from "@/domain/autopart-216v-report-date";
 
 export const AUTOPART_216V_SCHEDULE_HOUR = 18;
 export const AUTOPART_216V_SCHEDULE_MINUTE = 15;
@@ -50,7 +57,10 @@ export function previousLondonWorkingDate(iso: string): string {
  * A working day whose report is not the current snapshot stays "today", even after 18:15.
  * Tomorrow is only next once today's report date is already current.
  */
-export function next216vExpectedLabel(now = new Date(), lastReportDate: string | null = null): string {
+export function next216vExpectedLabel(
+  now = new Date(),
+  lastReportDate: string | null = null,
+): string {
   const local = londonCivilTime(now);
   const today = londonBusinessDate(local);
   const time = `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:${pad(AUTOPART_216V_SCHEDULE_MINUTE)} Europe/London`;
@@ -201,20 +211,31 @@ export type Autopart216vFeedHeadline =
   | "REPORT_OVERDUE"
   | "IMPORT_FAILED"
   | "NO_SNAPSHOT"
-  | "REVIEW_REQUIRED";
+  | "REVIEW_REQUIRED"
+  | "WEEKEND_OR_NON_REPORTING";
 
 export const AUTOPART_216V_FEED_HEADLINE_LABEL: Record<Autopart216vFeedHeadline, string> = {
   CURRENT: "CURRENT",
   WAITING_FOR_TODAYS_REPORT: "WAITING FOR TODAY'S REPORT",
   REPORT_OVERDUE: "REPORT OVERDUE",
   IMPORT_FAILED: "IMPORT FAILED",
-  NO_SNAPSHOT: "WAITING FOR TODAY'S REPORT",
+  NO_SNAPSHOT: "LATEST REPORT UNAVAILABLE",
   REVIEW_REQUIRED: "REVIEW REQUIRED",
+  WEEKEND_OR_NON_REPORTING: "NON-REPORTING DAY",
 };
+
+export type Autopart216vOperationalKind =
+  | "current_report_received"
+  | "awaiting_todays_report"
+  | "report_overdue"
+  | "weekend_or_non_reporting_day"
+  | "latest_report_unavailable"
+  | "review_required"
+  | "import_failed";
 
 /**
  * Compact operational headline. Does not change stale/CURRENT freshness rules.
- * Waiting for today's 18:15 file is not overdue.
+ * Waiting for today's 18:15 file — including the grace window — is not overdue.
  */
 export function headline216vFeedHealth(input: {
   status: Autopart216vFeedHealth;
@@ -222,27 +243,57 @@ export function headline216vFeedHealth(input: {
   lastError?: string | null;
   lastBusinessDate: string | null;
   now?: Date;
+  graceMinutes?: number;
 }): { key: Autopart216vFeedHeadline; label: string; tone: "good" | "warn" | "bad" } {
   const now = input.now ?? new Date();
+  const grace = input.graceMinutes ?? AUTOPART_216V_GRACE_MINUTES;
   if (input.lastError && (input.stale || input.status === "NO_SNAPSHOT")) {
-    return { key: "IMPORT_FAILED", label: AUTOPART_216V_FEED_HEADLINE_LABEL.IMPORT_FAILED, tone: "bad" };
+    return {
+      key: "IMPORT_FAILED",
+      label: AUTOPART_216V_FEED_HEADLINE_LABEL.IMPORT_FAILED,
+      tone: "bad",
+    };
   }
   if (input.status === "EXPECTED_REPORT_NOT_RECEIVED") {
-    return { key: "REPORT_OVERDUE", label: AUTOPART_216V_FEED_HEADLINE_LABEL.REPORT_OVERDUE, tone: "bad" };
+    return {
+      key: "REPORT_OVERDUE",
+      label: AUTOPART_216V_FEED_HEADLINE_LABEL.REPORT_OVERDUE,
+      tone: "bad",
+    };
   }
   if (input.status === "NO_SNAPSHOT") {
-    return { key: "NO_SNAPSHOT", label: AUTOPART_216V_FEED_HEADLINE_LABEL.NO_SNAPSHOT, tone: "warn" };
+    return {
+      key: "NO_SNAPSHOT",
+      label: AUTOPART_216V_FEED_HEADLINE_LABEL.NO_SNAPSHOT,
+      tone: "warn",
+    };
   }
   if (input.status === "WEEKEND_DATE_REVIEW") {
-    return { key: "REVIEW_REQUIRED", label: AUTOPART_216V_FEED_HEADLINE_LABEL.REVIEW_REQUIRED, tone: "warn" };
+    return {
+      key: "REVIEW_REQUIRED",
+      label: AUTOPART_216V_FEED_HEADLINE_LABEL.REVIEW_REQUIRED,
+      tone: "warn",
+    };
+  }
+  if (input.status === "WEEKEND_USING_LAST_WORKING_DAY") {
+    return {
+      key: "WEEKEND_OR_NON_REPORTING",
+      label: AUTOPART_216V_FEED_HEADLINE_LABEL.WEEKEND_OR_NON_REPORTING,
+      tone: "good",
+    };
   }
   const local = londonCivilTime(now);
   const today = londonBusinessDate(local);
   const working = isLondonWorkingDayOngoing(now);
   const minutes = local.hour * 60 + local.minute;
-  const beforeTodayDue = minutes < AUTOPART_216V_SCHEDULE_HOUR * 60 + AUTOPART_216V_SCHEDULE_MINUTE;
-  const verifiedToday = Boolean(input.lastBusinessDate && !is216vWeekendCivilDate(input.lastBusinessDate) && input.lastBusinessDate >= today);
-  if (working && beforeTodayDue && input.status === "CURRENT" && !verifiedToday) {
+  const scheduleMinutes = AUTOPART_216V_SCHEDULE_HOUR * 60 + AUTOPART_216V_SCHEDULE_MINUTE;
+  const graceEnds = scheduleMinutes + grace;
+  const verifiedToday = Boolean(
+    input.lastBusinessDate &&
+    !is216vWeekendCivilDate(input.lastBusinessDate) &&
+    input.lastBusinessDate >= today,
+  );
+  if (working && input.status === "CURRENT" && !verifiedToday && minutes < graceEnds) {
     return {
       key: "WAITING_FOR_TODAYS_REPORT",
       label: AUTOPART_216V_FEED_HEADLINE_LABEL.WAITING_FOR_TODAYS_REPORT,
@@ -252,7 +303,66 @@ export function headline216vFeedHealth(input: {
   return { key: "CURRENT", label: AUTOPART_216V_FEED_HEADLINE_LABEL.CURRENT, tone: "good" };
 }
 
-export function due216vPollWindow(now = new Date(), scheduleHour = AUTOPART_216V_SCHEDULE_HOUR): boolean {
+/**
+ * One concise operational line for the Backorders header.
+ * Historical filename anomalies belong in Import diagnostics, not here.
+ */
+export function summarise216vOperationalStatus(input: {
+  headline: Autopart216vFeedHeadline;
+  freshness: Autopart216vFreshness;
+  lastError?: string | null;
+}): { kind: Autopart216vOperationalKind; message: string } {
+  const hour = pad(input.freshness.expectedHour);
+  const minute = pad(AUTOPART_216V_SCHEDULE_MINUTE);
+  switch (input.headline) {
+    case "IMPORT_FAILED":
+      return {
+        kind: "import_failed",
+        message:
+          input.lastError?.trim() ||
+          "The latest 216V import failed. Showing the last available snapshot — outstanding backorders were not cleared.",
+      };
+    case "REPORT_OVERDUE":
+      return {
+        kind: "report_overdue",
+        message: `Today's working-day 216V after ${hour}:${minute} Europe/London has not arrived. Showing the last available snapshot — outstanding backorders were not cleared.`,
+      };
+    case "WAITING_FOR_TODAYS_REPORT":
+      return {
+        kind: "awaiting_todays_report",
+        message: `Awaiting today's scheduled 216V around ${hour}:${minute} Europe/London. Showing the last available snapshot.`,
+      };
+    case "NO_SNAPSHOT":
+      return {
+        kind: "latest_report_unavailable",
+        message:
+          "No 216V snapshot is available yet. Missing reports are not treated as zero backorders.",
+      };
+    case "REVIEW_REQUIRED":
+      return {
+        kind: "review_required",
+        message:
+          "The only available 216V snapshot is dated on a non-reporting day. Outstanding lines are kept for review. Filename dates are not rewritten.",
+      };
+    case "WEEKEND_OR_NON_REPORTING":
+      return {
+        kind: "weekend_or_non_reporting_day",
+        message:
+          "Non-reporting day. Showing the last Monday–Friday snapshot. No Saturday or Sunday report is expected, and outstanding backorders were not cleared.",
+      };
+    case "CURRENT":
+    default:
+      return {
+        kind: "current_report_received",
+        message: "Latest Monday–Friday 216V report is current.",
+      };
+  }
+}
+
+export function due216vPollWindow(
+  now = new Date(),
+  scheduleHour = AUTOPART_216V_SCHEDULE_HOUR,
+): boolean {
   if (!isLondonWorkingDayOngoing(now)) return false;
   const local = londonCivilTime(now);
   const minutes = local.hour * 60 + local.minute;

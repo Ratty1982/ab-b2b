@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  build216vImportDiagnostics,
   compare216vSnapshotChronology,
   describe216vWeekendReportReview,
   parseManual216vReportDate,
@@ -49,11 +50,18 @@ describe("216V report date", () => {
     expect(resolved.source).toBe("FILENAME");
     expect(resolved.verifiedWorkingDay).toBe(false);
     expect(resolved.review).toBe("WEEKEND_DATE_UNVERIFIED");
-    expect(describe216vWeekendReportReview({ filename: "216V_20261010.csv", observedDate: resolved.iso })).toContain(
-      "Saturday 2026-10-10",
-    );
     expect(
-      weekend216vImportNotice({ filename: "216V_20261010.csv", observedDate: resolved.iso, becameCurrent: false }),
+      describe216vWeekendReportReview({
+        filename: "216V_20261010.csv",
+        observedDate: resolved.iso,
+      }),
+    ).toContain("Saturday 2026-10-10");
+    expect(
+      weekend216vImportNotice({
+        filename: "216V_20261010.csv",
+        observedDate: resolved.iso,
+        becameCurrent: false,
+      }),
     ).toContain("Monday–Friday snapshot stays in place");
   });
 
@@ -210,8 +218,70 @@ describe("216V report date", () => {
       importedAt: new Date("2026-10-12T17:05:00.000Z"),
     };
     expect(pickCurrent216vSnapshot([earlierMail, laterMail])?.id).toBe("a");
-    const sameInstantA = { ...earlierMail, id: "a", receivedAt: laterMail.receivedAt, importedAt: laterMail.importedAt };
+    const sameInstantA = {
+      ...earlierMail,
+      id: "a",
+      receivedAt: laterMail.receivedAt,
+      importedAt: laterMail.importedAt,
+    };
     const sameInstantB = { ...laterMail, id: "b" };
     expect(pickCurrent216vSnapshot([sameInstantA, sameInstantB])?.id).toBe("b");
+  });
+
+  it("collects historical weekend filename anomalies for diagnostics without changing recorded dates", () => {
+    const diagnostics = build216vImportDiagnostics([
+      {
+        id: "fri",
+        filename: "216V_20261103.csv",
+        receivedAt: new Date("2026-11-03T18:02:00.000Z"),
+        importedAt: new Date("2026-11-03T18:05:00.000Z"),
+      },
+      {
+        id: "sat1",
+        filename: "216V_20261010.csv",
+        receivedAt: new Date("2026-10-10T17:01:37.000Z"),
+        importedAt: new Date("2026-10-12T17:16:07.000Z"),
+      },
+      {
+        id: "sat2",
+        filename: "216V_20261011.csv",
+        receivedAt: new Date("2026-10-11T17:00:00.000Z"),
+        importedAt: new Date("2026-10-12T17:20:00.000Z"),
+      },
+      {
+        id: "sat3",
+        filename: "216V_20261017.csv",
+        receivedAt: new Date("2026-10-17T17:00:00.000Z"),
+        importedAt: new Date("2026-10-19T17:20:00.000Z"),
+      },
+    ]);
+    expect(diagnostics.map((row) => row.filename)).toEqual([
+      "216V_20261017.csv",
+      "216V_20261011.csv",
+      "216V_20261010.csv",
+    ]);
+    expect(diagnostics.every((row) => row.kind === "WEEKEND_DATE_UNVERIFIED")).toBe(true);
+    expect(diagnostics.every((row) => row.importStatus === "COMMITTED")).toBe(true);
+    expect(diagnostics.find((row) => row.filename === "216V_20261010.csv")?.recordedDate).toBe(
+      "2026-10-10",
+    );
+    expect(diagnostics.some((row) => row.filename === "216V_20261103.csv")).toBe(false);
+  });
+
+  it("keeps the verified Monday–Friday snapshot current when weekend files also exist", () => {
+    const friday = {
+      id: "fri",
+      filename: "216V_20261103.csv",
+      receivedAt: new Date("2026-11-03T18:02:00.000Z"),
+      importedAt: new Date("2026-11-03T18:05:00.000Z"),
+    };
+    const weekend = {
+      id: "sat",
+      filename: "216V_20261010.csv",
+      receivedAt: new Date("2026-10-10T17:01:37.000Z"),
+      importedAt: new Date("2026-10-12T17:16:07.000Z"),
+    };
+    expect(pickCurrent216vSnapshot([weekend, friday])?.id).toBe("fri");
+    expect(pickCurrent216vSnapshot([weekend, friday])?.filename).toBe("216V_20261103.csv");
   });
 });

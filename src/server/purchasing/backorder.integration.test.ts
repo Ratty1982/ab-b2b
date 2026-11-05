@@ -881,6 +881,12 @@ describe("216V expanded-field identity continuity", () => {
 });
 
 describe("216V movement drill-down", () => {
+  beforeAll(async () => {
+    // Undated EMAIL snapshots from earlier cases would otherwise remain current.
+    await prisma.autopartBackorderLine.deleteMany({});
+    await prisma.autopartBackorderSnapshot.deleteMany({});
+  });
+
   const mv = String(stamp).slice(-7);
   const sku = `BO-MV-${stamp}`;
   const base = { account: "MVACC01", name: "Movement Customer", part: sku, desc: "Movement part" };
@@ -982,7 +988,7 @@ describe("216V movement drill-down", () => {
     expect(csvLines.find((l) => l.includes(gone1.order))).toMatch(/^Cleared,CLEARED,.*,3,,,2\.50,7\.50,/);
     const standard = await exportBackordersCsv(adminId, {});
     expect(standard.csv.split("\n")[0]).toBe(
-      "Status,First Seen,Order No,Customer Account,Customer,Customer Order Ref,SKU,Description,Outstanding Qty,Unit Value,Outstanding Value,Avail,Incoming,Stock Position,Product Type,Condition Code,Condition",
+      "Status,Age,First Seen,Order No,Customer,Customer Account,Customer Order Ref,Description,Product Type,SKU,Outstanding Qty,Unit Value,Outstanding Value,Available,Incoming,Stock Position,Cover,Last Changed,Mapped Company,Unmapped Account,Brand,Previous Qty,Last Seen,Physical,Stock Feed,Condition Code,Condition",
     );
     expect(standard.csv).not.toContain(gone1.order);
   });
@@ -1037,6 +1043,13 @@ describe("216V movement drill-down", () => {
 
 describe("216V report chronology", () => {
   const chrono = `chrono-${stamp}`;
+
+  beforeAll(async () => {
+    // Email tests earlier in this file leave undated 216V.CSV snapshots dated "today",
+    // which would otherwise outrank October chronology fixtures.
+    await prisma.autopartBackorderLine.deleteMany({});
+    await prisma.autopartBackorderSnapshot.deleteMany({});
+  });
 
   function addIsoDays(iso: string, days: number): string {
     const [year, month, day] = iso.split("-").map(Number);
@@ -1217,9 +1230,9 @@ describe("216V report chronology", () => {
     expect(await prisma.autopartBackorderSnapshot.count({ where: { filename: newerName } })).toBe(1);
 
     const workspace = await getBackorderWorkspace(adminId, {});
-    expect(workspace.freshness.filename).not.toBe(olderName);
-    expect(workspace.freshness.filename).not.toBe(newerName);
-    expect(workspace.freshness.latestReportDate && workspace.freshness.latestReportDate > "2026-10-09").toBe(true);
+    expect(workspace.freshness.filename).toBe(newerName);
+    expect(workspace.freshness.latestReportDate).toBe("2026-10-09");
+    expect(workspace.current?.snapshotId).toBe(newer.id);
   });
 
   it("keeps a Saturday file for review and leaves Friday as the verified snapshot", async () => {
@@ -1261,8 +1274,15 @@ describe("216V report chronology", () => {
       expect(workspace.freshness.filename).toBe(fridayName);
       expect(workspace.freshness.latestReportDate).toBe("2026-10-16");
       expect(workspace.current?.snapshotId).toBe(friday.id);
-      expect(workspace.freshness.warning).toContain("Saturday 2026-10-17");
-      expect(workspace.freshness.warning).toContain(saturdayName);
+      // Weekend anomalies live in Import diagnostics (not the operational freshness warning).
+      expect(
+        workspace.freshness.diagnostics.some(
+          (row) =>
+            row.filename === saturdayName &&
+            row.recordedDate === "2026-10-17" &&
+            row.reason.includes("Saturday 2026-10-17"),
+        ),
+      ).toBe(true);
 
       const saturdayAfternoon = new Date("2026-10-17T15:00:00.000Z");
       const weekend = resolveAutopart216vFreshness({
@@ -1279,7 +1299,7 @@ describe("216V report chronology", () => {
           lastBusinessDate: weekend.lastBusinessDate,
           now: saturdayAfternoon,
         }).key,
-      ).toBe("CURRENT");
+      ).toBe("WEEKEND_OR_NON_REPORTING");
 
       const mondayAfterGrace = new Date("2026-10-19T18:45:00.000Z");
       const monday = resolveAutopart216vFreshness({
@@ -1390,6 +1410,116 @@ describe("216V report chronology", () => {
 });
 
 describe("216V manual report date confirmation", () => {
+  it("rejects invalid confirmed report dates in preview and confirm", async () => {
+    const text = csv216v([
+      {
+        order: `SB${stamp}BADDATE`,
+        account: "UNMAPPEDX",
+        name: "Unmapped Factors",
+        part: unknownSku,
+        desc: "Bad date",
+        ref: "REF-BD",
+        qty: 1,
+        unit: "1.00",
+        value: "1.00",
+      },
+    ]);
+    const { previewAutopart216vImport } = await import("@/server/purchasing/backorder-import");
+    await expect(
+      previewAutopart216vImport(adminId, {
+        text,
+        filename: "216V.csv",
+        confirmedReportDate: "2026-02-31",
+      }),
+    ).rejects.toMatchObject({ message: expect.stringMatching(/not a valid calendar day/i) });
+    await expect(
+      confirmAutopart216vImport(adminId, {
+        text,
+        filename: "216V.csv",
+        confirmedReportDate: "2026-02-31",
+        source: "MANUAL",
+      }),
+    ).rejects.toMatchObject({ message: expect.stringMatching(/not a valid calendar day/i) });
+  });
+
+  it("preview and confirm hash the same bytesBase64 payload and skip feed.lastError on duplicates", async () => {
+    const text = csv216v([
+      {
+        order: `SB${stamp}SAMEHASH`,
+        account: "UNMAPPEDX",
+        name: "Unmapped Factors",
+        part: unknownSku,
+        desc: "Same bytes",
+        ref: "REF-SH",
+        qty: 3,
+        unit: "1.00",
+        value: "3.00",
+      },
+    ]);
+    const bytes = Buffer.from(text, "utf8");
+    const bytesBase64 = bytes.toString("base64");
+    const { previewAutopart216vImport } = await import("@/server/purchasing/backorder-import");
+
+    await prisma.autopartBackorderFeedSettings.upsert({
+      where: { id: "default" },
+      create: { id: "default", lastError: null, configured: true },
+      update: { lastError: null },
+    });
+
+    const reportDay = "2099-03-04";
+    const preview = await previewAutopart216vImport(adminId, {
+      bytesBase64,
+      filename: "216V.csv",
+      confirmedReportDate: reportDay,
+    });
+    expect(preview.fileHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(preview.duplicate).toBe(false);
+
+    const first = await confirmAutopart216vImport(adminId, {
+      bytesBase64,
+      filename: "216V.csv",
+      confirmedReportDate: reportDay,
+      expectedFileHash: preview.fileHash,
+      source: "MANUAL",
+    });
+    expect(first.duplicate).toBe(false);
+    expect(first.fileHash).toBe(preview.fileHash);
+
+    await expect(
+      confirmAutopart216vImport(adminId, {
+        bytesBase64,
+        filename: "216V.csv",
+        confirmedReportDate: reportDay,
+        expectedFileHash: "0".repeat(64),
+        source: "MANUAL",
+      }),
+    ).rejects.toMatchObject({ message: expect.stringMatching(/content hash mismatch/i) });
+
+    const againPreview = await previewAutopart216vImport(adminId, {
+      bytesBase64,
+      filename: "216V.csv",
+      confirmedReportDate: "2099-03-05",
+    });
+    expect(againPreview.duplicate).toBe(true);
+    expect(againPreview.fileHash).toBe(preview.fileHash);
+
+    const again = await confirmAutopart216vImport(adminId, {
+      bytesBase64,
+      filename: "216V.csv",
+      confirmedReportDate: "2099-03-05",
+      expectedFileHash: againPreview.fileHash,
+      allowHistoricalImport: true,
+      source: "MANUAL",
+    });
+    expect(again.duplicate).toBe(true);
+    expect(again.fileHash).toBe(preview.fileHash);
+
+    const feed = await prisma.autopartBackorderFeedSettings.findUnique({ where: { id: "default" } });
+    expect(feed?.lastError).toBeNull();
+
+    await prisma.autopartBackorderSnapshot.deleteMany({ where: { id: first.id } });
+  });
+
   it("rejects undated manual uploads without a confirmed report date", async () => {
     const text = csv216v([
       {
@@ -1484,7 +1614,7 @@ describe("216V manual report date confirmation", () => {
         },
       ]),
       filename: "216V_newer.csv",
-      confirmedReportDate: "2026-11-05",
+      confirmedReportDate: "2099-03-10",
       source: "MANUAL",
     });
     expect(newer.becameCurrent).toBe(true);
@@ -1505,7 +1635,7 @@ describe("216V manual report date confirmation", () => {
           },
         ]),
         filename: "216V_older.csv",
-        confirmedReportDate: "2026-11-04",
+        confirmedReportDate: "2099-03-09",
         source: "MANUAL",
       }),
     ).rejects.toMatchObject({
@@ -1527,7 +1657,7 @@ describe("216V manual report date confirmation", () => {
         },
       ]),
       filename: "216V_older2.csv",
-      confirmedReportDate: "2026-11-04",
+      confirmedReportDate: "2099-03-09",
       allowHistoricalImport: true,
       source: "MANUAL",
     });

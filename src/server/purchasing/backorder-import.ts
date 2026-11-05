@@ -84,6 +84,16 @@ async function rememberImportError(message: string) {
     .catch(() => undefined);
 }
 
+/**
+ * Content-hash duplicates are successful no-ops, not feed failures.
+ * Writing them to feed.lastError made a manual re-upload look like the
+ * automatic mailbox import had failed.
+ */
+async function rememberFeedFailure(message: string, source: "MANUAL" | "EMAIL" | "SCHEDULE" | undefined) {
+  if (source === "MANUAL") return;
+  await rememberImportError(message);
+}
+
 function utcDateOnly(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);
 }
@@ -154,6 +164,8 @@ export async function confirmAutopart216vImport(
     confirmedReportDate?: string | null;
     /** Required for MANUAL when the confirmed date would not become the current position. */
     allowHistoricalImport?: boolean;
+    /** When set (manual confirm after preview), must match the hashed upload bytes. */
+    expectedFileHash?: string | null;
   },
 ): Promise<Autopart216vImportOutcome> {
   if (actorUserId) {
@@ -163,8 +175,9 @@ export async function confirmAutopart216vImport(
     }
   }
   const upload = read216vUpload(raw);
+  const source = raw.source ?? "MANUAL";
   const reject = async (message: string): Promise<never> => {
-    await rememberImportError(message);
+    await rememberFeedFailure(message, source);
     throw new AuthError(message, "VALIDATION", 400);
   };
   if (!isAutopart216vReport(upload.text, raw.filename)) {
@@ -188,10 +201,16 @@ export async function confirmAutopart216vImport(
     );
   }
 
-  const isManual = raw.source === "MANUAL";
+  const isManual = source === "MANUAL";
   let confirmedReportDate: string | null = null;
   if (isManual) {
+    const rawConfirmed = String(raw.confirmedReportDate ?? "").trim();
     confirmedReportDate = parseManual216vReportDate(raw.confirmedReportDate);
+    if (rawConfirmed && !confirmedReportDate) {
+      await reject(
+        `Report date “${rawConfirmed}” is not a valid calendar day (YYYY-MM-DD). The previous snapshot was not replaced.`,
+      );
+    }
     if (!confirmedReportDate) {
       await reject(
         "Confirm the 216V report date (YYYY-MM-DD) before importing. The CSV has no reporting date. The previous snapshot was not replaced.",
@@ -200,6 +219,11 @@ export async function confirmAutopart216vImport(
   }
 
   const hash = fileHashOf(upload);
+  if (isManual && raw.expectedFileHash && raw.expectedFileHash !== hash) {
+    await reject(
+      "The selected file changed between preview and confirm (content hash mismatch). Choose the file again. The previous snapshot was not replaced.",
+    );
+  }
   const existing = await prisma.autopartBackorderSnapshot.findUnique({
     where: { fileHash: hash },
     select: {
@@ -230,7 +254,7 @@ export async function confirmAutopart216vImport(
       reportDate: existingReport.iso,
       fileHash: existing.fileHash,
     });
-    await rememberImportError(duplicateMessage);
+    // Do not write duplicate notices into feed.lastError — they are not import failures.
     return {
       id: existing.id,
       duplicate: true,
@@ -494,8 +518,16 @@ export async function previewAutopart216vImport(
   }
   const parsed = parseAutopart216vReport(upload.text);
   const suggestedReportDate = suggestManual216vReportDate({ filename: raw.filename ?? null });
-  const confirmedReportDate =
-    parseManual216vReportDate(raw.confirmedReportDate) ?? suggestedReportDate;
+  const rawConfirmed = String(raw.confirmedReportDate ?? "").trim();
+  const parsedConfirmed = parseManual216vReportDate(raw.confirmedReportDate);
+  if (rawConfirmed && !parsedConfirmed) {
+    throw new AuthError(
+      `Report date “${rawConfirmed}” is not a valid calendar day (YYYY-MM-DD).`,
+      "VALIDATION",
+      400,
+    );
+  }
+  const confirmedReportDate = parsedConfirmed ?? suggestedReportDate;
   const report = resolveAutopart216vReportDate({
     filename: raw.filename ?? null,
     confirmedReportDate,

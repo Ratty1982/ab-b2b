@@ -5636,6 +5636,7 @@ export const confirmAutopart216vFn = createServerFn({ method: "POST" })
         filename?: string;
         confirmedReportDate?: string | null;
         allowHistoricalImport?: boolean;
+        expectedFileHash?: string | null;
       },
   )
   .handler(async ({ data }) => {

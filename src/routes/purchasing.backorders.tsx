@@ -348,6 +348,7 @@ function BackordersPage() {
           filename: manualDraft.filename,
           confirmedReportDate: confirmed,
           allowHistoricalImport: manualDraft.allowHistoricalImport,
+          expectedFileHash: manualDraft.preview.fileHash,
         },
       });
       if (!result.ok) {
@@ -601,7 +602,10 @@ function BackordersPage() {
 }
 
 function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const diagnosticsId = useId();
   const headline = freshness.headline;
+  const diagnostics = freshness.diagnostics ?? [];
   const toneClass =
     headline.tone === "good"
       ? "border-good/40 bg-good/10"
@@ -611,7 +615,10 @@ function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
   const dot =
     headline.tone === "good" ? "bg-good" : headline.tone === "bad" ? "bg-destructive" : "bg-warn";
   return (
-    <div className={cn("border-b px-4 py-3 text-[13px] sm:px-6", toneClass)}>
+    <div
+      className={cn("border-b px-4 py-3 text-[13px] sm:px-6", toneClass)}
+      data-backorder-freshness={freshness.operationalKind ?? headline.key}
+    >
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <p className="flex items-center gap-2 font-semibold uppercase tracking-[0.12em] text-[11px] text-ink">
           <span className={cn("size-2 rounded-full", dot)} aria-hidden />
@@ -642,7 +649,58 @@ function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
           {freshness.nextExpectedLabel}
         </span>
       </div>
-      {freshness.warning ? <p className="mt-1">{freshness.warning}</p> : null}
+      {freshness.warning ? (
+        <p className="mt-1" data-backorder-status-message="">
+          {freshness.warning}
+        </p>
+      ) : null}
+      {diagnostics.length > 0 ? (
+        <div className="mt-3 border-t border-border/50 pt-2" data-import-diagnostics="">
+          <button
+            type="button"
+            className="flex min-h-11 w-full items-center justify-between gap-3 text-left text-[12px] font-semibold uppercase tracking-[0.12em] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-expanded={diagnosticsOpen}
+            aria-controls={diagnosticsId}
+            data-import-diagnostics-trigger=""
+            onClick={() => setDiagnosticsOpen((open) => !open)}
+          >
+            <span>Import diagnostics ({diagnostics.length})</span>
+            <span aria-hidden="true">{diagnosticsOpen ? "−" : "+"}</span>
+          </button>
+          {diagnosticsOpen ? (
+            <ul id={diagnosticsId} className="mt-2 grid gap-2" data-import-diagnostics-list="">
+              {diagnostics.map((row) => (
+                <li
+                  key={row.id}
+                  className="rounded-md border border-border/60 bg-background/40 px-3 py-2 text-[12px]"
+                  data-import-diagnostic={row.filename}
+                >
+                  <p className="font-semibold text-ink">{row.filename}</p>
+                  <dl className="mt-1 grid gap-1 text-steel sm:grid-cols-2">
+                    <div>
+                      <dt className="inline font-semibold text-ink">Recorded date: </dt>
+                      <dd className="inline">{row.recordedDateLabel}</dd>
+                    </div>
+                    <div>
+                      <dt className="inline font-semibold text-ink">Received: </dt>
+                      <dd className="inline">{row.receivedAtLabel}</dd>
+                    </div>
+                    <div>
+                      <dt className="inline font-semibold text-ink">Imported: </dt>
+                      <dd className="inline">{row.importedAtLabel}</dd>
+                    </div>
+                    <div>
+                      <dt className="inline font-semibold text-ink">Import status: </dt>
+                      <dd className="inline">{row.importStatus}</dd>
+                    </div>
+                  </dl>
+                  <p className="mt-1 text-steel">{row.reason}</p>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
