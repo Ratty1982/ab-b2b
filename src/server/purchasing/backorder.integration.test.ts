@@ -1674,3 +1674,114 @@ describe("216V manual report date confirmation", () => {
   });
 });
 
+describe("216V manual upload fallback (bytesBase64)", () => {
+  it("imports a UTF-16 LE 216V_YYYYMMDD.csv the same way the Backorders UI posts bytesBase64", async () => {
+    const day = "20261104";
+    const filename = `216V_${day}.csv`;
+    const text = csv216v([
+      {
+        order: `SB${stamp}U16`,
+        account: "UNMAPPEDX",
+        name: "Unmapped Factors",
+        part: unknownSku,
+        desc: "UTF-16 manual recovery line",
+        ref: "REF-U16",
+        qty: 3,
+        unit: "1.50",
+        value: "4.50",
+      },
+    ]);
+    const bytes = Buffer.from(`\ufeff${text}`, "utf16le");
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    await prisma.autopartBackorderSnapshot.deleteMany({ where: { fileHash: hash } });
+    const bytesBase64 = bytes.toString("base64");
+
+    const { previewAutopart216vImport } = await import("@/server/purchasing/backorder-import");
+    const preview = await previewAutopart216vImport(adminId, {
+      bytesBase64,
+      filename,
+      confirmedReportDate: "2026-11-04",
+    });
+    expect(preview.fileHash).toBe(hash);
+
+    const imported = await confirmAutopart216vImport(adminId, {
+      bytesBase64,
+      filename,
+      confirmedReportDate: "2026-11-04",
+      expectedFileHash: preview.fileHash,
+      allowHistoricalImport: true,
+      source: "MANUAL",
+    });
+    expect(imported.duplicate).toBe(false);
+    expect(imported.reportDate).toBe("2026-11-04");
+    expect(imported.filename).toBe(filename);
+    expect(imported.lineCount).toBe(1);
+
+    const again = await confirmAutopart216vImport(adminId, {
+      bytesBase64,
+      filename,
+      confirmedReportDate: "2026-11-04",
+      expectedFileHash: preview.fileHash,
+      allowHistoricalImport: true,
+      source: "MANUAL",
+    });
+    expect(again.duplicate).toBe(true);
+    expect(again.id).toBe(imported.id);
+
+    await prisma.autopartBackorderSnapshot.deleteMany({ where: { id: imported.id } });
+  });
+
+  it("commits an email-batch 216V without clearing when a later invalid attachment is skipped", async () => {
+    const filename = `216V_email_${stamp}.csv`;
+    const text = csv216v([
+      {
+        order: `SB${stamp}EM`,
+        account: "UNMAPPEDX",
+        name: "Unmapped Factors",
+        part: unknownSku,
+        desc: "Email batch line",
+        ref: "REF-EM",
+        qty: 2,
+        unit: "1.00",
+        value: "2.00",
+      },
+    ]);
+    const bytes = Buffer.from(text, "utf8");
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    await prisma.autopartBackorderSnapshot.deleteMany({ where: { fileHash: hash } });
+
+    const batch = await process216vEmailBatch({
+      actorUserId: adminId,
+      source: "EMAIL",
+      emails: [
+        {
+          uid: `uid-email-${stamp}`,
+          messageId: `<email-${stamp}@example.test>`,
+          from: "autopart@example.test",
+          subject: "216V",
+          receivedAt: new Date("2026-11-04T18:20:00.000Z"),
+          attachments: [
+            {
+              filename,
+              content: bytes,
+              contentType: "application/force-download",
+            },
+            {
+              filename: "notes.pdf",
+              content: Buffer.from("%PDF"),
+              contentType: "application/pdf",
+            },
+          ],
+        },
+      ],
+    });
+    expect(batch.processed).toBe(1);
+    expect(batch.skipped).toBeGreaterThanOrEqual(1);
+    expect(batch.errors).toEqual([]);
+
+    const snap = await prisma.autopartBackorderSnapshot.findUniqueOrThrow({ where: { fileHash: hash } });
+    expect(snap.outstandingLineCount).toBe(1);
+    await prisma.autopartBackorderSnapshot.deleteMany({ where: { id: snap.id } });
+  });
+});
+

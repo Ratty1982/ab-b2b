@@ -25,6 +25,8 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain("Report date (required)");
     expect(src).toContain("Confirm import");
     expect(src).toContain("confirmedReportDate");
+    expect(src).toContain("Upload 216V now");
+    expect(src).toContain("AUTOPART_216V_FILE_ACCEPT");
     expect(src).toContain("Poll mailbox");
     expect(src).toContain("Last poll");
     expect(src).toContain("Latest report date");
@@ -33,11 +35,16 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain("Current snapshot imported");
     expect(src).toContain("Last error");
     expect(src).toContain("Import diagnostics");
+    expect(src).toContain("Import diagnostics:");
     expect(src).toContain("data-import-diagnostics");
     expect(src).toContain("data-backorder-status-message");
     expect(src).toContain("bytesToBase64");
+    expect(src).toContain("bytesBase64");
     expect(src).toContain('cache: "no-store"');
     expect(src.indexOf("function SettingsBody")).toBeLessThan(src.indexOf("Choose 216V file"));
+    // Recovery upload lives on the freshness bar; day-to-day choose/confirm stays in Settings.
+    expect(src.indexOf("function FreshnessBar")).toBeLessThan(src.indexOf("Upload 216V now"));
+    expect(src.indexOf("Upload 216V now")).toBeLessThan(src.indexOf("function SettingsBody"));
   });
 
   it("exposes operational view counts, attention summary, and search copy", () => {
