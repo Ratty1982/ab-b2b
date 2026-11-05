@@ -22,7 +22,7 @@ import type { PublicTeamMember } from "@/server/team/service";
 export const TEAM_PORTRAIT_ASPECT_CLASS = "aspect-[4/5]";
 /** ~240–280px card width from tablet up; full-width on narrow phones. */
 export const TEAM_CARD_MAX_WIDTH_CLASS = "w-full max-w-none sm:max-w-[280px]";
-export const TEAM_PHOTO_PLACEHOLDER_MARK = "/brand/ab-logo.jpg";
+export const TEAM_PHOTO_PLACEHOLDER_MARK = "/brand/ab-logo.png";
 /** Neutral stage behind mixed source photography (white / dark / legacy circular). */
 export const TEAM_PORTRAIT_STAGE_CLASS = "bg-[#d7dbe3]";
 

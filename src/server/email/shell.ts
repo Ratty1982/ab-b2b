@@ -42,7 +42,7 @@ function appBaseUrl(): string {
 
 /** Absolute HTTPS (or APP_URL) logo for email clients. */
 export function brandLogoUrl(): string {
-  return `${appBaseUrl()}/brand/ab-logo.jpg`;
+  return `${appBaseUrl()}/brand/ab-logo.png`;
 }
 
 /** Supporting Power Maxed mark — static public asset for email clients. */

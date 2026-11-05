@@ -194,7 +194,7 @@ export function WebsiteBrandingSettingsPanel() {
                 Source:{" "}
               </dt>
               <dd className="inline" data-branding-source={isCustom ? "custom" : "default"}>
-                {isCustom ? "Custom upload" : "Default (/brand/ab-logo.jpg)"}
+                {isCustom ? "Custom upload" : "Default (/brand/ab-logo.png)"}
               </dd>
             </div>
             {isCustom && state ? (

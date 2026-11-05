@@ -54,7 +54,7 @@ describe("site branding domain", () => {
   });
 
   it("builds cache-busted cms media URLs and keeps the static default constant", () => {
-    expect(DEFAULT_SITE_HEADER_LOGO_SRC).toBe("/brand/ab-logo.jpg");
+    expect(DEFAULT_SITE_HEADER_LOGO_SRC).toBe("/brand/ab-logo.png");
     expect(SITE_HEADER_LOGO_MAX_BYTES).toBe(2 * 1024 * 1024);
     const at = new Date("2026-11-05T12:00:00.000Z");
     expect(buildHeaderLogoSrc("clxxxxxxxx", at)).toBe(

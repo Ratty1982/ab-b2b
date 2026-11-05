@@ -158,7 +158,7 @@ describe("public header navigation refinement", () => {
     sessionState.current = { signedIn: false };
     const markup = html(createElement(PublicHeader));
     expect(markup).toContain('data-logo-size="header"');
-    expect(markup).toContain("/brand/ab-logo.jpg");
+    expect(markup).toContain("/brand/ab-logo.png");
     expect(markup).not.toContain("AUTOMOTIVE BRANDS");
     expect(markup).not.toContain("Trade Supply");
     expect(markup).toContain("h-14");

@@ -5,8 +5,8 @@
 
 export const SITE_BRANDING_SETTINGS_ID = "singleton";
 
-/** Fallback mark when no custom header logo is configured. */
-export const DEFAULT_SITE_HEADER_LOGO_SRC = "/brand/ab-logo.jpg";
+/** Fallback mark when no custom header logo is configured (hi-res AB mark from site assets). */
+export const DEFAULT_SITE_HEADER_LOGO_SRC = "/brand/ab-logo.png";
 
 /** Header logos are smaller assets than general CMS media — keep uploads lean. */
 export const SITE_HEADER_LOGO_MAX_BYTES = 2 * 1024 * 1024;

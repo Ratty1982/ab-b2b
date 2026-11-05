@@ -37,7 +37,7 @@ export function Logo({
         width={isHeader ? 58 : 36}
         height={isHeader ? 56 : 36}
         className={cn(
-          "shrink-0 rounded-sm bg-white",
+          "shrink-0 rounded-sm",
           mediaContainClass,
           isHeader ? "h-14 w-auto max-w-[11rem]" : "size-9",
         )}
