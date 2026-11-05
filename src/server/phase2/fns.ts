@@ -1364,6 +1364,64 @@ export const saveTradeOrderingSettingsFn = createServerFn({ method: "POST" })
     }
   });
 
+/** Public chrome logo (anonymous). Used by root beforeLoad. */
+export const getPublicSiteBrandingFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const branding = await import("@/server/branding/settings");
+    return { ok: true as const, data: await branding.getPublicSiteBranding() };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getSiteBrandingSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const branding = await import("@/server/branding/settings");
+    return { ok: true as const, data: await branding.getSiteBrandingSettingsForActor(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const uploadSiteHeaderLogoFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        filename?: string;
+        contentType?: string;
+        base64?: string;
+        altText?: string | null;
+      },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const branding = await import("@/server/branding/settings");
+      return {
+        ok: true as const,
+        data: await branding.uploadSiteHeaderLogo(userId, {
+          filename: String(data?.filename ?? ""),
+          contentType: String(data?.contentType ?? ""),
+          base64: String(data?.base64 ?? ""),
+          altText: data?.altText ?? null,
+        }),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const resetSiteHeaderLogoFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const branding = await import("@/server/branding/settings");
+    return { ok: true as const, data: await branding.resetSiteHeaderLogo(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
 export const previewProductContentJsonFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as { productId: string; jsonText: string })
   .handler(async ({ data }) => {

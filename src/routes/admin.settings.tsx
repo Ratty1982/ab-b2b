@@ -5,6 +5,7 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { EmailSettingsPanel } from "@/components/ab/EmailSettingsPanel";
 import { TradeOrderingSettingsPanel } from "@/components/ab/TradeOrderingSettingsPanel";
+import { WebsiteBrandingSettingsPanel } from "@/components/ab/WebsiteBrandingSettingsPanel";
 import { AutopartOngoingSalesFeedPanel } from "@/components/ab/AutopartOngoingSalesFeedPanel";
 import { SharePointSdsSettingsPanel } from "@/components/catalogue/SharePointSdsSettingsPanel";
 import { getMyTradeTestLevelFn, getSharePointSdsSettingsFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
@@ -318,6 +319,7 @@ function SettingsTabNav({
 function GeneralTab() {
   return (
     <div className="space-y-8" data-settings-panel="general">
+      <WebsiteBrandingSettingsPanel />
       <PlatformDefaultsSection />
       <p className="max-w-2xl text-[13px] text-steel">
         Trade testing, email, Autopart feeds, and SharePoint SDS each have their own tab. Use those

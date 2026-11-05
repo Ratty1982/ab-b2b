@@ -2170,6 +2170,20 @@ model TradeOrderingSettings {
   updatedAt              DateTime                 @updatedAt
 }
 
+/// Website chrome branding (Admin → Settings → General). Singleton.
+/// Header logo bytes live on CmsMedia (Postgres blob or S3/R2) — never container disk.
+model SiteBrandingSettings {
+  id                 String    @id @default("singleton")
+  headerLogoMediaId  String?
+  headerLogoAlt      String?
+  updatedByUserId    String?
+  updatedAt          DateTime  @updatedAt
+
+  headerLogoMedia CmsMedia? @relation("SiteHeaderLogo", fields: [headerLogoMediaId], references: [id], onDelete: SetNull)
+
+  @@index([headerLogoMediaId])
+}
+
 model EmailSettings {
   id                           String       @id @default("singleton")
   enabled                      Boolean      @default(false)
@@ -4391,6 +4405,7 @@ model CmsMedia {
   teamPhotos    TeamMember[]   @relation("TeamMemberPhoto")
   salesRepPhotos SalesRep[]    @relation("SalesRepPhoto")
   certificationBadges SiteCertification[] @relation("CertificationBadge")
+  siteHeaderLogos SiteBrandingSettings[] @relation("SiteHeaderLogo")
 
   @@index([contentType])
   @@index([uploadedById])

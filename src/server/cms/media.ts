@@ -157,6 +157,11 @@ async function mediaUsageCounts(): Promise<Map<string, number>> {
     select: { photoMediaId: true },
   });
   for (const row of salesPhotos) bump(row.photoMediaId);
+  const siteBranding = await prisma.siteBrandingSettings.findMany({
+    where: { headerLogoMediaId: { not: null } },
+    select: { headerLogoMediaId: true },
+  });
+  for (const row of siteBranding) bump(row.headerLogoMediaId);
   return counts;
 }
 
@@ -330,9 +335,9 @@ export async function deleteCmsMedia(actorUserId: string, raw: unknown) {
 
 /**
  * Media is anonymously public only when bound to intentional public surfaces:
- * active brand/category logos, trade-visible product media, public team photos,
- * sales-rep photos, published CMS OG images, or media referenced by a published
- * CMS page version. UUID secrecy is not authorization.
+ * active brand/category logos, site header logo, trade-visible product media,
+ * public team photos, sales-rep photos, published CMS OG images, or media
+ * referenced by a published CMS page version. UUID secrecy is not authorization.
  */
 export async function isCmsMediaPubliclyEligible(id: string): Promise<boolean> {
   if (!id || id.length > 64) return false;
@@ -355,6 +360,7 @@ export async function isCmsMediaPubliclyEligible(id: string): Promise<boolean> {
         select: { id: true },
       },
       salesRepPhotos: { take: 1, select: { id: true } },
+      siteHeaderLogos: { take: 1, select: { id: true } },
     },
   });
   if (!bound) return false;
@@ -363,7 +369,8 @@ export async function isCmsMediaPubliclyEligible(id: string): Promise<boolean> {
     bound.categoryImages.length ||
     bound.productMedia.length ||
     bound.teamPhotos.length ||
-    bound.salesRepPhotos.length
+    bound.salesRepPhotos.length ||
+    bound.siteHeaderLogos.length
   ) {
     return true;
   }
