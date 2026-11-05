@@ -3,11 +3,13 @@ import {
   build216vImportDiagnostics,
   compare216vSnapshotChronology,
   describe216vWeekendReportReview,
+  parseManual216vReportDate,
   pickCurrent216vSnapshot,
   previous216vBaseline,
   previous216vSnapshot,
   reportDateFrom216vFilename,
   resolveAutopart216vReportDate,
+  suggestManual216vReportDate,
   weekend216vImportNotice,
 } from "@/domain/autopart-216v-report-date";
 
@@ -63,11 +65,26 @@ describe("216V report date", () => {
     ).toContain("Monday–Friday snapshot stays in place");
   });
 
-  it("uses the email received day when the filename has no date", () => {
+  it("uses a stored business date before the email received day when the filename has no date", () => {
     const resolved = resolveAutopart216vReportDate({
       filename: "216V.CSV",
       receivedAt: new Date("2026-10-09T17:01:37.000Z"),
       businessDate: new Date("2026-10-12T00:00:00.000Z"),
+      importedAt: new Date("2026-10-12T17:16:07.000Z"),
+    });
+    expect(resolved).toEqual({
+      iso: "2026-10-12",
+      source: "BUSINESS_DATE",
+      verifiedWorkingDay: true,
+      review: null,
+      filenameDate: null,
+    });
+  });
+
+  it("uses the email received day when the filename has no date and no business date is stored", () => {
+    const resolved = resolveAutopart216vReportDate({
+      filename: "216V.CSV",
+      receivedAt: new Date("2026-10-09T17:01:37.000Z"),
       importedAt: new Date("2026-10-12T17:16:07.000Z"),
     });
     expect(resolved).toEqual({
@@ -76,6 +93,29 @@ describe("216V report date", () => {
       verifiedWorkingDay: true,
       review: null,
       filenameDate: null,
+    });
+  });
+
+  it("lets an administrator-confirmed manual date win over filename and received day", () => {
+    expect(parseManual216vReportDate("2026-11-04")).toBe("2026-11-04");
+    expect(parseManual216vReportDate("2026-02-31")).toBeNull();
+    expect(suggestManual216vReportDate({ filename: "216V.csv", now: new Date("2026-11-04T12:00:00.000Z") })).toBe(
+      "2026-11-04",
+    );
+    expect(suggestManual216vReportDate({ filename: "216V_20261103.csv" })).toBe("2026-11-03");
+
+    const confirmed = resolveAutopart216vReportDate({
+      filename: "216V_20261103.csv",
+      receivedAt: new Date("2026-11-03T18:02:00.000Z"),
+      importedAt: new Date("2026-11-04T21:00:00.000Z"),
+      confirmedReportDate: "2026-11-04",
+    });
+    expect(confirmed).toEqual({
+      iso: "2026-11-04",
+      source: "MANUAL_CONFIRMED",
+      verifiedWorkingDay: true,
+      review: null,
+      filenameDate: "2026-11-03",
     });
   });
 
