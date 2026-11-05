@@ -18,6 +18,7 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { AvailabilityBadge } from "@/components/ab/AvailabilityBadge";
 import { StatusBadge } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
+import { CHART_BAR_FILL } from "@/lib/chart-colours";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
 import type { PublicAvailability } from "@/domain/availability";
 import {
@@ -773,7 +774,7 @@ function InsightPanel({
                 />
                 <Bar
                   dataKey={chartMetric}
-                  fill="hsl(var(--primary))"
+                  fill={CHART_BAR_FILL}
                   radius={[2, 2, 0, 0]}
                 />
               </BarChart>

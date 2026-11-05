@@ -36,6 +36,7 @@ import {
   type SalesEnquiryDashboardPeriod,
   type SalesEnquirySection,
 } from "@/domain/sales-enquiry-dashboard";
+import { CHART_BAR_FILL } from "@/lib/chart-colours";
 import { formatQuantity } from "@/lib/format-quantity";
 import { cn } from "@/lib/utils";
 import { SalesReconciliationInvestigation } from "@/components/sales-intelligence/sales-reconciliation-investigation";
@@ -640,7 +641,7 @@ export function UnifiedCustomerSalesPanel({
                       <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={0} angle={-35} height={48} textAnchor="end" />
                       <YAxis tick={{ fontSize: 10 }} />
                       <Tooltip formatter={(value) => formatGbp(Number(value).toFixed(2))} />
-                      <Bar dataKey="net" name="Net sales" fill="hsl(var(--primary))" radius={[2, 2, 0, 0]} />
+                      <Bar dataKey="net" name="Net sales" fill={CHART_BAR_FILL} radius={[2, 2, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
