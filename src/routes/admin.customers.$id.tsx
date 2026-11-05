@@ -20,6 +20,7 @@ import { ROUTES } from "@/lib/app-nav";
 import { useSession } from "@/lib/session";
 import {
   createAddressFn,
+  updateAddressFn,
   createContactFn,
   updateContactFn,
   clearCompanyAutopartCustomerCodeFn,
@@ -94,6 +95,21 @@ function CustomerWorkspace() {
   const [editingContact, setEditingContact] = useState<ContactDraft | null>(null);
   const [managingUser, setManagingUser] = useState<PortalUserDraft | null>(null);
   const [addressOpen, setAddressOpen] = useState(false);
+  const [editingAddress, setEditingAddress] = useState<{
+    id: string;
+    label: string | null;
+    type: string;
+    line1: string;
+    line2: string | null;
+    town: string;
+    county: string | null;
+    postcode: string;
+    country?: string;
+    contactName?: string | null;
+    contactPhone?: string | null;
+    isDefaultBilling: boolean;
+    isDefaultDelivery: boolean;
+  } | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -263,6 +279,13 @@ function CustomerWorkspace() {
                   value={companyPriceListLabel(company.priceList?.name)}
                 />
                 <Row label="Payment terms" value={company.paymentTerms} />
+                <Row
+                  label="Credit limit"
+                  value={
+                    company.creditLimitDisplay ??
+                    (company.creditLimit ? `£${company.creditLimit}` : "—")
+                  }
+                />
                 <Row label="Tax status" value={company.taxStatus} />
                 <Row
                   label="Customer Group"
@@ -495,7 +518,13 @@ function CustomerWorkspace() {
             title="Addresses"
             empty="No addresses"
             {...(permissions.canEdit
-              ? { actionLabel: "Add address", onAction: () => setAddressOpen(true) }
+              ? {
+                  actionLabel: "Add address",
+                  onAction: () => {
+                    setEditingAddress(null);
+                    setAddressOpen(true);
+                  },
+                }
               : {})}
           >
             {addresses.map((a: {
@@ -507,17 +536,41 @@ function CustomerWorkspace() {
               town: string;
               county: string | null;
               postcode: string;
+              country?: string;
+              contactName?: string | null;
+              contactPhone?: string | null;
               isDefaultBilling: boolean;
               isDefaultDelivery: boolean;
             }) => (
               <li key={a.id} className="border border-border bg-surface/40 p-4 text-[13px]">
-                <div className="font-semibold">{a.label ?? a.type}</div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="font-semibold">{a.label ?? a.type}</div>
+                  {permissions.canEdit ? (
+                    <button
+                      type="button"
+                      className="h-8 shrink-0 rounded-md border border-border px-3 text-[11px] font-bold uppercase hover:border-steel"
+                      onClick={() => {
+                        setEditingAddress(a);
+                        setAddressOpen(true);
+                      }}
+                    >
+                      Edit
+                    </button>
+                  ) : null}
+                </div>
                 <div className="mt-1 text-steel">
                   {a.line1}
                   {a.line2 ? `, ${a.line2}` : ""}
                   <br />
                   {a.town}
                   {a.county ? `, ${a.county}` : ""} {a.postcode}
+                  {a.contactName ? (
+                    <>
+                      <br />
+                      Contact: {a.contactName}
+                      {a.contactPhone ? ` · ${a.contactPhone}` : ""}
+                    </>
+                  ) : null}
                 </div>
                 <div className="mt-2 flex gap-1.5">
                   {a.isDefaultBilling ? <StatusBadge tone="brand">Default billing</StatusBadge> : null}
@@ -625,9 +678,14 @@ function CustomerWorkspace() {
       {addressOpen ? (
         <AddressDrawer
           companyId={company.id}
-          onClose={() => setAddressOpen(false)}
+          address={editingAddress}
+          onClose={() => {
+            setAddressOpen(false);
+            setEditingAddress(null);
+          }}
           onSaved={async () => {
             setAddressOpen(false);
+            setEditingAddress(null);
             await reload();
           }}
         />
@@ -824,6 +882,8 @@ function CommercialEditor({
 }: {
   company: {
     paymentTerms: string | null;
+    creditLimit?: string | null;
+    creditLimitDisplay?: string | null;
     taxStatus: string;
     priceListId: string | null;
     salesperson: { salesRepId: string } | null;
@@ -834,6 +894,7 @@ function CommercialEditor({
   onSave: (patch: Record<string, unknown>) => Promise<void>;
 }) {
   const [paymentTerms, setPaymentTerms] = useState(company.paymentTerms ?? "");
+  const [creditLimit, setCreditLimit] = useState(company.creditLimit ?? "");
   const [taxStatus, setTaxStatus] = useState(company.taxStatus);
   const [priceListId, setPriceListId] = useState(company.priceListId ?? "");
   const [salesRepId, setSalesRepId] = useState(company.salesperson?.salesRepId ?? "");
@@ -846,6 +907,7 @@ function CommercialEditor({
         if (!permissions.canEdit) return;
         void onSave({
           paymentTerms: paymentTerms || null,
+          creditLimit: creditLimit.trim() === "" ? null : creditLimit.trim(),
           taxStatus,
           priceListId: permissions.canEditPricing ? priceListId || null : undefined,
           salesRepId: salesRepId || null,
@@ -880,6 +942,20 @@ function CommercialEditor({
       </Field>
       <Field label="Payment terms">
         <input value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} className={inputClass} disabled={!permissions.canEdit} />
+      </Field>
+      <Field label="Credit limit (GBP)">
+        <input
+          value={creditLimit}
+          onChange={(e) => setCreditLimit(e.target.value)}
+          className={inputClass}
+          disabled={!permissions.canEdit}
+          inputMode="decimal"
+          placeholder="Leave blank if not set"
+        />
+        <p className="mt-1 text-[12px] text-steel">
+          Informational only — does not block checkout or staff order entry.
+          {company.creditLimitDisplay ? ` Current: ${company.creditLimitDisplay}.` : " No limit recorded."}
+        </p>
       </Field>
       <Field label="Tax / VAT status">
         <select value={taxStatus} onChange={(e) => setTaxStatus(e.target.value)} className={inputClass} disabled={!permissions.canEdit}>
@@ -1572,43 +1648,74 @@ function PortalUserDrawer({
 
 function AddressDrawer({
   companyId,
+  address,
   onClose,
   onSaved,
 }: {
   companyId: string;
+  address?: {
+    id: string;
+    label: string | null;
+    type: string;
+    line1: string;
+    line2: string | null;
+    town: string;
+    county: string | null;
+    postcode: string;
+    country?: string;
+    contactName?: string | null;
+    contactPhone?: string | null;
+    isDefaultBilling: boolean;
+    isDefaultDelivery: boolean;
+  } | null;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const [label, setLabel] = useState("");
-  const [line1, setLine1] = useState("");
-  const [town, setTown] = useState("");
-  const [postcode, setPostcode] = useState("");
-  const [type, setType] = useState("DELIVERY");
-  const [isDefaultBilling, setIsDefaultBilling] = useState(false);
-  const [isDefaultDelivery, setIsDefaultDelivery] = useState(false);
+  const editing = Boolean(address?.id);
+  const [label, setLabel] = useState(address?.label ?? "");
+  const [line1, setLine1] = useState(address?.line1 ?? "");
+  const [line2, setLine2] = useState(address?.line2 ?? "");
+  const [town, setTown] = useState(address?.town ?? "");
+  const [county, setCounty] = useState(address?.county ?? "");
+  const [postcode, setPostcode] = useState(address?.postcode ?? "");
+  const [country, setCountry] = useState(address?.country ?? "GB");
+  const [contactName, setContactName] = useState(address?.contactName ?? "");
+  const [contactPhone, setContactPhone] = useState(address?.contactPhone ?? "");
+  const [type, setType] = useState(address?.type ?? "DELIVERY");
+  const [isDefaultBilling, setIsDefaultBilling] = useState(address?.isDefaultBilling ?? false);
+  const [isDefaultDelivery, setIsDefaultDelivery] = useState(address?.isDefaultDelivery ?? false);
+  const [busy, setBusy] = useState(false);
 
   return (
-    <Drawer open title="Add address" onClose={onClose}>
+    <Drawer open title={editing ? "Edit address" : "Add address"} onClose={onClose}>
       <form
         className="grid gap-3"
         onSubmit={(e) => {
           e.preventDefault();
           void (async () => {
-            const r = await createAddressFn({
-              data: {
-                companyId,
-                type,
-                label: label || null,
-                line1,
-                town,
-                postcode,
-                isDefaultBilling,
-                isDefaultDelivery,
-              },
-            });
+            setBusy(true);
+            const payload = {
+              companyId,
+              type,
+              label: label || null,
+              line1,
+              line2: line2 || null,
+              town,
+              county: county || null,
+              postcode,
+              country: country || "GB",
+              contactName: contactName || null,
+              contactPhone: contactPhone || null,
+              isDefaultBilling,
+              isDefaultDelivery,
+            };
+            const r = editing
+              ? await updateAddressFn({ data: { id: address!.id, ...payload } })
+              : await createAddressFn({ data: payload });
+            setBusy(false);
             if (!r.ok) toast.error(r.error);
             else {
-              toast.success("Address added");
+              toast.success(editing ? "Address updated" : "Address added");
               await onSaved();
             }
           })();
@@ -1625,14 +1732,29 @@ function AddressDrawer({
             <option value="TRADING">Trading</option>
           </select>
         </Field>
+        <Field label="Contact name">
+          <input value={contactName} onChange={(e) => setContactName(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Contact telephone">
+          <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className={inputClass} />
+        </Field>
         <Field label="Line 1">
           <input required value={line1} onChange={(e) => setLine1(e.target.value)} className={inputClass} />
         </Field>
-        <Field label="Town">
+        <Field label="Line 2">
+          <input value={line2} onChange={(e) => setLine2(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Town / city">
           <input required value={town} onChange={(e) => setTown(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="County">
+          <input value={county} onChange={(e) => setCounty(e.target.value)} className={inputClass} />
         </Field>
         <Field label="Postcode">
           <input required value={postcode} onChange={(e) => setPostcode(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Country">
+          <input value={country} onChange={(e) => setCountry(e.target.value.toUpperCase())} className={inputClass} maxLength={2} />
         </Field>
         <label className="flex items-center gap-2 text-[13px]">
           <input type="checkbox" checked={isDefaultBilling} onChange={(e) => setIsDefaultBilling(e.target.checked)} />
@@ -1642,8 +1764,15 @@ function AddressDrawer({
           <input type="checkbox" checked={isDefaultDelivery} onChange={(e) => setIsDefaultDelivery(e.target.checked)} />
           Default delivery
         </label>
-        <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">
-          Save address
+        <p className="text-[12px] text-steel">
+          Editing a saved address does not change delivery snapshots on existing orders.
+        </p>
+        <button
+          type="submit"
+          disabled={busy}
+          className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-60"
+        >
+          {busy ? "Saving…" : editing ? "Save changes" : "Save address"}
         </button>
       </form>
     </Drawer>

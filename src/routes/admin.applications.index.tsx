@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { PanelHeader, Metric } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -113,6 +113,22 @@ type Detail = {
     companyName: string;
     matchReasons: string[];
   }>;
+  possibleCompanyMatches?: Array<{
+    id: string;
+    name: string;
+    status: string;
+    primaryEmail: string | null;
+    phone: string | null;
+    strength: string;
+    reason: string;
+  }>;
+  applicantDeclared?: {
+    autopartCustomerCode: string | null;
+    autopartVerified: boolean;
+    note: string | null;
+  } | null;
+  approvalSideEffects?: readonly string[];
+  setupPath?: string | null;
   consentAcceptedAt?: string | null;
   contactEmail?: string | null;
   activation?: {
@@ -199,6 +215,7 @@ function detailToEditForm(detail: Detail): EditForm {
 }
 
 function ApplicationsPage() {
+  const navigate = useNavigate();
   const [filter, setFilter] = useState<(typeof filters)[number]>("ALL");
   const [q, setQ] = useState("");
   const [existingAccount, setExistingAccount] = useState<"all" | "claimed" | "none">("all");
@@ -206,11 +223,13 @@ function ApplicationsPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [acknowledgeApprovalEffects, setAcknowledgeApprovalEffects] = useState(false);
   const [reps, setReps] = useState<Array<{ id: string; label: string }>>([]);
   const [priceLists, setPriceLists] = useState<Array<{ id: string; name: string }>>([]);
   const [salesRepId, setSalesRepId] = useState("");
   const [priceListId, setPriceListId] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("");
+  const [creditLimit, setCreditLimit] = useState("");
   const [reviewNotes, setReviewNotes] = useState("");
   const [customerMessage, setCustomerMessage] = useState("");
   const [confirmExistingUserLink, setConfirmExistingUserLink] = useState(false);
@@ -270,6 +289,7 @@ function ApplicationsPage() {
         setConfirmExistingUserLink(false);
         setVerifiedAutopartCustomerCode(next.claimedAutopartCustomerCode ?? "");
         setConfirmAutopartAccountVerified(false);
+        setAcknowledgeApprovalEffects(false);
         setEditing(false);
         setEditForm(detailToEditForm(next));
       }
@@ -675,7 +695,9 @@ function ApplicationsPage() {
                 </>
               )}
 
-              {(detail.possibleDuplicates?.length || detail.identityWarnings?.length) ? (
+              {(detail.possibleDuplicates?.length ||
+                detail.identityWarnings?.length ||
+                detail.possibleCompanyMatches?.length) ? (
                 <ReviewBlock title="Duplicate / match warnings">
                   {detail.identityWarnings?.map((w) => (
                     <div key={w.code} className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px]">
@@ -683,14 +705,60 @@ function ApplicationsPage() {
                       <p className="mt-1">{w.message}</p>
                     </div>
                   ))}
+                  {detail.possibleCompanyMatches?.map((match) => (
+                    <div key={match.id} className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px]">
+                      <div className="font-semibold uppercase tracking-wide text-warn">
+                        Existing company match · {match.strength}
+                      </div>
+                      <p className="mt-1">
+                        {match.name} · {match.status}
+                        {match.primaryEmail ? ` · ${match.primaryEmail}` : ""}
+                      </p>
+                      <p className="mt-1 text-steel">{match.reason}</p>
+                      <Link
+                        to="/admin/customers/$id"
+                        params={{ id: match.id }}
+                        className="mt-2 inline-flex text-[11px] font-bold uppercase text-primary underline"
+                      >
+                        Open existing company
+                      </Link>
+                      <p className="mt-2 text-steel">
+                        Approving still creates a new ACTIVE customer. It does not merge into this
+                        company. Resolve the conflict manually if needed before approving.
+                      </p>
+                    </div>
+                  ))}
                   {detail.possibleDuplicates?.map((d) => (
                     <div key={d.id} className="rounded-md border border-border px-3 py-2 text-[12px]">
                       <div className="font-semibold">
-                        Possible duplicate · {d.reference} · {d.companyName}
+                        Possible duplicate application · {d.reference} · {d.companyName}
                       </div>
                       <div className="mt-1 text-steel">{d.matchReasons.join(" · ")}</div>
                     </div>
                   ))}
+                </ReviewBlock>
+              ) : null}
+
+              {detail.companyId && detail.company ? (
+                <ReviewBlock title="Linked customer">
+                  <Row label="Company" value={detail.company.name} />
+                  <Row label="Autopart code" value={detail.company.autopartCustomerCode ?? "Not set"} />
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Link
+                      to="/admin/customers/setup"
+                      search={{ companyId: detail.companyId }}
+                      className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-[11px] font-bold uppercase text-primary-foreground"
+                    >
+                      Continue customer setup
+                    </Link>
+                    <Link
+                      to="/admin/customers/$id"
+                      params={{ id: detail.companyId }}
+                      className="inline-flex h-10 items-center justify-center rounded-md border border-border px-4 text-[11px] font-bold uppercase"
+                    >
+                      View customer
+                    </Link>
+                  </div>
                 </ReviewBlock>
               ) : null}
 
@@ -715,6 +783,18 @@ function ApplicationsPage() {
                   </Field>
                   <Field label="Payment terms">
                     <input className={inputClass} placeholder="e.g. 30 days" value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} />
+                  </Field>
+                  <Field label="Credit limit (GBP)">
+                    <input
+                      className={inputClass}
+                      placeholder="Optional — leave blank if not set"
+                      value={creditLimit}
+                      onChange={(e) => setCreditLimit(e.target.value)}
+                      inputMode="decimal"
+                    />
+                    <p className="mt-1 text-[12px] text-steel">
+                      Informational only. Included in the approval email when set. Does not block orders.
+                    </p>
                   </Field>
                   <div className="rounded-md border border-border bg-ink/20 px-3 py-3 space-y-3">
                     <div>
@@ -947,18 +1027,31 @@ function ApplicationsPage() {
                 </div>
               ) : null}
 
-              {detail.companyId ? (
-                <Link
-                  to="/admin/customers/$id"
-                  params={{ id: detail.companyId }}
-                  className="inline-flex h-10 items-center justify-center rounded-md border border-border text-[12px] font-bold uppercase hover:border-steel"
-                >
-                  View customer
-                </Link>
-              ) : null}
-
               {open ? (
-                <div className="flex flex-wrap gap-2 border-t border-border/60 pt-3">
+                <div className="grid gap-3 border-t border-border/60 pt-3">
+                  <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-3 text-[12px]">
+                    <div className="font-semibold uppercase tracking-wide text-warn">
+                      Approval side effects
+                    </div>
+                    <ul className="mt-2 list-disc space-y-1 pl-4 text-steel">
+                      {(detail.approvalSideEffects ?? []).map((effect) => (
+                        <li key={effect}>{effect}</li>
+                      ))}
+                    </ul>
+                    <label className="mt-3 flex items-start gap-2 text-steel">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-4 accent-primary"
+                        checked={acknowledgeApprovalEffects}
+                        onChange={(e) => setAcknowledgeApprovalEffects(e.target.checked)}
+                      />
+                      <span>
+                        I understand approval activates the customer and may send a portal invitation
+                        before guided setup continues.
+                      </span>
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     disabled={busy}
@@ -1009,10 +1102,14 @@ function ApplicationsPage() {
                   </button>
                   <button
                     type="button"
-                    disabled={busy}
+                    disabled={busy || !acknowledgeApprovalEffects}
                     className="h-10 rounded-md bg-good px-4 text-[11px] font-bold uppercase text-ink disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={() =>
-                      void runAction("Approve", async () => {
+                      void runAction("Approve and continue customer setup", async () => {
+                        if (!acknowledgeApprovalEffects) {
+                          toast.error("Acknowledge the approval side effects before continuing");
+                          return;
+                        }
                         const r = await approveTradeApplicationFn({
                           data: {
                             id: detail.id,
@@ -1020,6 +1117,7 @@ function ApplicationsPage() {
                             salesRepId: salesRepId || null,
                             priceListId: priceListId || null,
                             paymentTerms: paymentTerms || null,
+                            creditLimit: creditLimit.trim() === "" ? null : creditLimit.trim(),
                             confirmExistingUserLink,
                             verifiedAutopartCustomerCode: verifiedAutopartCustomerCode.trim() || null,
                             confirmAutopartAccountVerified,
@@ -1038,19 +1136,22 @@ function ApplicationsPage() {
                           canResendActivation: r.data.canResendActivation,
                         });
                         if (!r.data.created) {
-                          toast.success("Already approved (idempotent)");
+                          toast.success("Already approved — opening customer setup");
                         } else if (r.data.emailSent) {
-                          toast.success("Account approved — activation email sent");
+                          toast.success("Approved — activation email sent. Opening customer setup");
                         } else if (r.data.emailDeferred) {
-                          toast.success("Account approved — activation email deferred");
+                          toast.success("Approved — activation email deferred. Opening customer setup");
                         } else {
-                          toast.success("Account approved — activation email failed");
+                          toast.success("Approved — activation email failed. Opening customer setup");
                         }
-                        await refreshDetail(detail.id);
+                        await navigate({
+                          to: "/admin/customers/setup",
+                          search: { companyId: r.data.companyId },
+                        });
                       })
                     }
                   >
-                    Approve
+                    Approve and continue customer setup
                   </button>
                   <button
                     type="button"
@@ -1079,6 +1180,7 @@ function ApplicationsPage() {
                   >
                     Reject
                   </button>
+                  </div>
                 </div>
               ) : null}
 

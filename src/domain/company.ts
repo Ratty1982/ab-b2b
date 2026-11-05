@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseCreditLimitInput } from "@/domain/credit-limit";
 
 /** Product-facing status labels; DB uses PENDING_APPROVAL for Pending. */
 export const COMPANY_STATUSES = [
@@ -23,23 +24,33 @@ export const COMPANY_STATUS_LABEL: Record<CompanyStatusKey, string> = {
 
 export const TAX_STATUSES = ["STANDARD", "ZERO_RATED", "EXEMPT", "OUTSIDE_SCOPE"] as const;
 
-export const companyCreateSchema = z.object({
-  name: z.string().trim().min(1).max(200),
-  tradingName: z.string().trim().max(200).optional().nullable(),
-  companyNumber: z.string().trim().max(40).optional().nullable(),
-  vatNumber: z.string().trim().max(40).optional().nullable(),
-  accountNumber: z.string().trim().max(40).optional().nullable(),
-  status: z.enum(COMPANY_STATUSES).default("PROSPECT"),
-  taxStatus: z.enum(TAX_STATUSES).default("STANDARD"),
-  website: z.string().trim().url().max(300).optional().nullable().or(z.literal("")),
-  phone: z.string().trim().max(40).optional().nullable(),
-  primaryEmail: z.string().trim().email().max(320).optional().nullable().or(z.literal("")),
-  notes: z.string().trim().max(5000).optional().nullable(),
-  paymentTerms: z.string().trim().max(120).optional().nullable(),
-  priceListId: z.string().cuid().optional().nullable(),
-  salesRepId: z.string().cuid().optional().nullable(),
-  externalRef: z.string().trim().max(120).optional().nullable(),
-});
+export const companyCreateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    tradingName: z.string().trim().max(200).optional().nullable(),
+    companyNumber: z.string().trim().max(40).optional().nullable(),
+    vatNumber: z.string().trim().max(40).optional().nullable(),
+    accountNumber: z.string().trim().max(40).optional().nullable(),
+    status: z.enum(COMPANY_STATUSES).default("PROSPECT"),
+    taxStatus: z.enum(TAX_STATUSES).default("STANDARD"),
+    website: z.string().trim().url().max(300).optional().nullable().or(z.literal("")),
+    phone: z.string().trim().max(40).optional().nullable(),
+    primaryEmail: z.string().trim().email().max(320).optional().nullable().or(z.literal("")),
+    notes: z.string().trim().max(5000).optional().nullable(),
+    paymentTerms: z.string().trim().max(120).optional().nullable(),
+    /** Informational GBP credit limit only — null clears; never blocks orders. */
+    creditLimit: z.string().trim().max(40).optional().nullable().or(z.literal("")),
+    priceListId: z.string().cuid().optional().nullable(),
+    salesRepId: z.string().cuid().optional().nullable(),
+    externalRef: z.string().trim().max(120).optional().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.creditLimit === undefined) return;
+    const parsed = parseCreditLimitInput(value.creditLimit);
+    if (!parsed.ok) {
+      ctx.addIssue({ code: "custom", path: ["creditLimit"], message: parsed.message });
+    }
+  });
 
 const optionalEmail = z.string().trim().email().max(320).optional().nullable().or(z.literal(""));
 
@@ -88,24 +99,34 @@ export const companyCreateWithSetupSchema = companyCreateSchema.extend({
  * when status is omitted. That previously reset approved ACTIVE companies to
  * PROSPECT on every commercial-settings save.
  */
-export const companyUpdateSchema = z.object({
-  id: z.string().cuid(),
-  name: z.string().trim().min(1).max(200).optional(),
-  tradingName: z.string().trim().max(200).optional().nullable(),
-  companyNumber: z.string().trim().max(40).optional().nullable(),
-  vatNumber: z.string().trim().max(40).optional().nullable(),
-  accountNumber: z.string().trim().max(40).optional().nullable(),
-  status: z.enum(COMPANY_STATUSES).optional(),
-  taxStatus: z.enum(TAX_STATUSES).optional(),
-  website: z.string().trim().url().max(300).optional().nullable().or(z.literal("")),
-  phone: z.string().trim().max(40).optional().nullable(),
-  primaryEmail: z.string().trim().email().max(320).optional().nullable().or(z.literal("")),
-  notes: z.string().trim().max(5000).optional().nullable(),
-  paymentTerms: z.string().trim().max(120).optional().nullable(),
-  priceListId: z.string().cuid().optional().nullable(),
-  salesRepId: z.string().cuid().optional().nullable(),
-  externalRef: z.string().trim().max(120).optional().nullable(),
-});
+export const companyUpdateSchema = z
+  .object({
+    id: z.string().cuid(),
+    name: z.string().trim().min(1).max(200).optional(),
+    tradingName: z.string().trim().max(200).optional().nullable(),
+    companyNumber: z.string().trim().max(40).optional().nullable(),
+    vatNumber: z.string().trim().max(40).optional().nullable(),
+    accountNumber: z.string().trim().max(40).optional().nullable(),
+    status: z.enum(COMPANY_STATUSES).optional(),
+    taxStatus: z.enum(TAX_STATUSES).optional(),
+    website: z.string().trim().url().max(300).optional().nullable().or(z.literal("")),
+    phone: z.string().trim().max(40).optional().nullable(),
+    primaryEmail: z.string().trim().email().max(320).optional().nullable().or(z.literal("")),
+    notes: z.string().trim().max(5000).optional().nullable(),
+    paymentTerms: z.string().trim().max(120).optional().nullable(),
+    /** Informational GBP credit limit only — null clears; never blocks orders. */
+    creditLimit: z.string().trim().max(40).optional().nullable().or(z.literal("")),
+    priceListId: z.string().cuid().optional().nullable(),
+    salesRepId: z.string().cuid().optional().nullable(),
+    externalRef: z.string().trim().max(120).optional().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.creditLimit === undefined) return;
+    const parsed = parseCreditLimitInput(value.creditLimit);
+    if (!parsed.ok) {
+      ctx.addIssue({ code: "custom", path: ["creditLimit"], message: parsed.message });
+    }
+  });
 
 export const companyDeleteSchema = z.object({
   id: z.string().cuid(),

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseCreditLimitInput } from "@/domain/credit-limit";
 
 export const TRADE_APPLICATION_STATUSES = [
   "DRAFT",
@@ -126,6 +127,8 @@ export const tradeApplicationDecisionSchema = z
     salesRepId: z.string().cuid().optional().nullable(),
     priceListId: z.string().cuid().optional().nullable(),
     paymentTerms: optionalText(120),
+    /** Informational GBP credit limit assigned at approval — never blocks orders. */
+    creditLimit: optionalText(40),
     /**
      * When the applicant email already belongs to another company or an
      * internal user, staff must explicitly confirm linking.
@@ -144,6 +147,12 @@ export const tradeApplicationDecisionSchema = z
     confirmAutopartAccountVerified: z.boolean().optional().default(false),
   })
   .superRefine((value, ctx) => {
+    if (value.creditLimit !== undefined && value.creditLimit !== null) {
+      const parsed = parseCreditLimitInput(value.creditLimit);
+      if (!parsed.ok) {
+        ctx.addIssue({ code: "custom", path: ["creditLimit"], message: parsed.message });
+      }
+    }
     if (value.confirmAutopartAccountVerified) {
       const code = value.verifiedAutopartCustomerCode?.trim();
       if (!code) {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   cancelAutopartProspectConversionFn,
@@ -237,6 +238,32 @@ export function AutopartProspectConversionPanel() {
             >
               Create prospects
             </button>
+          ) : null}
+          {run.setupLinks && run.setupLinks.length > 0 ? (
+            <div className="mt-2 grid gap-2 border-t border-border/60 pt-3">
+              <p className="font-medium">
+                Continue customer setup for linked prospects ({run.setupLinks.length})
+              </p>
+              <p className="text-steel">
+                Bulk conversion does not open many wizards at once. Open each customer when ready.
+                Failed or ambiguous accounts stay in review / the exceptions report.
+              </p>
+              <ul className="grid max-h-64 gap-1 overflow-auto text-[12px]">
+                {run.setupLinks.map((link) => (
+                  <li key={link.companyId} className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono">{link.accountCode}</span>
+                    <span>{link.companyName}</span>
+                    <Link
+                      to="/admin/customers/setup"
+                      search={{ companyId: link.companyId }}
+                      className="font-bold uppercase text-primary underline"
+                    >
+                      Continue customer setup
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
         </div>
       ) : null}

@@ -33,6 +33,10 @@ export type TradeApplicationEmailSnapshot = {
   customerMessage?: string | null;
   activationPath?: string | null;
   adminApplicationUrl?: string;
+  /** Agreed GBP credit limit at approval time — omit when unset (do not invent). */
+  creditLimitDisplay?: string | null;
+  paymentTerms?: string | null;
+  tradingName?: string | null;
 };
 
 export function buildTradeApplicationReceivedBodies(
@@ -169,12 +173,18 @@ export function buildTradeApplicationApprovedBodies(
   const activateBlock = activationUrl
     ? `\nUse the link below to activate your account and set your password:\n${activationUrl}\n`
     : "\nYou will receive a separate message with your activation link shortly.\n";
+  const creditLine = snap.creditLimitDisplay?.trim()
+    ? `Agreed credit limit: ${snap.creditLimitDisplay.trim()}\n`
+    : "";
+  const termsLine = snap.paymentTerms?.trim()
+    ? `Payment terms: ${snap.paymentTerms.trim()}\n`
+    : "";
   const text = `YOUR TRADE ACCOUNT HAS BEEN APPROVED
 
 Hello ${first},
 
 Your application has been approved for ${snap.companyName}.
-${snap.reference ? `Application reference: ${snap.reference}\n` : ""}
+${snap.reference ? `Application reference: ${snap.reference}\n` : ""}${creditLine}${termsLine}
 The next step is to activate your account and set your password.
 ${activateBlock}
 Automotive Brands
@@ -185,6 +195,12 @@ ${emailHero("Your trade account has been approved", `Hello ${first}`)}
 ${emailReferencePanel([
   { label: "Company", value: snap.companyName },
   ...(snap.reference ? [{ label: "Application reference", value: snap.reference }] : []),
+  ...(snap.creditLimitDisplay?.trim()
+    ? [{ label: "Agreed credit limit", value: snap.creditLimitDisplay.trim() }]
+    : []),
+  ...(snap.paymentTerms?.trim()
+    ? [{ label: "Payment terms", value: snap.paymentTerms.trim() }]
+    : []),
 ])}
 ${emailParagraph("Your application has been approved. The next step is to activate your account and set your password.")}
 ${

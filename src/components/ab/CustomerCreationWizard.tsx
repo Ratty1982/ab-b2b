@@ -166,6 +166,25 @@ export function CustomerCreationWizard({
         }
       />
       <div className="grid gap-6 p-4 sm:p-6">
+        {data?.source ? (
+          <div className="rounded-md border border-border bg-surface/40 px-4 py-3 text-[13px]">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">
+              Setup source
+            </div>
+            <p className="mt-1 font-medium">{data.source.label}</p>
+            {data.source.reference ? (
+              <p className="mt-1 text-steel">Application {data.source.reference}</p>
+            ) : null}
+            {data.source.applicantClaimedAutopartCode ? (
+              <p className="mt-2 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px]">
+                Applicant claimed Autopart code{" "}
+                <span className="font-semibold">{data.source.applicantClaimedAutopartCode}</span> —
+                unverified. Confirm on the Autopart step before treating it as the sales account.
+              </p>
+            ) : null}
+            {data.source.note ? <p className="mt-1 text-steel">{data.source.note}</p> : null}
+          </div>
+        ) : null}
         <nav aria-label="Customer setup steps">
           <ol className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {WIZARD_STEPS.map((item) => {
@@ -982,6 +1001,9 @@ function TradingStep({
   onDetails: () => void;
 }) {
   const [paymentTerms, setPaymentTerms] = useState(data.company.paymentTerms ?? "");
+  const [creditLimit, setCreditLimit] = useState(
+    (data.company as { creditLimit?: string | null }).creditLimit ?? "",
+  );
   const [priceListId, setPriceListId] = useState(data.company.priceListId ?? "");
   const [taxStatus, setTaxStatus] = useState(data.company.taxStatus);
   const [groupId, setGroupId] = useState(data.company.customerGroup?.id ?? "");
@@ -1014,6 +1036,7 @@ function TradingStep({
         data: {
           id: companyId,
           paymentTerms,
+          creditLimit: creditLimit.trim() === "" ? null : creditLimit.trim(),
           taxStatus,
           ...(data.permissions.canEditPricing ? { priceListId: priceListId || null } : {}),
         },
@@ -1046,7 +1069,7 @@ function TradingStep({
         <h2 className="font-display text-lg uppercase">Pricing and trading terms</h2>
         <p className="mt-1 text-[13px] text-steel">
           These are the existing commercial settings. An empty price list means{" "}
-          {DEFAULT_TRADE_PRICE_LABEL}. Credit balance is not stored here.
+          {DEFAULT_TRADE_PRICE_LABEL}. Credit limit is informational only and never blocks orders.
         </p>
       </div>
       <Field label="Price list" htmlFor="wizard-price-list">
@@ -1080,6 +1103,17 @@ function TradingStep({
             onChange={(event) => setPaymentTerms(event.target.value)}
             className={inputClass}
             disabled={!data.permissions.canEditCompany}
+          />
+        </Field>
+        <Field label="Credit limit (GBP)" htmlFor="wizard-credit-limit">
+          <input
+            id="wizard-credit-limit"
+            value={creditLimit}
+            onChange={(event) => setCreditLimit(event.target.value)}
+            className={inputClass}
+            disabled={!data.permissions.canEditCompany}
+            inputMode="decimal"
+            placeholder="Optional — leave blank if not set"
           />
         </Field>
         <Field label="Tax status" htmlFor="wizard-trade-tax">

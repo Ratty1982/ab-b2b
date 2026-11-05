@@ -146,6 +146,7 @@ function diagnosticsOf(batch: Batch | null): Diagnostics {
 
 function AutopartImportsPage() {
   const [error, setError] = useState<string | null>(null);
+  const [createdProspectId, setCreatedProspectId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [batches, setBatches] = useState<BatchList | null>(null);
   const [batch, setBatch] = useState<Batch | null>(null);
@@ -317,6 +318,18 @@ function AutopartImportsPage() {
       />
       <div className="space-y-6 px-4 py-4 sm:px-6">
         {error ? <p className="text-[13px] text-bad">{error}</p> : null}
+        {createdProspectId ? (
+          <div className="rounded-md border border-good/40 bg-good/10 px-4 py-3 text-[13px]">
+            <p className="font-medium">Prospect created and linked. Sales code remains unverified.</p>
+            <Link
+              to="/admin/customers/setup"
+              search={{ companyId: createdProspectId }}
+              className="mt-2 inline-flex text-[12px] font-bold uppercase text-primary underline"
+            >
+              Continue customer setup
+            </Link>
+          </div>
+        ) : null}
         <p className="text-[13px] text-steel">
           Search an Autopart account by ID or name, then link it to an existing company or create
           a prospect. An unambiguous Autopart ID can be verified on the customer commercial tab.
@@ -709,13 +722,22 @@ function AutopartImportsPage() {
                     </td>
                     <td className="px-3 py-2">
                       {account.company ? (
-                        <Link
-                          to="/admin/customers/$id"
-                          params={{ id: account.company.id }}
-                          className="text-cyan underline"
-                        >
-                          {account.company.name}
-                        </Link>
+                        <div className="space-y-1">
+                          <Link
+                            to="/admin/customers/$id"
+                            params={{ id: account.company.id }}
+                            className="text-cyan underline"
+                          >
+                            {account.company.name}
+                          </Link>
+                          <Link
+                            to="/admin/customers/setup"
+                            search={{ companyId: account.company.id }}
+                            className="block text-[11px] font-semibold uppercase text-cyan"
+                          >
+                            Continue customer setup
+                          </Link>
+                        </div>
                       ) : (
                         <div className="space-y-1">
                           <button
@@ -725,8 +747,12 @@ function AutopartImportsPage() {
                               void createCompanyForAutopartAccountFn({
                                 data: { accountId: account.id },
                               }).then((result) => {
-                                if (!result.ok) setError(result.error);
-                                else void loadAccounts();
+                                if (!result.ok) {
+                                  setError(result.error);
+                                  return;
+                                }
+                                void loadAccounts();
+                                setCreatedProspectId(result.data.companyId);
                               });
                             }}
                           >
@@ -734,7 +760,7 @@ function AutopartImportsPage() {
                           </button>
                           <p className="text-[11px] text-steel">
                             Creates a prospect and links this account. Does not approve portal
-                            login or import historical purchases.
+                            login, verify the sales code, or import historical purchases.
                           </p>
                         </div>
                       )}
