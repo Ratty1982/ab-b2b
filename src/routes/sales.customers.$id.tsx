@@ -380,6 +380,12 @@ function SalesCustomer() {
                 <dd>{company.paymentTerms ?? "—"}</dd>
               </div>
               <div>
+                <dt className="text-steel">Credit limit</dt>
+                <dd>
+                  {(company as { creditLimitDisplay?: string | null }).creditLimitDisplay ?? "—"}
+                </dd>
+              </div>
+              <div>
                 <dt className="text-steel">Tax status</dt>
                 <dd>{company.taxStatus}</dd>
               </div>

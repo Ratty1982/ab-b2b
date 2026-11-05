@@ -308,6 +308,13 @@ export const placeSalesOrderSchema = z
     addressId: z.string().cuid().optional().nullable(),
     oneOffAddress: deliveryAddressSnapshotSchema.optional().nullable(),
     fulfilmentChoice: z.enum(ORDER_FULFILMENT_CHOICES).default("DELIVERY"),
+    /**
+     * After a successful place, also save the one-off address to the customer profile.
+     * Never runs when order placement fails. Does not mark the address as default unless
+     * saveAddressAsDefaultDelivery is also true. Requires companies.edit.
+     */
+    saveAddressToProfile: z.boolean().optional().default(false),
+    saveAddressAsDefaultDelivery: z.boolean().optional().default(false),
     poNumber: optionalPlain(80),
     deliveryInstructions: optionalPlain(500),
     internalNote: optionalPlain(2000),
@@ -341,6 +348,20 @@ export const placeSalesOrderSchema = z
         code: z.ZodIssueCode.custom,
         message: "A delivery address is required",
         path: ["addressId"],
+      });
+    }
+    if (value.saveAddressToProfile && !value.oneOffAddress) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Only a new one-off address can be saved to the customer profile",
+        path: ["saveAddressToProfile"],
+      });
+    }
+    if (value.saveAddressToProfile && value.fulfilmentChoice === "COLLECTION") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Collection orders do not save a delivery address",
+        path: ["saveAddressToProfile"],
       });
     }
   });

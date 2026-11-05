@@ -31,6 +31,7 @@ import {
   type CompanyStatusKey,
 } from "@/domain/company";
 import { companyMembershipUpdateSchema, generateInviteToken, inviteUserSchema } from "@/domain/invitation";
+import { formatCreditLimitGbp, parseCreditLimitInput } from "@/domain/credit-limit";
 
 function companySelect() {
   return {
@@ -43,6 +44,7 @@ function companySelect() {
     status: true,
     taxStatus: true,
     paymentTerms: true,
+    creditLimit: true,
     currency: true,
     priceListId: true,
     externalRef: true,
@@ -200,6 +202,15 @@ export async function listCompaniesForActor(
   };
 }
 
+/** Convert Prisma Decimal / string credit limit to 2dp string or null (no invented zero). */
+function creditLimitToString(value: { toString(): string } | string | null | undefined): string | null {
+  if (value == null) return null;
+  const raw = typeof value === "string" ? value : value.toString();
+  const parsed = parseCreditLimitInput(raw);
+  if (!parsed.ok || parsed.value == null) return null;
+  return parsed.value;
+}
+
 function serializeCompany(row: {
   id: string;
   accountNumber: string | null;
@@ -210,6 +221,7 @@ function serializeCompany(row: {
   status: string;
   taxStatus: string;
   paymentTerms: string | null;
+  creditLimit?: { toString(): string } | string | null;
   currency: string;
   priceListId: string | null;
   externalRef: string | null;
@@ -239,6 +251,7 @@ function serializeCompany(row: {
   const assignment = row.assignments?.[0];
   const autopartVerified = Boolean(row.autopartCustomerCode && row.autopartCustomerCodeVerifiedAt);
   const aliases = row.autopartAccountAliases ?? [];
+  const creditLimitAmount = creditLimitToString(row.creditLimit);
   return {
     id: row.id,
     accountNumber: row.accountNumber,
@@ -252,6 +265,8 @@ function serializeCompany(row: {
       : null,
     taxStatus: row.taxStatus,
     paymentTerms: row.paymentTerms,
+    creditLimit: creditLimitAmount,
+    creditLimitDisplay: formatCreditLimitGbp(creditLimitAmount),
     currency: row.currency,
     priceListId: row.priceListId,
     priceList: row.priceList ?? null,
@@ -503,6 +518,12 @@ export async function createCompany(actorUserId: string, raw: unknown) {
         primaryEmail: emptyToNull(input.primaryEmail),
         notes: emptyToNull(input.notes),
         paymentTerms: emptyToNull(input.paymentTerms),
+        creditLimit: (() => {
+          if (input.creditLimit === undefined) return null;
+          const parsed = parseCreditLimitInput(input.creditLimit);
+          if (!parsed.ok) throw new AuthError(parsed.message, "VALIDATION", 400);
+          return parsed.value ?? null;
+        })(),
         // null = Default Trade Price (ProductVariant.tradePrice) until sales assigns a list.
         priceListId: input.priceListId ?? null,
         externalRef: emptyToNull(input.externalRef),
@@ -657,6 +678,11 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
   if (input.primaryEmail !== undefined) data.primaryEmail = emptyToNull(input.primaryEmail);
   if (input.notes !== undefined) data.notes = emptyToNull(input.notes);
   if (input.paymentTerms !== undefined) data.paymentTerms = emptyToNull(input.paymentTerms);
+  if (input.creditLimit !== undefined) {
+    const parsed = parseCreditLimitInput(input.creditLimit);
+    if (!parsed.ok) throw new AuthError(parsed.message, "VALIDATION", 400);
+    data.creditLimit = parsed.value ?? null;
+  }
   if (input.priceListId !== undefined) {
     data.priceList = input.priceListId
       ? { connect: { id: input.priceListId } }
@@ -721,6 +747,15 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
     if (input.priceListId !== undefined && input.priceListId !== before.priceListId) {
       changes.push("Price list updated");
     }
+    if (input.creditLimit !== undefined) {
+      const beforeLimit = creditLimitToString(before.creditLimit);
+      const afterLimit = creditLimitToString(row.creditLimit);
+      if (beforeLimit !== afterLimit) {
+        changes.push(
+          `Credit limit → ${formatCreditLimitGbp(afterLimit) ?? "not set"}`,
+        );
+      }
+    }
     if (changes.length) {
       await tx.activity.create({
         data: {
@@ -775,13 +810,31 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
       status: before.status,
       priceListId: before.priceListId,
       paymentTerms: before.paymentTerms,
+      creditLimit: creditLimitToString(before.creditLimit),
     },
     after: {
       status: updated.status,
       priceListId: updated.priceListId,
       paymentTerms: updated.paymentTerms,
+      creditLimit: creditLimitToString(updated.creditLimit),
     },
   });
+
+  if (input.creditLimit !== undefined) {
+    const beforeLimit = creditLimitToString(before.creditLimit);
+    const afterLimit = creditLimitToString(updated.creditLimit);
+    if (beforeLimit !== afterLimit) {
+      await recordAuditEvent({
+        action: "company.credit_limit_changed",
+        entityType: "Company",
+        entityId: input.id,
+        actorUserId,
+        companyId: input.id,
+        before: { creditLimit: beforeLimit },
+        after: { creditLimit: afterLimit },
+      });
+    }
+  }
 
   if (input.status !== undefined && input.status !== before.status) {
     await recordAuditEvent({
@@ -793,6 +846,24 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
       before: { status: before.status },
       after: { status: input.status },
     });
+
+    if (input.status === "ACTIVE" && before.status !== "ACTIVE") {
+      try {
+        const { sendTradeAccountApprovedInternalNotification } = await import(
+          "@/server/email/transactional"
+        );
+        await sendTradeAccountApprovedInternalNotification({
+          companyId: input.id,
+          actorUserId,
+          source: before.status === "PROSPECT" || before.status === "PENDING_APPROVAL"
+            ? "CUSTOMER_WIZARD"
+            : "CUSTOMER_ACTIVATION",
+          transitionKey: `company:${input.id}:from:${before.status}`,
+        });
+      } catch {
+        /* notification failure must not roll back status change */
+      }
+    }
   }
 
   if (portalRevoked > 0 && input.status) {

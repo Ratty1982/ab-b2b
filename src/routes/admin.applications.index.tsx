@@ -211,6 +211,7 @@ function ApplicationsPage() {
   const [salesRepId, setSalesRepId] = useState("");
   const [priceListId, setPriceListId] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("");
+  const [creditLimit, setCreditLimit] = useState("");
   const [reviewNotes, setReviewNotes] = useState("");
   const [customerMessage, setCustomerMessage] = useState("");
   const [confirmExistingUserLink, setConfirmExistingUserLink] = useState(false);
@@ -716,6 +717,18 @@ function ApplicationsPage() {
                   <Field label="Payment terms">
                     <input className={inputClass} placeholder="e.g. 30 days" value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} />
                   </Field>
+                  <Field label="Credit limit (GBP)">
+                    <input
+                      className={inputClass}
+                      placeholder="Optional — leave blank if not set"
+                      value={creditLimit}
+                      onChange={(e) => setCreditLimit(e.target.value)}
+                      inputMode="decimal"
+                    />
+                    <p className="mt-1 text-[12px] text-steel">
+                      Informational only. Included in the approval email when set. Does not block orders.
+                    </p>
+                  </Field>
                   <div className="rounded-md border border-border bg-ink/20 px-3 py-3 space-y-3">
                     <div>
                       <h4 className="text-[11px] font-semibold uppercase tracking-wide text-steel">
@@ -1020,6 +1033,7 @@ function ApplicationsPage() {
                             salesRepId: salesRepId || null,
                             priceListId: priceListId || null,
                             paymentTerms: paymentTerms || null,
+                            creditLimit: creditLimit.trim() === "" ? null : creditLimit.trim(),
                             confirmExistingUserLink,
                             verifiedAutopartCustomerCode: verifiedAutopartCustomerCode.trim() || null,
                             confirmAutopartAccountVerified,

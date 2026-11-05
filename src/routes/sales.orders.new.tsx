@@ -129,6 +129,8 @@ function NewSalesOrder() {
   const [contactId, setContactId] = useState("");
   const [addressId, setAddressId] = useState("");
   const [useOneOff, setUseOneOff] = useState(false);
+  const [saveAddressToProfile, setSaveAddressToProfile] = useState(false);
+  const [saveAddressAsDefaultDelivery, setSaveAddressAsDefaultDelivery] = useState(false);
   const [fulfilmentChoice, setFulfilmentChoice] = useState<OrderFulfilmentChoice>("DELIVERY");
   const [backorderAcknowledged, setBackorderAcknowledged] = useState(false);
   const [oneOff, setOneOff] = useState({ line1: "", line2: "", town: "", county: "", postcode: "" });
@@ -487,6 +489,12 @@ function NewSalesOrder() {
               postcode: oneOff.postcode,
               country: "GB",
             },
+        saveAddressToProfile:
+          fulfilmentChoice === "DELIVERY" && useOneOff ? saveAddressToProfile : false,
+        saveAddressAsDefaultDelivery:
+          fulfilmentChoice === "DELIVERY" && useOneOff && saveAddressToProfile
+            ? saveAddressAsDefaultDelivery
+            : false,
         poNumber: poNumber || null,
         deliveryInstructions: instructions || null,
         internalNote: internalNote || null,
@@ -558,6 +566,11 @@ function NewSalesOrder() {
         ? orderAmendmentConfirmationMessage(emailStatus)
         : `Order ${result.data.order.orderNumber} placed`,
     );
+    if ("savedAddressError" in result.data && result.data.savedAddressError) {
+      toast.error(result.data.savedAddressError);
+    } else if ("savedAddressId" in result.data && result.data.savedAddressId) {
+      toast.success("Delivery address saved to customer profile");
+    }
   }
 
   if (placed) {
@@ -743,6 +756,32 @@ function NewSalesOrder() {
                       <input className={salesOrderControlClass} placeholder="Town" value={oneOff.town} onChange={(e) => { setOneOff({ ...oneOff, town: e.target.value }); setAuthorised(false); }} />
                       <input className={salesOrderControlClass} placeholder="County" value={oneOff.county} onChange={(e) => { setOneOff({ ...oneOff, county: e.target.value }); setAuthorised(false); }} />
                       <input className={salesOrderControlClass} placeholder="Postcode" value={oneOff.postcode} onChange={(e) => { setOneOff({ ...oneOff, postcode: e.target.value }); setAuthorised(false); }} />
+                      <label className="col-span-full flex min-h-11 items-center gap-3 text-[15px]">
+                        <input
+                          type="checkbox"
+                          className="size-5"
+                          checked={saveAddressToProfile}
+                          onChange={(e) => {
+                            setSaveAddressToProfile(e.target.checked);
+                            if (!e.target.checked) setSaveAddressAsDefaultDelivery(false);
+                          }}
+                        />
+                        Save to customer profile
+                      </label>
+                      {saveAddressToProfile ? (
+                        <label className="col-span-full flex min-h-11 items-center gap-3 text-[15px]">
+                          <input
+                            type="checkbox"
+                            className="size-5"
+                            checked={saveAddressAsDefaultDelivery}
+                            onChange={(e) => setSaveAddressAsDefaultDelivery(e.target.checked)}
+                          />
+                          Set as default delivery address
+                        </label>
+                      ) : null}
+                      <p className="col-span-full text-[13px] text-steel">
+                        The order keeps this delivery address even if the profile address is edited later. Address is only saved after the order is placed successfully.
+                      </p>
                     </div>
                   ) : fulfilmentChoice === "DELIVERY" ? (
                     <select className={salesOrderControlClass} value={addressId} onChange={(e) => { setAddressId(e.target.value); setAuthorised(false); }}>

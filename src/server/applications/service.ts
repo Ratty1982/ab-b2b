@@ -19,6 +19,7 @@ import {
 } from "@/domain/trade-application";
 import type { EmailDispatchResult } from "@/server/email/transactional";
 import { emptyToNull } from "@/domain/company";
+import { parseCreditLimitInput } from "@/domain/credit-limit";
 import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
 
 function nextApplicationReference(): string {
@@ -828,6 +829,12 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
           website: app.website,
           status: "ACTIVE",
           paymentTerms: input.paymentTerms ?? null,
+          creditLimit: (() => {
+            if (input.creditLimit === undefined || input.creditLimit === null) return null;
+            const parsed = parseCreditLimitInput(input.creditLimit);
+            if (!parsed.ok) throw new AuthError(parsed.message, "VALIDATION", 400);
+            return parsed.value ?? null;
+          })(),
           // null = Default Trade Price until a salesperson assigns a named PriceList.
           priceListId: input.priceListId ?? null,
           primaryEmail: contactEmailLower,
@@ -1011,6 +1018,24 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
     }
   }
 
+  if (result.created) {
+    try {
+      const { sendTradeAccountApprovedInternalNotification } = await import(
+        "@/server/email/transactional"
+      );
+      await sendTradeAccountApprovedInternalNotification({
+        companyId: result.companyId,
+        actorUserId,
+        source: "TRADE_APPLICATION",
+        applicationId: input.id,
+        applicationReference: result.app.reference,
+        transitionKey: `application:${input.id}`,
+      });
+    } catch {
+      /* outbox / audit still record failures when possible */
+    }
+  }
+
   await recordAuditEvent({
     action: "application.approved",
     entityType: "TradeApplication",
@@ -1022,6 +1047,7 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
       created: result.created,
       priceListId: input.priceListId ?? null,
       salesRepId: input.salesRepId ?? null,
+      creditLimit: input.creditLimit ?? null,
       autopartAccountVerified: Boolean(input.confirmAutopartAccountVerified),
       verifiedAutopartCustomerCode: input.confirmAutopartAccountVerified
         ? normalizeAutopartCustomerCode(input.verifiedAutopartCustomerCode)

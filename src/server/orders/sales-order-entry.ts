@@ -153,6 +153,8 @@ export type SalesPlaceResult =
       order: PublicOrderConfirmation;
       alreadyPlaced: boolean;
       email?: OrderAmendmentEmailFeedback;
+      savedAddressId?: string | null;
+      savedAddressError?: string | null;
     }
   | {
       ok: false;
@@ -1019,26 +1021,49 @@ export async function searchSalesOrderProducts(actorUserId: string, raw: unknown
     ownActiveReservedByVariant = await loadOwnActiveReservedByVariant(draft.editingOrderId);
   }
 
-  const variants = await prisma.productVariant.findMany({
-    where: {
-      isActive: true,
-      product: { isActive: true, status: "ACTIVE", isTradeVisible: true },
-      OR: [
-        { sku: { contains: input.q, mode: "insensitive" } },
-        { product: { name: { contains: input.q, mode: "insensitive" } } },
-        { product: { brand: { name: { contains: input.q, mode: "insensitive" } } } },
-      ],
-    },
-    take: 20,
-    orderBy: { sku: "asc" },
-    select: {
-      id: true,
-      sku: true,
-      caseQty: true,
-      minOrderQty: true,
-      product: { select: { name: true, brand: { select: { name: true } } } },
-    },
-  });
+  const { normaliseProductSearchQuery } = await import("@/domain/product-search-exact");
+  const q = normaliseProductSearchQuery(input.q);
+  const productVisibility = {
+    isActive: true,
+    product: { isActive: true, status: "ACTIVE" as const, isTradeVisible: true },
+  };
+  const variantSelect = {
+    id: true,
+    sku: true,
+    caseQty: true,
+    minOrderQty: true,
+    product: { select: { name: true, brand: { select: { name: true } } } },
+  } as const;
+
+  // Exact SKU / product code first (case + whitespace normalised). Exact hits are not buried by pagination.
+  const exactVariants = q
+    ? await prisma.productVariant.findMany({
+        where: {
+          ...productVisibility,
+          sku: { equals: q, mode: "insensitive" },
+        },
+        take: 20,
+        orderBy: { sku: "asc" },
+        select: variantSelect,
+      })
+    : [];
+
+  const variants =
+    exactVariants.length > 0
+      ? exactVariants
+      : await prisma.productVariant.findMany({
+          where: {
+            ...productVisibility,
+            OR: [
+              { sku: { contains: q, mode: "insensitive" } },
+              { product: { name: { contains: q, mode: "insensitive" } } },
+              { product: { brand: { name: { contains: q, mode: "insensitive" } } } },
+            ],
+          },
+          take: 20,
+          orderBy: { sku: "asc" },
+          select: variantSelect,
+        });
   if (variants.length === 0) return [];
 
   const [lines, stock] = await Promise.all([
@@ -1607,5 +1632,85 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     orderId: created.order.id,
   });
 
-  return { ok: true, alreadyPlaced: false, order: confirmation };
+  let savedAddressId: string | null = null;
+  let savedAddressError: string | null = null;
+  if (
+    input.saveAddressToProfile &&
+    input.oneOffAddress &&
+    input.fulfilmentChoice !== "COLLECTION"
+  ) {
+    try {
+      savedAddressId = await saveOneOffAddressToCompanyProfile({
+        actorUserId,
+        companyId: company.id,
+        oneOff: input.oneOffAddress,
+        asDefaultDelivery: Boolean(input.saveAddressAsDefaultDelivery),
+      });
+    } catch (error) {
+      savedAddressError =
+        error instanceof AuthError
+          ? error.message
+          : "Order placed, but the address could not be saved to the customer profile";
+    }
+  }
+
+  return {
+    ok: true,
+    alreadyPlaced: false,
+    order: confirmation,
+    savedAddressId,
+    savedAddressError,
+  };
+}
+
+/**
+ * Persist a one-off delivery address after a successful order place.
+ * Skips near-duplicates (same normalised postcode + line1). Never runs inside the order txn
+ * so a failed place cannot leave orphan addresses.
+ */
+async function saveOneOffAddressToCompanyProfile(input: {
+  actorUserId: string;
+  companyId: string;
+  oneOff: {
+    line1: string;
+    line2?: string | null;
+    town: string;
+    county?: string | null;
+    postcode: string;
+    country?: string | null;
+    contactName?: string | null;
+    contactPhone?: string | null;
+  };
+  asDefaultDelivery: boolean;
+}): Promise<string> {
+  const { createAddress } = await import("@/server/companies/service");
+  const normPostcode = input.oneOff.postcode.replace(/\s+/g, "").toUpperCase();
+  const normLine1 = input.oneOff.line1.trim().toLowerCase();
+  const existing = await prisma.address.findMany({
+    where: { companyId: input.companyId },
+    select: { id: true, line1: true, postcode: true },
+  });
+  const duplicate = existing.find(
+    (row) =>
+      row.postcode.replace(/\s+/g, "").toUpperCase() === normPostcode &&
+      row.line1.trim().toLowerCase() === normLine1,
+  );
+  if (duplicate) return duplicate.id;
+
+  const created = await createAddress(input.actorUserId, {
+    companyId: input.companyId,
+    type: "DELIVERY",
+    label: null,
+    line1: input.oneOff.line1,
+    line2: input.oneOff.line2 ?? null,
+    town: input.oneOff.town,
+    county: input.oneOff.county ?? null,
+    postcode: input.oneOff.postcode,
+    country: input.oneOff.country ?? "GB",
+    contactName: input.oneOff.contactName ?? null,
+    contactPhone: input.oneOff.contactPhone ?? null,
+    isDefaultBilling: false,
+    isDefaultDelivery: input.asDefaultDelivery,
+  });
+  return created.id;
 }

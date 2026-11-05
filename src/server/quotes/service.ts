@@ -1819,31 +1819,47 @@ export async function searchQuoteProducts(
 ) {
   await requireQuoteStaff(actorUserId, "quotes.create");
   await assertCompanyInSalesScope(actorUserId, raw.companyId);
-  const q = raw.q.trim();
+  const { normaliseProductSearchQuery } = await import("@/domain/product-search-exact");
+  const q = normaliseProductSearchQuery(raw.q);
   if (q.length < 1) return [];
 
-  const variants = await prisma.productVariant.findMany({
-    where: {
-      isActive: true,
-      product: { isActive: true, status: "ACTIVE", isTradeVisible: true },
-      OR: [
-        { sku: { contains: q, mode: "insensitive" } },
-        { product: { name: { contains: q, mode: "insensitive" } } },
-        { product: { brand: { name: { contains: q, mode: "insensitive" } } } },
-      ],
-    },
-    take: 20,
-    include: {
-      product: {
-        select: {
-          id: true,
-          name: true,
-          brand: { select: { name: true } },
-        },
+  const visibility = {
+    isActive: true,
+    product: { isActive: true, status: "ACTIVE" as const, isTradeVisible: true },
+  };
+  const include = {
+    product: {
+      select: {
+        id: true,
+        name: true,
+        brand: { select: { name: true } },
       },
     },
+  } as const;
+
+  const exact = await prisma.productVariant.findMany({
+    where: { ...visibility, sku: { equals: q, mode: "insensitive" } },
+    take: 20,
+    include,
     orderBy: { sku: "asc" },
   });
+
+  const variants =
+    exact.length > 0
+      ? exact
+      : await prisma.productVariant.findMany({
+          where: {
+            ...visibility,
+            OR: [
+              { sku: { contains: q, mode: "insensitive" } },
+              { product: { name: { contains: q, mode: "insensitive" } } },
+              { product: { brand: { name: { contains: q, mode: "insensitive" } } } },
+            ],
+          },
+          take: 20,
+          include,
+          orderBy: { sku: "asc" },
+        });
 
   const prices = await resolveVariantTradePrices({
     variants: variants.map((v) => ({

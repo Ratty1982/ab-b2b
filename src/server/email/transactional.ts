@@ -153,14 +153,30 @@ export async function loadTradeApplicationEmailSnapshot(
   const app = await prisma.tradeApplication.findUnique({ where: { id: applicationId } });
   if (!app) return null;
   const contact = contactFromJson(app.primaryContact);
+  let creditLimitDisplay: string | null = null;
+  let paymentTerms: string | null = null;
+  if (app.companyId) {
+    const company = await prisma.company.findUnique({
+      where: { id: app.companyId },
+      select: { creditLimit: true, paymentTerms: true },
+    });
+    if (company?.creditLimit != null) {
+      const { formatCreditLimitGbp } = await import("@/domain/credit-limit");
+      creditLimitDisplay = formatCreditLimitGbp(company.creditLimit.toString());
+    }
+    paymentTerms = company?.paymentTerms ?? null;
+  }
   return {
     applicationId: app.id,
     reference: app.reference,
     companyName: app.companyName,
+    tradingName: app.tradingName,
     contactName: contact.name,
     contactEmail: contact.email,
     customerMessage: app.customerMessage,
     adminApplicationUrl: `${appBaseUrl()}/admin/applications/${app.id}`,
+    creditLimitDisplay,
+    paymentTerms,
   };
 }
 
@@ -478,20 +494,201 @@ export async function sendTradeApplicationEmailsAfterSubmit(applicationId: strin
   await safeAttempt(customerUpsert.id);
 
   const recipients = await getTradeApplicationNotificationRecipients();
+  if (recipients.length > 0) {
+    const internal = buildTradeApplicationInternalBodies(snap, footer);
+    for (const toEmail of recipients) {
+      const upsert = await upsertPendingEmail({
+        purpose: "TRADE_APPLICATION_INTERNAL_NOTIFICATION",
+        toEmail,
+        subject: internal.subject,
+        textBody: internal.text,
+        htmlBody: internal.html,
+        entityType: "TradeApplication",
+        entityId: applicationId,
+        idempotencyKey: `TRADE_APPLICATION_INTERNAL_NOTIFICATION:${applicationId}:${toEmail}`,
+      });
+      await safeAttempt(upsert.id);
+    }
+  }
+
+  await sendMissingAutopartCodeNotificationIfNeeded(applicationId);
+}
+
+/**
+ * Extra PL notification when a trade application has no Autopart customer code claim.
+ * Preserves existing recipients; only fires when the claimed code is missing/blank.
+ */
+export async function sendMissingAutopartCodeNotificationIfNeeded(
+  applicationId: string,
+): Promise<void> {
+  const app = await prisma.tradeApplication.findUnique({
+    where: { id: applicationId },
+    select: {
+      id: true,
+      reference: true,
+      companyName: true,
+      tradingName: true,
+      primaryContact: true,
+      claimedAutopartCustomerCode: true,
+      createdAt: true,
+    },
+  });
+  if (!app) return;
+  const claimed = (app.claimedAutopartCustomerCode ?? "").trim();
+  if (claimed) return;
+
+  const {
+    buildMissingAutopartCodeInternalBodies,
+    MISSING_AUTOPART_CODE_NOTIFY_EMAIL,
+  } = await import("@/server/email/approval-internal-templates");
+  const contact = contactFromJson(app.primaryContact);
+  const footer = await getEmailFooterMeta();
+  const snap = {
+    applicationId: app.id,
+    reference: app.reference,
+    companyName: app.companyName,
+    tradingName: app.tradingName,
+    contactName: contact.name,
+    submittedAt: formatDateTime(app.createdAt) ?? app.createdAt.toISOString(),
+    adminApplicationUrl: `${appBaseUrl()}/admin/applications/${app.id}`,
+  };
+  const bodies = buildMissingAutopartCodeInternalBodies(snap, footer);
+  const upsert = await upsertPendingEmail({
+    purpose: "TRADE_APPLICATION_MISSING_AUTOPART_CODE",
+    toEmail: MISSING_AUTOPART_CODE_NOTIFY_EMAIL,
+    subject: bodies.subject,
+    textBody: bodies.text,
+    htmlBody: bodies.html,
+    entityType: "TradeApplication",
+    entityId: applicationId,
+    idempotencyKey: `TRADE_APPLICATION_MISSING_AUTOPART_CODE:${applicationId}:${MISSING_AUTOPART_CODE_NOTIFY_EMAIL}`,
+  });
+  await safeAttempt(upsert.id);
+  await recordAuditEvent({
+    action: "email.trade_application_missing_autopart_code",
+    entityType: "TradeApplication",
+    entityId: applicationId,
+    metadata: {
+      toEmail: MISSING_AUTOPART_CODE_NOTIFY_EMAIL,
+      emailId: upsert.id,
+      created: upsert.created,
+    },
+  });
+}
+
+/**
+ * Notify configured trade-application recipients that a trade account was authorised.
+ * Idempotent per company transition (or application id). Never includes activation tokens.
+ */
+export async function sendTradeAccountApprovedInternalNotification(input: {
+  companyId: string;
+  actorUserId: string;
+  source: "TRADE_APPLICATION" | "CUSTOMER_ACTIVATION" | "CUSTOMER_WIZARD";
+  applicationId?: string | null;
+  applicationReference?: string | null;
+  /** Used in idempotency key so retries of the same transition do not resend. */
+  transitionKey: string;
+}): Promise<void> {
+  const recipients = await getTradeApplicationNotificationRecipients();
   if (recipients.length === 0) return;
-  const internal = buildTradeApplicationInternalBodies(snap, footer);
+
+  const [company, actor] = await Promise.all([
+    prisma.company.findUnique({
+      where: { id: input.companyId },
+      select: {
+        id: true,
+        name: true,
+        accountNumber: true,
+        status: true,
+        creditLimit: true,
+        paymentTerms: true,
+      },
+    }),
+    prisma.user.findUnique({
+      where: { id: input.actorUserId },
+      select: { name: true, email: true },
+    }),
+  ]);
+  if (!company) return;
+
+  const { formatCreditLimitGbp } = await import("@/domain/credit-limit");
+  const {
+    buildTradeAccountApprovedInternalBodies,
+  } = await import("@/server/email/approval-internal-templates");
+  const { buildTradeApplicationApprovedBodies } = await import(
+    "@/server/email/application-templates"
+  );
+
+  const creditLimit =
+    company.creditLimit != null ? company.creditLimit.toString() : null;
+  const creditDisplay = formatCreditLimitGbp(creditLimit);
+  const authorisedByName = actor?.name?.trim() || actor?.email || "Staff";
+  const approvedAt = formatDateTime(new Date()) ?? new Date().toISOString();
+
+  // Safe customer-facing copy — activationPath intentionally null (no tokens).
+  const customerSafe = buildTradeApplicationApprovedBodies({
+    applicationId: input.applicationId ?? company.id,
+    reference: input.applicationReference ?? "",
+    companyName: company.name,
+    contactName: "Customer",
+    contactEmail: "",
+    activationPath: null,
+    creditLimitDisplay: creditDisplay,
+    paymentTerms: company.paymentTerms,
+  });
+  const customerApprovalSummary = [
+    customerSafe.subject,
+    creditDisplay ? `Agreed credit limit: ${creditDisplay}` : null,
+    company.paymentTerms?.trim() ? `Payment terms: ${company.paymentTerms.trim()}` : null,
+    "Activation link omitted from this internal copy.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const footer = await getEmailFooterMeta();
+  const bodies = buildTradeAccountApprovedInternalBodies(
+    {
+      companyId: company.id,
+      companyName: company.name,
+      accountNumber: company.accountNumber,
+      authorisedByName,
+      approvedAt,
+      accountStatus: company.status,
+      creditLimit,
+      paymentTerms: company.paymentTerms,
+      customerApprovalSummary,
+      source: input.source,
+      applicationReference: input.applicationReference ?? null,
+    },
+    footer,
+  );
+
   for (const toEmail of recipients) {
     const upsert = await upsertPendingEmail({
-      purpose: "TRADE_APPLICATION_INTERNAL_NOTIFICATION",
+      purpose: "TRADE_ACCOUNT_APPROVED_INTERNAL",
       toEmail,
-      subject: internal.subject,
-      textBody: internal.text,
-      htmlBody: internal.html,
-      entityType: "TradeApplication",
-      entityId: applicationId,
-      idempotencyKey: `TRADE_APPLICATION_INTERNAL_NOTIFICATION:${applicationId}:${toEmail}`,
+      subject: bodies.subject,
+      textBody: bodies.text,
+      htmlBody: bodies.html,
+      entityType: input.applicationId ? "TradeApplication" : "Company",
+      entityId: input.applicationId ?? input.companyId,
+      idempotencyKey: `TRADE_ACCOUNT_APPROVED_INTERNAL:${input.transitionKey}:${toEmail}`,
     });
     await safeAttempt(upsert.id);
+    await recordAuditEvent({
+      action: "email.trade_account_approved_internal",
+      entityType: input.applicationId ? "TradeApplication" : "Company",
+      entityId: input.applicationId ?? input.companyId,
+      actorUserId: input.actorUserId,
+      companyId: input.companyId,
+      metadata: {
+        toEmail,
+        emailId: upsert.id,
+        created: upsert.created,
+        source: input.source,
+        transitionKey: input.transitionKey,
+      },
+    });
   }
 }
 
