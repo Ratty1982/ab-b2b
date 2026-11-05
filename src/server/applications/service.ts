@@ -21,6 +21,17 @@ import type { EmailDispatchResult } from "@/server/email/transactional";
 import { emptyToNull } from "@/domain/company";
 import { parseCreditLimitInput } from "@/domain/credit-limit";
 import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
+import { findCustomerDuplicates } from "@/server/companies/customer-duplicates";
+
+/** Documented side effects of approveTradeApplication — UI must disclose before confirm. */
+export const TRADE_APPROVAL_SIDE_EFFECTS = [
+  "Creates a new ACTIVE customer from this application (does not merge into an existing CRM prospect).",
+  "Creates the primary contact and trading address from the submitted application.",
+  "Creates or links a trade portal user for the applicant email and prepares an activation invitation.",
+  "May send an activation email immediately (or defer / fail delivery — check the result).",
+  "Sets a verified Autopart sales code only when you explicitly confirm verification below.",
+  "After approval you continue guided customer setup for the same company — another company is not created.",
+] as const;
 
 function nextApplicationReference(): string {
   const stamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
@@ -438,19 +449,28 @@ export async function getTradeApplication(actorUserId: string, id: string) {
   if (!app) throw new AuthError("Application not found", "NOT_FOUND", 404);
 
   const email = contactEmail(app.primaryContact);
-  const [identityWarnings, possibleDuplicates, activation] = await Promise.all([
-    email ? findIdentityWarnings(email) : Promise.resolve([]),
-    findPossibleDuplicates({
-      id: app.id,
-      email: email || "nomail@invalid",
-      companyName: app.companyName,
-      companyNumber: app.companyNumber,
-      vatNumber: app.vatNumber,
-      claimedAutopartCustomerCode: app.claimedAutopartCustomerCode,
-      postcode: tradingPostcode(app.tradingAddress),
-    }),
-    loadActivationSummary(app),
-  ]);
+  const contact = (app.primaryContact ?? {}) as { phone?: string | null };
+  const [identityWarnings, possibleDuplicates, possibleCompanyMatches, activation] =
+    await Promise.all([
+      email ? findIdentityWarnings(email) : Promise.resolve([]),
+      findPossibleDuplicates({
+        id: app.id,
+        email: email || "nomail@invalid",
+        companyName: app.companyName,
+        companyNumber: app.companyNumber,
+        vatNumber: app.vatNumber,
+        claimedAutopartCustomerCode: app.claimedAutopartCustomerCode,
+        postcode: tradingPostcode(app.tradingAddress),
+      }),
+      app.companyId
+        ? Promise.resolve([])
+        : findCustomerDuplicates({
+            name: app.companyName,
+            email: email || null,
+            phone: contact.phone ?? null,
+          }),
+      loadActivationSummary(app),
+    ]);
 
   return {
     ...app,
@@ -468,8 +488,18 @@ export async function getTradeApplication(actorUserId: string, id: string) {
       : null,
     identityWarnings,
     possibleDuplicates,
+    possibleCompanyMatches,
+    applicantDeclared: {
+      autopartCustomerCode: app.claimedAutopartCustomerCode,
+      autopartVerified: false,
+      note: app.claimedAutopartCustomerCode
+        ? "Applicant-supplied Autopart code. Not verified. Do not treat as Company.autopartCustomerCode."
+        : null,
+    },
+    approvalSideEffects: TRADE_APPROVAL_SIDE_EFFECTS,
     activation,
     contactEmail: email || null,
+    setupPath: app.companyId ? `/admin/customers/setup?companyId=${app.companyId}` : null,
   };
 }
 

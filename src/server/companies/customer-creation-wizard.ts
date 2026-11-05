@@ -170,10 +170,53 @@ export async function saveCustomerCreationDetails(actorUserId: string, raw: unkn
   };
 }
 
+async function resolveWizardSource(companyId: string, notes: string | null) {
+  const [tradeApp, masterCount] = await Promise.all([
+    prisma.tradeApplication.findFirst({
+      where: { companyId, status: "APPROVED" },
+      orderBy: { decidedAt: "desc" },
+      select: {
+        id: true,
+        reference: true,
+        claimedAutopartCustomerCode: true,
+        decidedAt: true,
+      },
+    }),
+    prisma.autopartAccount.count({ where: { companyId } }),
+  ]);
+  if (tradeApp) {
+    return {
+      key: "TRADE_APPLICATION" as const,
+      label: "Trade application",
+      reference: tradeApp.reference,
+      applicationId: tradeApp.id,
+      applicantClaimedAutopartCode: tradeApp.claimedAutopartCustomerCode,
+      note: "Applicant-declared Autopart claims stay unverified until staff confirm on the Autopart step.",
+    };
+  }
+  const noteText = notes ?? "";
+  if (
+    masterCount > 0 &&
+    (noteText.includes("Source AUTOPART/407EXP") ||
+      noteText.includes("Created from the Autopart customer master"))
+  ) {
+    return {
+      key: "AUTOPART_PROSPECT" as const,
+      label: "Autopart prospect",
+      reference: null,
+      applicationId: null,
+      applicantClaimedAutopartCode: null,
+      note: "Linked from the Autopart customer master. Sales-code verification remains a separate staff action.",
+    };
+  }
+  // Do not invent a source for legacy or ambiguous records.
+  return null;
+}
+
 export async function getCustomerCreationWizard(actorUserId: string, companyId: string) {
   const profile = await requireSystemPermission(actorUserId, "companies.view");
   const workspace = await getCompanyWorkspace(actorUserId, companyId);
-  const [cutover, masters] = await Promise.all([
+  const [cutover, masters, source] = await Promise.all([
     prisma.customerSalesCutover.findUnique({
       where: { companyId },
       select: { historyStatus: true, evidence: true },
@@ -184,6 +227,7 @@ export async function getCustomerCreationWizard(actorUserId: string, companyId: 
       take: 8,
       select: { id: true, accountCode: true, originalName: true },
     }),
+    resolveWizardSource(companyId, workspace.company.notes),
   ]);
   const historyKind =
     cutover?.evidence && typeof cutover.evidence === "object" && !Array.isArray(cutover.evidence)
@@ -229,6 +273,7 @@ export async function getCustomerCreationWizard(actorUserId: string, companyId: 
     masterRestricted: !profile.permissions.has("autopart.customer.view"),
     history: { status: historyStatus, kind: historyKind },
     onboarding: workspace.onboarding,
+    source,
     suggestedStep,
     permissions: {
       canEditCompany,

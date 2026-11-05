@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { PanelHeader, Metric } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -36,6 +36,7 @@ const filters = [
 ] as const;
 
 function ApplicationQueue() {
+  const navigate = useNavigate();
   const [filter, setFilter] = useState<(typeof filters)[number]>("ALL");
   const [rows, setRows] = useState<
     Array<{
@@ -193,16 +194,29 @@ function ApplicationQueue() {
                 )}
               </pre>
               {detail.companyId ? (
-                <Link
-                  to="/sales/customers/$id"
-                  params={{ id: detail.companyId }}
-                  className="text-primary hover:underline"
-                >
-                  Open customer workspace →
-                </Link>
+                <div className="flex flex-wrap gap-3">
+                  <Link
+                    to="/admin/customers/setup"
+                    search={{ companyId: detail.companyId }}
+                    className="text-primary hover:underline"
+                  >
+                    Continue customer setup →
+                  </Link>
+                  <Link
+                    to="/sales/customers/$id"
+                    params={{ id: detail.companyId }}
+                    className="text-steel hover:underline"
+                  >
+                    Open customer workspace →
+                  </Link>
+                </div>
               ) : null}
               {detail.status !== "APPROVED" && detail.status !== "REJECTED" ? (
                 <div className="flex flex-wrap gap-2 pt-2">
+                  <p className="w-full text-[12px] text-steel">
+                    Approval creates an ACTIVE customer and may send a portal invitation. You will
+                    then continue guided setup for that company.
+                  </p>
                   <button
                     type="button"
                     className="h-10 rounded-md bg-good px-4 text-[12px] font-bold uppercase text-ink"
@@ -220,16 +234,17 @@ function ApplicationQueue() {
                                 : r.data.emailDeferred
                                   ? "Approved — activation email deferred"
                                   : "Approved — activation email failed"
-                              : "Already approved (idempotent)",
+                              : "Already approved — opening setup",
                           );
-                          await load();
-                          const d = await getTradeApplicationFn({ data: { id: detail.id } });
-                          if (d.ok) setDetail(d.data as NonNullable<typeof detail>);
+                          await navigate({
+                            to: "/admin/customers/setup",
+                            search: { companyId: r.data.companyId },
+                          });
                         }
                       })();
                     }}
                   >
-                    Approve
+                    Approve and continue customer setup
                   </button>
                   <button
                     type="button"
