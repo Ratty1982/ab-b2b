@@ -610,6 +610,7 @@ async function linkFinancialEvidenceWithoutDespatch(
 async function applyEvaluation(
   evaluation: OrderFulfilmentEvaluation,
   actorUserId: string | null,
+  opts?: { suppressCustomerDispatchEmail?: boolean },
 ): Promise<{ mutated: boolean; emailsQueued: number }> {
   const order = await prisma.order.findUnique({
     where: { id: evaluation.orderId },
@@ -769,33 +770,49 @@ async function applyEvaluation(
     }
   });
 
-  for (const action of emailActions) {
-    try {
-      if (action.kind === "FULL") {
-        const sent = await enqueueOrderDespatchedEmail(evaluation.orderId, {
-          remainingAfterBackorder: action.remainingAfterBackorder,
-          actorUserId,
-        });
-        if (sent.queued) emailsQueued += 1;
-      } else {
-        const sent = await enqueueOrderPartDespatchedEmail({
-          orderId: evaluation.orderId,
-          invoiceExternalRef: action.invoiceExternalRef,
-          lineQuantitiesKnown: true,
-          newlyDespatchedLines: action.newlyDespatchedLines,
-          stillToComeLines: action.stillToComeLines,
-          actorUserId,
-        });
-        if (sent.queued) emailsQueued += 1;
-      }
-    } catch (err) {
+  if (opts?.suppressCustomerDispatchEmail) {
+    if (emailActions.length) {
       await recordAuditEvent({
-        action: "order.despatch_email_failed",
+        action: "order.despatch_email_suppressed",
         entityType: "Order",
         entityId: evaluation.orderId,
         actorUserId: actorUserId,
-        metadata: { error: err instanceof Error ? err.message : "unknown", source: "AUTOPART_504_TRM" },
+        metadata: {
+          source: "AUTOPART_504_TRM_RECOVERY",
+          actions: emailActions.map((action) => action.kind),
+          reason: "Recovery of previously skipped invoice — customer already physically fulfilled",
+        },
       });
+    }
+  } else {
+    for (const action of emailActions) {
+      try {
+        if (action.kind === "FULL") {
+          const sent = await enqueueOrderDespatchedEmail(evaluation.orderId, {
+            remainingAfterBackorder: action.remainingAfterBackorder,
+            actorUserId,
+          });
+          if (sent.queued) emailsQueued += 1;
+        } else {
+          const sent = await enqueueOrderPartDespatchedEmail({
+            orderId: evaluation.orderId,
+            invoiceExternalRef: action.invoiceExternalRef,
+            lineQuantitiesKnown: true,
+            newlyDespatchedLines: action.newlyDespatchedLines,
+            stillToComeLines: action.stillToComeLines,
+            actorUserId,
+          });
+          if (sent.queued) emailsQueued += 1;
+        }
+      } catch (err) {
+        await recordAuditEvent({
+          action: "order.despatch_email_failed",
+          entityType: "Order",
+          entityId: evaluation.orderId,
+          actorUserId: actorUserId,
+          metadata: { error: err instanceof Error ? err.message : "unknown", source: "AUTOPART_504_TRM" },
+        });
+      }
     }
   }
 
@@ -939,7 +956,7 @@ export async function evaluate504TrmFulfilmentReadonly(
 
 async function run504TrmFulfilmentInner(
   actorUserId: string | null,
-  opts?: { orderIds?: string[] },
+  opts?: { orderIds?: string[]; suppressCustomerDispatchEmail?: boolean },
 ): Promise<Autopart504TrmFulfilmentRunResult> {
   const settings = await read504TrmFulfilmentSettings();
   const evaluations = await evaluateAll(opts?.orderIds, settings);
@@ -960,7 +977,13 @@ async function run504TrmFulfilmentInner(
   let emailsQueued = 0;
   let ordersMutated = 0;
   for (const evaluation of evaluations) {
-    const result = await applyEvaluation(evaluation, actorUserId);
+    const result = await applyEvaluation(
+      evaluation,
+      actorUserId,
+      opts?.suppressCustomerDispatchEmail
+        ? { suppressCustomerDispatchEmail: true }
+        : undefined,
+    );
     emailsQueued += result.emailsQueued;
     if (result.mutated) ordersMutated += 1;
   }
@@ -981,7 +1004,7 @@ async function run504TrmFulfilmentInner(
 
 export async function run504TrmFulfilmentAfterImport(
   actorUserId: string | null,
-  opts?: { orderIds?: string[] },
+  opts?: { orderIds?: string[]; suppressCustomerDispatchEmail?: boolean },
 ): Promise<Autopart504TrmFulfilmentRunResult> {
   if (applying) return applying;
   applying = (async () => {
