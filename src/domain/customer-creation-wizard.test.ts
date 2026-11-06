@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  canContinuePastSalesHistory,
   classifyCustomerDuplicate,
   mergeCustomerTypeNotes,
   normalisePhone,
+  salesHistoryBaselineRequired,
   splitCustomerTypeNotes,
   suggestWizardStep,
   wizardFinishPlan,
@@ -126,5 +128,43 @@ describe("customer creation wizard", () => {
       sendsInvitation: false,
       createsTransactions: false,
     });
+  });
+
+  it("requires an explicit sales history baseline for active verified customers", () => {
+    expect(
+      salesHistoryBaselineRequired({
+        status: "ACTIVE",
+        salesCodeVerified: true,
+        historyStatus: "NOT_STARTED",
+      }),
+    ).toBe(true);
+    expect(
+      canContinuePastSalesHistory({
+        status: "ACTIVE",
+        salesCodeVerified: true,
+        historyStatus: "NOT_STARTED",
+      }).ok,
+    ).toBe(false);
+    expect(
+      canContinuePastSalesHistory({
+        status: "ACTIVE",
+        salesCodeVerified: true,
+        historyStatus: "COMPLETE",
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      salesHistoryBaselineRequired({
+        status: "PROSPECT",
+        salesCodeVerified: true,
+        historyStatus: "NOT_STARTED",
+      }),
+    ).toBe(false);
+    expect(
+      salesHistoryBaselineRequired({
+        status: "ACTIVE",
+        salesCodeVerified: false,
+        historyStatus: "NOT_STARTED",
+      }),
+    ).toBe(false);
   });
 });
