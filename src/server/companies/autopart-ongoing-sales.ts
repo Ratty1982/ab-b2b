@@ -56,7 +56,7 @@ import {
 } from "@/server/companies/autopart-ongoing-sales-diagnostics";
 import { run504TrmFulfilmentAfterImport } from "@/server/orders/autopart-504-trm-fulfilment";
 import type { CustomerSalesScope } from "@/domain/customer-sales-import";
-import { accountInCustomerScope } from "@/domain/customer-sales-import";
+import { accountInCustomerScope, documentInCustomerScope } from "@/domain/customer-sales-import";
 import { assessOngoingSalesWrite, type OngoingSalesWriteDecision } from "@/server/companies/ongoing-sales-eligibility";
 import { retainOngoingSalesReport } from "@/server/maintenance/sales-source-archive";
 
@@ -876,6 +876,24 @@ export async function confirmAutopart504Import(
       currentDocument = row.documentNumber;
       if (raw.customerScope) {
         const scope = raw.customerScope;
+        if (!documentInCustomerScope(row.documentNumber, scope)) {
+          skipped += 1;
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "SKIPPED",
+              reasonCode: "DOCUMENT_OUT_OF_SCOPE",
+              rowNumber: row.lineNumber,
+              documentReference: row.documentNumber,
+              documentDate: row.documentDate,
+              customerOrderNumber: row.customerOrderNumber || null,
+              abOrderReference: row.abOrderNumber,
+              companyId: scope.companyId,
+              salesNet: row.goods,
+              reason: `Document ${row.documentNumber} is outside the selected recovery invoice scope and was not stored.`,
+            }),
+          );
+          continue;
+        }
         const orderMatches = Boolean(abOrderId && companyId === scope.companyId);
         const existingForCustomer =
           !orderMatches && row.documentNumber
@@ -1441,6 +1459,28 @@ export async function confirmAutopartTrm21qcImport(
       const documentType: AutopartHistoricDocumentType = group.documentType;
       if (raw.customerScope) {
         const scope = raw.customerScope;
+        if (!documentInCustomerScope(documentNumber, scope)) {
+          skipped += lines.length;
+          for (const line of lines) {
+            diagnosticDrafts.push(
+              makeDiagnostic({
+                status: "SKIPPED",
+                reasonCode: "DOCUMENT_OUT_OF_SCOPE",
+                rowNumber: line.lineNumber,
+                customerAccount: line.customerAccount,
+                documentReference: documentNumber,
+                documentDate: line.documentDate,
+                sku: line.partNumber,
+                description: line.description,
+                quantity: line.qty,
+                salesNet: line.salesNet,
+                companyId: scope.companyId,
+                reason: `Document ${documentNumber} is outside the selected recovery invoice scope and was not stored.`,
+              }),
+            );
+          }
+          continue;
+        }
         const outside = lines.filter((line) => !accountInCustomerScope(line.customerAccount, scope));
         const otherCompany = group.companyId != null && group.companyId !== scope.companyId;
         if (outside.length > 0 || otherCompany) {

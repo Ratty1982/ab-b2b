@@ -10,6 +10,7 @@ import {
   uploadCustomerSalesReport,
   type SavedCustomerSalesUpload,
 } from "@/components/ab/upload-customer-sales-report";
+import { SalesCutoverRecoveryPanel } from "@/components/ab/SalesCutoverRecoveryPanel";
 import {
   acknowledgeCustomerSalesHistoryFn,
   completeCustomerSalesCutoverFn,
@@ -744,6 +745,7 @@ export function AutopartHistoryImport({
           })();
         }}
       />
+      {historyStatus === "COMPLETE" ? <SalesCutoverRecoveryPanel companyId={companyId} /> : null}
     </section>
   );
 }

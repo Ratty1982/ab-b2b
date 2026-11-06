@@ -10,7 +10,11 @@ export const WIZARD_STEPS = [
   { id: 1, key: "details", label: "Customer details", optional: false },
   { id: 2, key: "autopart", label: "Autopart account", optional: true },
   { id: 3, key: "trading", label: "Pricing and terms", optional: true },
-  { id: 4, key: "history", label: "Sales history", optional: true },
+  /**
+   * Optional until the account is Active with a verified Autopart code.
+   * Then staff must choose brand-new (zero history) or historical import before leaving.
+   */
+  { id: 4, key: "history", label: "Sales history baseline", optional: true },
   { id: 5, key: "portal", label: "Portal access", optional: true },
   { id: 6, key: "review", label: "Review", optional: false },
 ] as const;
@@ -135,6 +139,42 @@ export function suggestWizardStep(input: {
   if (!input.salesCodeVerified) return 2;
   if (input.status === "ACTIVE" && input.historyStatus !== "COMPLETE") return 4;
   return 6;
+}
+
+/**
+ * Active + verified customers must finish the sales-history baseline before
+ * continuing past the history step. Activation alone does not create cutover.
+ */
+export function salesHistoryBaselineRequired(input: {
+  status: string;
+  salesCodeVerified: boolean;
+  historyStatus: "NOT_STARTED" | "REVIEW" | "COMPLETE";
+}): boolean {
+  return (
+    input.status === "ACTIVE" &&
+    input.salesCodeVerified &&
+    input.historyStatus !== "COMPLETE"
+  );
+}
+
+export function canContinuePastSalesHistory(input: {
+  status: string;
+  salesCodeVerified: boolean;
+  historyStatus: "NOT_STARTED" | "REVIEW" | "COMPLETE";
+}): { ok: true } | { ok: false; message: string } {
+  if (!salesHistoryBaselineRequired(input)) return { ok: true };
+  if (input.historyStatus === "REVIEW") {
+    return {
+      ok: false,
+      message:
+        "Import exceptions are waiting for review. Finish the historical import, or acknowledge the review, before continuing.",
+    };
+  }
+  return {
+    ok: false,
+    message:
+      "Choose a sales history baseline before continuing: confirm this is a brand-new Autopart account with no historical sales, or import historical 561L/SLRB. Active customers cannot receive ongoing 504/TRM21QC sales until cutover is complete.",
+  };
 }
 
 /**

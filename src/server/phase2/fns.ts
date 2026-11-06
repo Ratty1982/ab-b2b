@@ -4179,6 +4179,55 @@ export const completeCustomerSalesCutoverFn = createServerFn({ method: "POST" })
     }
   });
 
+
+export const diagnoseSalesCutoverIncidentFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { companyId: string; orderNumber?: string; documentReference?: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const recovery = await import("@/server/companies/sales-cutover-recovery");
+      return {
+        ok: true as const,
+        data: await recovery.diagnoseSalesCutoverIncident(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewSkippedOngoingSalesRecoveryFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const recovery = await import("@/server/companies/sales-cutover-recovery");
+      return {
+        ok: true as const,
+        data: await recovery.previewSkippedOngoingSalesRecovery(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmSkippedOngoingSalesRecoveryFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const recovery = await import("@/server/companies/sales-cutover-recovery");
+      return {
+        ok: true as const,
+        data: await recovery.confirmSkippedOngoingSalesRecovery(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listOngoingSalesImportRunsFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { limit?: number } | undefined)
   .handler(async ({ data }) => {

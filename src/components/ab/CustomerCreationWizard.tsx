@@ -16,7 +16,9 @@ import { DEFAULT_TRADE_PRICE_HELP, DEFAULT_TRADE_PRICE_LABEL } from "@/domain/de
 import { BUSINESS_TYPES } from "@/domain/trade-application";
 import {
   WIZARD_STEPS,
+  canContinuePastSalesHistory,
   customerTypeChoices,
+  salesHistoryBaselineRequired,
   wizardFinishPlan,
   type WizardStepId,
 } from "@/domain/customer-creation-wizard";
@@ -1204,6 +1206,16 @@ function HistoryStep({
   onNext: () => void;
 }) {
   const verified = data.company.autopartAccount.verified ? data.company.autopartAccount.code : null;
+  const baselineGate = canContinuePastSalesHistory({
+    status: data.company.status,
+    salesCodeVerified: Boolean(verified),
+    historyStatus: data.history.status,
+  });
+  const baselineRequired = salesHistoryBaselineRequired({
+    status: data.company.status,
+    salesCodeVerified: Boolean(verified),
+    historyStatus: data.history.status,
+  });
   const blocked = data.company.autopartAccount.attention
     ? data.company.autopartAccount.attention
     : !verified
@@ -1214,15 +1226,32 @@ function HistoryStep({
   return (
     <div className="grid gap-4">
       <div>
-        <h2 className="font-display text-lg uppercase">Sales history</h2>
+        <h2 className="font-display text-lg uppercase">Sales history baseline</h2>
         <p className="mt-1 text-[13px] text-steel">
-          No historical purchases means the verified account has no historical purchases. Discarded
-          pre-launch history means earlier imported history was deliberately discarded. They are not
-          the same, and neither needs a blank spreadsheet or a dummy invoice.
+          Choose how this verified Autopart account starts in Automotive Brands. Do not leave an
+          Active customer without a completed cutover — ongoing 504/TRM21QC invoices will be skipped
+          until the baseline is finished.
         </p>
+        <ol className="mt-3 list-decimal space-y-2 pl-5 text-[13px] text-steel">
+          <li>
+            <span className="font-semibold text-ink">Brand-new Autopart customer</span> — no
+            historical sales. Staff must type the verified account and a reason. Cutover is recorded
+            as complete with NO_HISTORICAL_SALES. No sales rows are invented.
+          </li>
+          <li>
+            <span className="font-semibold text-ink">Existing Autopart customer</span> — import
+            historical 561L/SLRB as today. Unfinished history is not bypassed.
+          </li>
+        </ol>
         <p className="mt-2 text-[13px] text-steel">
           Current position: {data.onboarding.steps.find((item) => item.id === "history")?.summary}
         </p>
+        {baselineRequired ? (
+          <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[13px]">
+            This account is Active with a verified Autopart code. Complete option A or B before
+            continuing. Activation alone does not enable ongoing sales imports.
+          </p>
+        ) : null}
       </div>
       <AutopartHistoryImport
         companyId={companyId}
@@ -1239,7 +1268,18 @@ function HistoryStep({
           Recording sales history needs the existing import permission.
         </p>
       ) : null}
-      <button type="button" className={buttonClass()} onClick={onNext}>
+      {!baselineGate.ok ? (
+        <p className="text-[13px] text-steel" data-history-continue-blocked="">
+          {baselineGate.message}
+        </p>
+      ) : null}
+      <button
+        type="button"
+        className={buttonClass()}
+        disabled={!baselineGate.ok}
+        onClick={onNext}
+        data-history-continue=""
+      >
         Continue
       </button>
     </div>

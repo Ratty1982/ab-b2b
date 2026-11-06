@@ -42,6 +42,7 @@ export const AUTOPART_IMPORT_REASON_CODES = [
   "NOT_ACTIVE",
   "OWNERSHIP_NOT_UNIQUE",
   "HISTORY_CUTOVER_INCOMPLETE",
+  "DOCUMENT_OUT_OF_SCOPE",
 ] as const;
 
 export type AutopartImportReasonCode = (typeof AUTOPART_IMPORT_REASON_CODES)[number];
@@ -86,6 +87,8 @@ export const AUTOPART_IMPORT_REASON_LABELS: Record<AutopartImportReasonCode, str
     "Autopart account ownership is not uniquely verified. No sales document or product line was stored.",
   HISTORY_CUTOVER_INCOMPLETE:
     "Historical sales import and cutover are not complete. Ongoing sales were not stored.",
+  DOCUMENT_OUT_OF_SCOPE:
+    "This document reference is outside the selected recovery invoice scope. It was not stored.",
 };
 
 export type AutopartImportDiagnosticDraft = {
