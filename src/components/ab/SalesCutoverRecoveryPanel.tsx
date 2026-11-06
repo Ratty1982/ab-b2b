@@ -9,12 +9,12 @@ import {
 
 /**
  * Controlled recovery for invoices skipped while cutover was incomplete.
- * Requires authoritative 504/TRM source text — diagnostics alone are not enough.
+ * Requires an explicit invoice reference and authoritative 504/TRM source text.
  */
 export function SalesCutoverRecoveryPanel({
   companyId,
-  orderNumber,
-  documentReference,
+  orderNumber: initialOrderNumber,
+  documentReference: initialDocumentReference,
 }: {
   companyId: string;
   orderNumber?: string;
@@ -23,6 +23,8 @@ export function SalesCutoverRecoveryPanel({
   const [busy, setBusy] = useState(false);
   const [diagnostic, setDiagnostic] = useState<unknown>(null);
   const [preview, setPreview] = useState<unknown>(null);
+  const [documentReference, setDocumentReference] = useState(initialDocumentReference ?? "");
+  const [orderNumber, setOrderNumber] = useState(initialOrderNumber ?? "");
   const [text504, setText504] = useState("");
   const [textTrm, setTextTrm] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -32,8 +34,8 @@ export function SalesCutoverRecoveryPanel({
     const result = await diagnoseSalesCutoverIncidentFn({
       data: {
         companyId,
-        ...(orderNumber ? { orderNumber } : {}),
-        ...(documentReference ? { documentReference } : {}),
+        ...(orderNumber.trim() ? { orderNumber: orderNumber.trim() } : {}),
+        ...(documentReference.trim() ? { documentReference: documentReference.trim() } : {}),
       },
     });
     setBusy(false);
@@ -46,13 +48,18 @@ export function SalesCutoverRecoveryPanel({
   }
 
   async function runPreview() {
+    if (!documentReference.trim()) {
+      toast.error("Enter the exact invoice reference to recover (for example SS307451).");
+      return;
+    }
     setBusy(true);
     const result = await previewSkippedOngoingSalesRecoveryFn({
       data: {
         companyId,
         text504: text504 || undefined,
         textTrm21qc: textTrm || undefined,
-        documentReference: documentReference || undefined,
+        documentReference: documentReference.trim(),
+        ...(orderNumber.trim() ? { orderNumber: orderNumber.trim() } : {}),
         suppressDispatchEmail: true,
       },
     });
@@ -66,13 +73,18 @@ export function SalesCutoverRecoveryPanel({
   }
 
   async function runConfirm() {
+    if (!documentReference.trim()) {
+      toast.error("Enter the exact invoice reference to recover.");
+      return;
+    }
     setBusy(true);
     const result = await confirmSkippedOngoingSalesRecoveryFn({
       data: {
         companyId,
         text504: text504 || undefined,
         textTrm21qc: textTrm || undefined,
-        documentReference: documentReference || undefined,
+        documentReference: documentReference.trim(),
+        ...(orderNumber.trim() ? { orderNumber: orderNumber.trim() } : {}),
         suppressDispatchEmail: true,
       },
     });
@@ -92,10 +104,30 @@ export function SalesCutoverRecoveryPanel({
       <div>
         <h3 className="font-display text-base uppercase">Skipped invoice recovery</h3>
         <p className="mt-1 text-[13px] text-steel">
-          For invoices skipped with HISTORY_CUTOVER_INCOMPLETE after the sales baseline is complete.
-          Paste the original 504 and/or TRM21QC source. Diagnostics do not store amounts. Customer
-          dispatch email stays suppressed by default.
+          Targeted recovery for a single invoice skipped with HISTORY_CUTOVER_INCOMPLETE. Other
+          invoices in the source file are not stored. Fulfilment runs only for verified orders on
+          this customer. Customer dispatch email stays suppressed by default.
         </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="grid gap-1 text-[13px]">
+          <span className="font-semibold">Invoice reference (required)</span>
+          <input
+            className="rounded-md border border-border bg-surface/40 px-3 py-2 font-mono text-[12px]"
+            value={documentReference}
+            onChange={(event) => setDocumentReference(event.target.value)}
+            placeholder="SS307451"
+          />
+        </label>
+        <label className="grid gap-1 text-[13px]">
+          <span className="font-semibold">AB order (required for TRM-only)</span>
+          <input
+            className="rounded-md border border-border bg-surface/40 px-3 py-2 font-mono text-[12px]"
+            value={orderNumber}
+            onChange={(event) => setOrderNumber(event.target.value)}
+            placeholder="AB-000014"
+          />
+        </label>
       </div>
       <div className="flex flex-wrap gap-2">
         <button
@@ -109,7 +141,7 @@ export function SalesCutoverRecoveryPanel({
         <button
           type="button"
           className="rounded-md border border-border px-3 py-2 text-[13px] font-semibold uppercase"
-          disabled={busy || (!text504.trim() && !textTrm.trim())}
+          disabled={busy || !documentReference.trim() || (!text504.trim() && !textTrm.trim())}
           onClick={() => void runPreview()}
         >
           Preview recovery
@@ -152,7 +184,7 @@ export function SalesCutoverRecoveryPanel({
       <ConfirmAction
         open={confirmOpen}
         title="Confirm skipped-invoice recovery"
-        description="This reprocesses the pasted Autopart source for this customer, applies fulfilment matching, and does not send a customer dispatch email. It does not invent invoice or despatch data."
+        description="This reprocesses only the named invoice from the pasted Autopart source for this customer, applies fulfilment only to verified company-owned orders, and does not send a customer dispatch email."
         confirmLabel="Apply recovery"
         onOpenChange={setConfirmOpen}
         onConfirm={() => void runConfirm()}

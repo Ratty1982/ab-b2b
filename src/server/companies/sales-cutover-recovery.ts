@@ -4,8 +4,14 @@
  *
  * Recovery never invents invoice or despatch data. It reprocesses authoritative
  * source files through the existing ongoing importers after cutover is COMPLETE.
- * Customer dispatch emails default to suppressed for recovery of already-delivered
- * first orders (SENCO-style).
+ *
+ * Safety invariants for targeted incident recovery:
+ * - documentReference is required
+ * - persistence is scoped to that invoice + company (documentReferences filter)
+ * - fulfilment never runs unfiltered; orderIds must be non-empty and company-owned
+ * - import + fulfilment run under the exclusive fulfilment lock so a concurrent
+ *   scheduled run cannot queue dispatch email mid-recovery
+ * - suppressCustomerDispatchEmail defaults to true and is audited
  */
 
 import { z } from "zod";
@@ -20,9 +26,16 @@ import {
 } from "@/server/companies/autopart-ongoing-sales";
 import {
   evaluate504TrmFulfilmentReadonly,
-  run504TrmFulfilmentAfterImport,
+  run504TrmFulfilmentInnerForRecovery,
+  with504TrmFulfilmentExclusive,
 } from "@/server/orders/autopart-504-trm-fulfilment";
 import { assessOngoingSalesWrite } from "@/server/companies/ongoing-sales-eligibility";
+import { parseExactAbOrderReference } from "@/domain/autopart-504-trm-fulfilment";
+import {
+  isAutopart504ImportableRow,
+  parseAutopart504Report,
+} from "@/domain/autopart-504";
+import { parseAutopartTrm21qcReport } from "@/domain/autopart-trm21qc";
 
 async function requireRecoveryActor(actorUserId: string) {
   return requireAnySystemPermission(actorUserId, [
@@ -322,7 +335,13 @@ const recoverySchema = z.object({
   textTrm21qc: z.string().optional(),
   filename504: z.string().trim().max(240).optional(),
   filenameTrm21qc: z.string().trim().max(240).optional(),
-  documentReference: z.string().trim().min(1).max(80).optional(),
+  /** Required for targeted incident recovery (e.g. SS307451). */
+  documentReference: z.string().trim().min(1).max(80),
+  /**
+   * Optional when 504 source carries the AB order reference.
+   * Required when recovering from TRM-only evidence that has no AB order column.
+   */
+  orderNumber: z.string().trim().min(1).max(40).optional(),
   /**
    * Recovery of already-delivered first orders must not re-mail the customer.
    * Default true — operator must explicitly opt in to send dispatch email.
@@ -369,11 +388,105 @@ async function assertCompanyReadyForRecovery(companyId: string) {
   return { company, eligibility };
 }
 
+function normaliseDocumentRef(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+/**
+ * Resolve AB orders that the scoped source evidence points at for this company.
+ * Fail closed when none match — recovery must never fall back to unfiltered fulfilment.
+ */
+async function resolveRecoveryOrders(input: {
+  companyId: string;
+  documentReference: string;
+  orderNumber?: string | undefined;
+  filter504Rows: Array<{ document: string; abMatch?: string | null }>;
+  filterTrmRows: Array<{ document: string }>;
+}) {
+  const focus = normaliseDocumentRef(input.documentReference);
+  const inScope504 = input.filter504Rows.filter(
+    (row) => String(row.document).toUpperCase() === focus,
+  );
+  const inScopeTrm = input.filterTrmRows.filter(
+    (row) => String(row.document).toUpperCase() === focus,
+  );
+  if (!inScope504.length && !inScopeTrm.length) {
+    throw new AuthError(
+      `Invoice ${focus} was not found in the provided 504/TRM21QC source. Recovery was not started.`,
+      "VALIDATION",
+      400,
+    );
+  }
+
+  const orderNumbers: string[] = [];
+  if (input.orderNumber?.trim()) {
+    orderNumbers.push(input.orderNumber.trim().toUpperCase());
+  }
+  for (const row of inScope504) {
+    const parsed = parseExactAbOrderReference(String(row.abMatch ?? ""));
+    if (parsed) orderNumbers.push(parsed);
+  }
+
+  // Also accept an AB order already linked on a stored document for this invoice.
+  const linked = await prisma.autopartSalesDocument.findMany({
+    where: {
+      companyId: input.companyId,
+      documentReference: { equals: focus, mode: "insensitive" },
+      abOrderId: { not: null },
+    },
+    select: { abOrderId: true, abOrderNumber: true },
+  });
+  for (const doc of linked) {
+    if (doc.abOrderNumber) orderNumbers.push(doc.abOrderNumber);
+  }
+
+  const uniqueNumbers = [...new Set(orderNumbers)];
+  if (!uniqueNumbers.length) {
+    throw new AuthError(
+      `No AB order reference found for invoice ${focus}. Provide orderNumber when recovering from TRM-only source evidence.`,
+      "VALIDATION",
+      400,
+    );
+  }
+
+  const orders = await prisma.order.findMany({
+    where: { orderNumber: { in: uniqueNumbers }, companyId: input.companyId },
+    select: { id: true, orderNumber: true, status: true, companyId: true },
+  });
+
+  if (!orders.length) {
+    throw new AuthError(
+      `No verified AB order for invoice ${focus} belongs to this customer. Recovery fulfilment was not run.`,
+      "VALIDATION",
+      400,
+    );
+  }
+
+  const foreign = uniqueNumbers.filter(
+    (number) => !orders.some((order) => order.orderNumber === number),
+  );
+  if (foreign.length) {
+    throw new AuthError(
+      `Source evidence references AB order(s) ${foreign.join(", ")} that do not belong to this customer.`,
+      "VALIDATION",
+      400,
+    );
+  }
+
+  return {
+    focusDocumentReference: focus,
+    inScope504,
+    inScopeTrm,
+    orders,
+  };
+}
+
 export async function previewSkippedOngoingSalesRecovery(actorUserId: string, raw: unknown) {
   await requireRecoveryActor(actorUserId);
   const input = recoverySchema.parse(raw);
   assertHasSource(input);
   const { company, eligibility } = await assertCompanyReadyForRecovery(input.companyId);
+  const focus = normaliseDocumentRef(input.documentReference);
 
   const preview504 = input.text504?.trim()
     ? await previewAutopart504Import(actorUserId, {
@@ -388,50 +501,72 @@ export async function previewSkippedOngoingSalesRecovery(actorUserId: string, ra
       })
     : null;
 
-  const focusRef = input.documentReference?.trim().toUpperCase() || null;
-  const filter504Rows = preview504?.rows
-    ? focusRef
-      ? preview504.rows.filter((row) => String(row.document).toUpperCase() === focusRef)
-      : preview504.rows
-    : [];
-  const filterTrmRows = previewTrm?.sample
-    ? focusRef
-      ? previewTrm.sample.filter((row) => String(row.document).toUpperCase() === focusRef)
-      : previewTrm.sample
-    : [];
+  const all504 = preview504?.rows ?? [];
+  const allTrm = previewTrm?.sample ?? [];
+  const filter504Rows = all504.filter((row) => String(row.document).toUpperCase() === focus);
+  const filterTrmRows = allTrm.filter((row) => String(row.document).toUpperCase() === focus);
 
-  const orderNumbers = [
-    ...new Set(
-      filter504Rows
-        .map((row) => String(row.abMatch ?? ""))
-        .filter((value) => /^AB-\d+/i.test(value)),
-    ),
-  ];
-
-  const orders = orderNumbers.length
-    ? await prisma.order.findMany({
-        where: { orderNumber: { in: orderNumbers }, companyId: company.id },
-        select: { id: true, orderNumber: true, status: true },
-      })
+  // Derive out-of-scope refs from the raw source parse (not only preview display rows),
+  // so multi-invoice files are listed even when preview truncates or filters status rows.
+  const source504Docs = input.text504?.trim()
+    ? [
+        ...new Set(
+          parseAutopart504Report(input.text504)
+            .rows.filter(isAutopart504ImportableRow)
+            .map((row) => row.documentNumber.trim().toUpperCase())
+            .filter(Boolean),
+        ),
+      ]
     : [];
-
-  const fulfilment =
-    orders.length > 0
-      ? await evaluate504TrmFulfilmentReadonly(actorUserId, {
-          orderIds: orders.map((order) => order.id),
-        })
-      : null;
-
-  const existingDespatchEmails = orders.length
-    ? await prisma.transactionalEmail.findMany({
-        where: {
-          entityType: "Order",
-          entityId: { in: orders.map((order) => order.id) },
-          purpose: { in: ["ORDER_DESPATCHED", "ORDER_PART_DESPATCHED"] },
-        },
-        select: { entityId: true, purpose: true, status: true, idempotencyKey: true },
-      })
+  const sourceTrmDocs = input.textTrm21qc?.trim()
+    ? [
+        ...new Set(
+          parseAutopartTrm21qcReport(input.textTrm21qc)
+            .rows.filter((row) => row.classification === "OK" && row.documentNumber)
+            .map((row) => String(row.documentNumber).trim().toUpperCase())
+            .filter(Boolean),
+        ),
+      ]
     : [];
+  const outOfScope504 = source504Docs.filter((doc) => doc !== focus);
+  const outOfScopeTrm = sourceTrmDocs.filter((doc) => doc !== focus);
+
+  const resolved = await resolveRecoveryOrders({
+    companyId: company.id,
+    documentReference: focus,
+    orderNumber: input.orderNumber,
+    filter504Rows,
+    filterTrmRows,
+  });
+
+  const existingDocs = await prisma.autopartSalesDocument.findMany({
+    where: {
+      companyId: company.id,
+      documentReference: { equals: focus, mode: "insensitive" },
+    },
+    select: { id: true, source: true, has504: true, hasTrm21qc: true, abOrderId: true },
+  });
+
+  const evidenceAlreadyStored = existingDocs.length > 0;
+  let fulfilmentPreview: Awaited<ReturnType<typeof evaluate504TrmFulfilmentReadonly>> | null = null;
+  let fulfilmentPreviewStatus: "PENDING_AFTER_IMPORT" | "BASED_ON_STORED_EVIDENCE" =
+    "PENDING_AFTER_IMPORT";
+
+  if (evidenceAlreadyStored) {
+    fulfilmentPreview = await evaluate504TrmFulfilmentReadonly(actorUserId, {
+      orderIds: resolved.orders.map((order) => order.id),
+    });
+    fulfilmentPreviewStatus = "BASED_ON_STORED_EVIDENCE";
+  }
+
+  const existingDespatchEmails = await prisma.transactionalEmail.findMany({
+    where: {
+      entityType: "Order",
+      entityId: { in: resolved.orders.map((order) => order.id) },
+      purpose: { in: ["ORDER_DESPATCHED", "ORDER_PART_DESPATCHED"] },
+    },
+    select: { entityId: true, purpose: true, status: true, idempotencyKey: true },
+  });
 
   return {
     companyId: company.id,
@@ -439,33 +574,47 @@ export async function previewSkippedOngoingSalesRecovery(actorUserId: string, ra
     autopartCode: eligibility.autopartCode,
     cutoverComplete: true,
     suppressDispatchEmail: input.suppressDispatchEmail,
-    focusDocumentReference: focusRef,
+    focusDocumentReference: focus,
     wouldImport504: filter504Rows,
     wouldImportTrm21qc: filterTrmRows,
+    wouldSkipOutsideScope: {
+      documents504: outOfScope504,
+      linesTrm21qc: outOfScopeTrm,
+      note: "These rows appear in the source file but will not be persisted (DOCUMENT_OUT_OF_SCOPE).",
+    },
     preview504Summary: preview504
       ? {
           documents: preview504.documents,
-          wouldInsert: preview504.wouldInsert,
-          wouldUpdate: preview504.wouldUpdate,
-          wouldSkip: preview504.wouldSkip,
+          wouldInsert: filter504Rows.filter((row) => row.status === "INSERTED").length,
+          scopedRows: filter504Rows.length,
+          outOfScopeRows: outOfScope504.length,
         }
       : null,
     previewTrmSummary: previewTrm
       ? {
-          rows: previewTrm.rows,
-          wouldInsert: previewTrm.wouldInsert,
-          wouldUpdate: previewTrm.wouldUpdate,
-          wouldSkip: previewTrm.wouldSkip,
+          scopedRows: filterTrmRows.length,
+          outOfScopeRows: outOfScopeTrm.length,
         }
       : null,
-    matchedOrders: orders,
-    fulfilmentPreview: fulfilment,
+    matchedOrders: resolved.orders,
+    evidenceAlreadyStored,
+    fulfilmentPreviewStatus,
+    fulfilmentPreview:
+      fulfilmentPreviewStatus === "PENDING_AFTER_IMPORT"
+        ? {
+            pending: true as const,
+            message:
+              "Matching sales documents for this invoice are not stored yet. Fulfilment will be re-evaluated only after scoped import persists authoritative 504/TRM evidence. No dispatch transition is confirmed at preview time.",
+            candidateOrderIds: resolved.orders.map((order) => order.id),
+            candidateOrderNumbers: resolved.orders.map((order) => order.orderNumber),
+          }
+        : fulfilmentPreview,
     existingDespatchEmails,
     customerEmailPlan: input.suppressDispatchEmail
       ? {
           willQueueDispatchEmail: false,
           reason:
-            "Recovery suppresses customer dispatch email by default. Financial import and order fulfilment still apply.",
+            "Recovery suppresses customer dispatch email by default for the whole exclusive import+fulfilment transaction.",
         }
       : {
           willQueueDispatchEmail: true,
@@ -474,16 +623,17 @@ export async function previewSkippedOngoingSalesRecovery(actorUserId: string, ra
         },
     changesIfConfirmed: [
       input.text504?.trim()
-        ? "Reprocess 504 rows through the live ongoing importer for this customer only (idempotent; no auto fulfilment yet)."
+        ? `Persist only invoice ${focus} from the 504 source for this customer (other documents skipped).`
         : null,
       input.textTrm21qc?.trim()
-        ? "Reprocess TRM21QC rows through the live ongoing importer for this customer only (idempotent; no auto fulfilment yet)."
+        ? `Persist only invoice ${focus} from the TRM21QC source for this customer (other documents skipped).`
         : null,
-      "Run 504+TRM fulfilment matching for linked AB orders.",
+      `Run fulfilment only for verified company-owned order(s): ${resolved.orders.map((o) => o.orderNumber).join(", ")}.`,
       input.suppressDispatchEmail
-        ? "Do not queue customer dispatch emails for this recovery."
+        ? "Do not queue customer dispatch emails for this recovery (exclusive lock held through import+fulfilment)."
         : "May queue customer dispatch emails when fulfilment evidence is new.",
       "Do not invent invoice, line, or despatch quantities.",
+      "Do not import or fulfil unrelated invoices, customers, or orders.",
     ].filter((line): line is string => Boolean(line)),
   };
 }
@@ -493,35 +643,68 @@ export async function confirmSkippedOngoingSalesRecovery(actorUserId: string, ra
   const input = recoverySchema.parse(raw);
   assertHasSource(input);
   const { company, eligibility } = await assertCompanyReadyForRecovery(input.companyId);
+  const focus = normaliseDocumentRef(input.documentReference);
 
+  // Preview validates scope / matching orders before any write.
   const preview = await previewSkippedOngoingSalesRecovery(actorUserId, input);
+  const orderIds = preview.matchedOrders.map((order) => order.id);
+  if (!orderIds.length) {
+    throw new AuthError(
+      "No verified matching AB order exists for this recovery. Unfiltered fulfilment was refused.",
+      "VALIDATION",
+      400,
+    );
+  }
+
   const customerScope = {
     companyId: company.id,
     accountCodes: [eligibility.autopartCode],
+    documentReferences: [focus],
   };
 
-  // customerScope skips the importer's automatic fulfilment so we can apply with email suppression.
-  const run504 = input.text504?.trim()
-    ? await confirmAutopart504Import(actorUserId, {
-        text: input.text504,
-        filename: input.filename504 ?? "504-recovery.txt",
-        source: "MANUAL",
-        customerScope,
-      })
-    : null;
-  const runTrm = input.textTrm21qc?.trim()
-    ? await confirmAutopartTrm21qcImport(actorUserId, {
-        text: input.textTrm21qc,
-        filename: input.filenameTrm21qc ?? "TRM21QC-recovery.csv",
-        source: "MANUAL",
-        customerScope,
-      })
-    : null;
+  // Hold the fulfilment exclusive lock across import + fulfilment so a concurrent
+  // scheduled run cannot evaluate the newly stored evidence and queue dispatch email
+  // before recovery's suppressCustomerDispatchEmail=true apply completes.
+  const result = await with504TrmFulfilmentExclusive(async () => {
+    const run504 = input.text504?.trim()
+      ? await confirmAutopart504Import(actorUserId, {
+          text: input.text504,
+          filename: input.filename504 ?? "504-recovery.txt",
+          source: "MANUAL",
+          customerScope,
+        })
+      : null;
+    const runTrm = input.textTrm21qc?.trim()
+      ? await confirmAutopartTrm21qcImport(actorUserId, {
+          text: input.textTrm21qc,
+          filename: input.filenameTrm21qc ?? "TRM21QC-recovery.csv",
+          source: "MANUAL",
+          customerScope,
+        })
+      : null;
 
-  const orderIds = preview.matchedOrders.map((order) => order.id);
-  const fulfilment = await run504TrmFulfilmentAfterImport(actorUserId, {
-    ...(orderIds.length ? { orderIds } : {}),
-    ...(input.suppressDispatchEmail ? { suppressCustomerDispatchEmail: true } : {}),
+    // Re-verify ownership inside the lock before applying.
+    const owned = await prisma.order.findMany({
+      where: { id: { in: orderIds }, companyId: company.id },
+      select: { id: true, orderNumber: true },
+    });
+    if (owned.length !== orderIds.length) {
+      throw new AuthError(
+        "Recovery orders no longer exclusively belong to this customer. Fulfilment was not applied.",
+        "VALIDATION",
+        400,
+      );
+    }
+
+    // Import already skipped auto-fulfilment via customerScope. Apply only scoped orders
+    // without re-entering the exclusive lock (caller already holds it).
+    const fulfilment = await run504TrmFulfilmentInnerForRecovery(actorUserId, {
+      companyId: company.id,
+      orderIds: owned.map((order) => order.id),
+      suppressCustomerDispatchEmail: input.suppressDispatchEmail,
+    });
+
+    return { run504, runTrm, fulfilment, owned };
   });
 
   await recordAuditEvent({
@@ -532,26 +715,46 @@ export async function confirmSkippedOngoingSalesRecovery(actorUserId: string, ra
     metadata: {
       companyId: company.id,
       autopartCode: eligibility.autopartCode,
-      documentReference: input.documentReference ?? null,
+      documentReference: focus,
+      orderIds: result.owned.map((order) => order.id),
+      orderNumbers: result.owned.map((order) => order.orderNumber),
       suppressDispatchEmail: input.suppressDispatchEmail,
-      run504Id: run504 && "id" in run504 ? run504.id : null,
-      runTrmId: runTrm && "id" in runTrm ? runTrm.id : null,
-      fulfilmentEmailsQueued: fulfilment.emailsQueued,
-      fulfilmentOrdersMutated: fulfilment.ordersMutated,
+      run504Id: result.run504 && "id" in result.run504 ? result.run504.id : null,
+      runTrmId: result.runTrm && "id" in result.runTrm ? result.runTrm.id : null,
+      fulfilmentEmailsQueued: result.fulfilment.emailsQueued,
+      fulfilmentOrdersMutated: result.fulfilment.ordersMutated,
     },
   });
+
+  if (input.suppressDispatchEmail) {
+    await recordAuditEvent({
+      action: "order.despatch_email_suppressed",
+      entityType: "Company",
+      entityId: company.id,
+      actorUserId,
+      metadata: {
+        source: "AUTOPART_504_TRM_RECOVERY",
+        documentReference: focus,
+        orderIds: result.owned.map((order) => order.id),
+        orderNumbers: result.owned.map((order) => order.orderNumber),
+        reason: "Targeted skipped-invoice recovery — customer dispatch email suppressed for exclusive transaction",
+        emailsQueued: result.fulfilment.emailsQueued,
+      },
+    });
+  }
 
   return {
     companyId: company.id,
     preview,
-    run504,
-    runTrm,
+    run504: result.run504,
+    runTrm: result.runTrm,
     fulfilment: {
-      mode: fulfilment.mode,
-      applied: fulfilment.applied,
-      emailsQueued: fulfilment.emailsQueued,
-      ordersMutated: fulfilment.ordersMutated,
-      preview: fulfilment.preview,
+      mode: result.fulfilment.mode,
+      applied: result.fulfilment.applied,
+      emailsQueued: result.fulfilment.emailsQueued,
+      ordersMutated: result.fulfilment.ordersMutated,
+      preview: result.fulfilment.preview,
     },
   };
 }
+

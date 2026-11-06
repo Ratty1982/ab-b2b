@@ -10,6 +10,12 @@ export type CustomerSalesScope = {
   companyId: string;
   /** Normalised account codes the operator selected for this customer. */
   accountCodes: string[];
+  /**
+   * When set, only these document references may be persisted.
+   * Used by targeted incident recovery so a multi-invoice source file cannot
+   * write unrelated invoices for the selected customer.
+   */
+  documentReferences?: string[];
 };
 
 export type CustomerSalesReportKind = "504" | "TRM21QC" | "HISTORICAL_561L_SLRB" | "UNKNOWN";
@@ -46,4 +52,20 @@ export function accountInCustomerScope(account: string, scope: CustomerSalesScop
   const key = account.trim().toUpperCase();
   if (!key) return false;
   return scope.accountCodes.some((code) => code.trim().toUpperCase() === key);
+}
+
+/**
+ * When documentReferences is omitted/undefined, all documents for the account may persist.
+ * When present (including an empty list), only listed refs may persist — empty means fail closed.
+ */
+export function documentInCustomerScope(
+  documentReference: string,
+  scope: CustomerSalesScope,
+): boolean {
+  const allowed = scope.documentReferences;
+  if (allowed === undefined) return true;
+  if (allowed.length === 0) return false;
+  const key = documentReference.trim().toUpperCase();
+  if (!key) return false;
+  return allowed.some((ref) => ref.trim().toUpperCase() === key);
 }

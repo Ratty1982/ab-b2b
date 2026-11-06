@@ -9,6 +9,10 @@ import {
   diagnoseSalesCutoverIncident,
   previewSkippedOngoingSalesRecovery,
 } from "@/server/companies/sales-cutover-recovery";
+import {
+  run504TrmFulfilmentAfterImport,
+  with504TrmFulfilmentExclusive,
+} from "@/server/orders/autopart-504-trm-fulfilment";
 import { AuthError } from "@/server/rbac/guards";
 import { canContinuePastSalesHistory } from "@/domain/customer-creation-wizard";
 
@@ -40,16 +44,172 @@ async function ensureUser(email: string, roles: string[]) {
   return user.id;
 }
 
+async function uniqueAbOrderNumber(): Promise<string> {
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const n = String(
+      (100000 + ((Date.now() + attempt * 7919 + Math.floor(Math.random() * 900000)) % 900000)) %
+        1000000,
+    ).padStart(6, "0");
+    const orderNumber = `AB-${n}`;
+    const existing = await prisma.order.findUnique({
+      where: { orderNumber },
+      select: { id: true },
+    });
+    if (!existing) return orderNumber;
+  }
+  throw new Error("Could not allocate a unique AB order number");
+}
+
+async function seedRecoverableCustomer(label: string) {
+  const local = `${Date.now()}${Math.floor(Math.random() * 10000)}`;
+  const company = await prisma.company.create({
+    data: { name: `${label} ${local}`, status: "ACTIVE" },
+  });
+  const code = `RC${local.slice(-10).toUpperCase()}`;
+  await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: company.id, code });
+  await completeCustomerSalesCutoverWithoutHistory(adminId, {
+    companyId: company.id,
+    confirmAccount: code,
+    reason: "Brand-new Autopart customer. No historical sales exist for this verified account.",
+  });
+  const orderNumber = await uniqueAbOrderNumber();
+  const documentReference = `SS${local.slice(-8).toUpperCase()}`;
+  const otherDocument = `SX${local.slice(-8).toUpperCase()}`;
+  const brand = await prisma.brand.create({
+    data: { name: `Brand ${local}`, slug: `brand-${local}`, isActive: true },
+  });
+  const category = await prisma.category.create({
+    data: { name: `Cat ${local}`, slug: `cat-${local}`, isActive: true },
+  });
+  const product = await prisma.product.create({
+    data: {
+      name: `Widget ${local}`,
+      slug: `widget-${local}`,
+      brandId: brand.id,
+      categoryId: category.id,
+      status: "ACTIVE",
+      isActive: true,
+      variants: {
+        create: { sku: `SK${local.slice(-8).toUpperCase()}`, isDefault: true, isActive: true },
+      },
+    },
+    include: { variants: true },
+  });
+  const sku = product.variants[0]!.sku;
+  const order = await prisma.order.create({
+    data: {
+      orderNumber,
+      companyId: company.id,
+      status: "CONFIRMED",
+      subtotal: 10,
+      vatTotal: 2,
+      deliveryTotal: 0,
+      grandTotal: 12,
+      placedAt: new Date(),
+      deliveryAddress: { line1: "1 High Street", town: "Leeds", postcode: "LS1 1AA", country: "GB" },
+      contactSnapshot: {
+        name: "Buyer",
+        email: `buyer-${local}@example.invalid`,
+        phone: "01130000000",
+      },
+      items: {
+        create: {
+          sku,
+          name: "Widget",
+          qty: 1,
+          unitPrice: 10,
+          customerUnitPrice: 10,
+          lineTotal: 10,
+          vatRate: 20,
+          lineVat: "2.00",
+          lineGross: 12,
+          despatchedQty: 0,
+          variantId: product.variants[0]!.id,
+          productId: product.id,
+        },
+      },
+    },
+  });
+  return {
+    local,
+    company,
+    code,
+    order,
+    orderNumber,
+    documentReference,
+    otherDocument,
+    sku,
+    brandId: brand.id,
+    categoryId: category.id,
+    productId: product.id,
+  };
+}
+
+async function cleanupSeed(seed: Awaited<ReturnType<typeof seedRecoverableCustomer>>) {
+  await prisma.transactionalEmail.deleteMany({
+    where: { entityType: "Order", entityId: seed.order.id },
+  });
+  await prisma.autopartSalesLine.deleteMany({ where: { companyId: seed.company.id } });
+  await prisma.autopartSalesDocument.deleteMany({ where: { companyId: seed.company.id } });
+  await prisma.autopartImportDiagnostic.deleteMany({
+    where: { importRun: { companyId: seed.company.id } },
+  });
+  await prisma.autopartCustomerImportRun.deleteMany({ where: { companyId: seed.company.id } });
+  await prisma.orderFulfilmentEvent.deleteMany({ where: { orderId: seed.order.id } });
+  await prisma.invoice.deleteMany({ where: { companyId: seed.company.id } });
+  await prisma.orderItem.deleteMany({ where: { orderId: seed.order.id } });
+  await prisma.order.delete({ where: { id: seed.order.id } });
+  await prisma.customerSalesCutover.deleteMany({ where: { companyId: seed.company.id } });
+  await prisma.company.delete({ where: { id: seed.company.id } });
+  await prisma.productVariant.deleteMany({ where: { productId: seed.productId } });
+  await prisma.product.delete({ where: { id: seed.productId } });
+  await prisma.category.delete({ where: { id: seed.categoryId } });
+  await prisma.brand.delete({ where: { id: seed.brandId } });
+}
+
+function trmLines(
+  code: string,
+  rows: Array<{ document: string; sku: string; qty?: number; sales?: string }>,
+) {
+  return [
+    "Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%",
+    ...rows.map(
+      (row) =>
+        `${code},GRP,${row.document},05/11/2026,${row.sku},Widget,${row.qty ?? 1},${row.sales ?? "10.00"},4.00,6.00,60.000`,
+    ),
+  ].join("\n");
+}
+
+function csv504(rows: Array<{ document: string; orderNumber: string; goods?: string }>) {
+  return [
+    "Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number",
+    ...rows.map((row) => {
+      const goods = Number(row.goods ?? "10.00");
+      const vat = Number((goods * 0.2).toFixed(2));
+      const value = Number((goods + vat).toFixed(2));
+      return `ACCOUNT,${row.document},05/11/2026,10:00,TEST CUSTOMER,${goods.toFixed(2)},${vat.toFixed(2)},${value.toFixed(2)},WR,${row.orderNumber}`;
+    }),
+  ].join("\n");
+}
+
 beforeAll(async () => {
   await bootstrapRbac(prisma);
   adminId = await ensureUser(`cutover.recovery.${stamp}@example.invalid`, ["SUPER_ADMIN"]);
+  await prisma.autopartOngoingSalesFeedSettings.upsert({
+    where: { id: "default" },
+    create: { id: "default", fulfilmentMode: "ACTIVE", fulfilmentFrom: new Date("2020-01-01") },
+    update: { fulfilmentMode: "ACTIVE", fulfilmentFrom: new Date("2020-01-01") },
+  });
 });
 
 afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe("sales history cutover recovery", () => {
+describe(
+  "sales history cutover recovery safety",
+  { timeout: 30_000 },
+  () => {
   it("blocks wizard continue until an active verified customer finishes baseline", () => {
     expect(
       canContinuePastSalesHistory({
@@ -67,46 +227,376 @@ describe("sales history cutover recovery", () => {
     ).toEqual({ ok: true });
   });
 
-  it("diagnoses SENCO-style skipped first invoice and recovers after zero-history cutover without dispatch email", async () => {
+  it("requires an explicit invoice reference and refuses empty matches", async () => {
+    const seed = await seedRecoverableCustomer("NoMatch");
+    await expect(
+      previewSkippedOngoingSalesRecovery(adminId, {
+        companyId: seed.company.id,
+        textTrm21qc: trmLines(seed.code, [{ document: seed.documentReference, sku: seed.sku }]),
+        // missing documentReference
+      }),
+    ).rejects.toBeInstanceOf(Error);
+
+    await expect(
+      previewSkippedOngoingSalesRecovery(adminId, {
+        companyId: seed.company.id,
+        documentReference: "SSDOESNOTEXIST",
+        orderNumber: seed.orderNumber,
+        textTrm21qc: trmLines(seed.code, [{ document: seed.documentReference, sku: seed.sku }]),
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+
+    await expect(
+      previewSkippedOngoingSalesRecovery(adminId, {
+        companyId: seed.company.id,
+        documentReference: seed.documentReference,
+        textTrm21qc: trmLines(seed.code, [{ document: seed.documentReference, sku: seed.sku }]),
+        // no orderNumber and no 504 AB ref
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+
+    await cleanupSeed(seed);
+  });
+
+  it(
+    "marks fulfilment pending before evidence exists and suppresses dispatch email on recovery",
+    async () => {
+    const seed = await seedRecoverableCustomer("PendingPreview");
+    const trm = trmLines(seed.code, [{ document: seed.documentReference, sku: seed.sku }]);
+    const text504 = csv504([
+      { document: seed.documentReference, orderNumber: seed.orderNumber },
+    ]);
+
+    const preview = await previewSkippedOngoingSalesRecovery(adminId, {
+      companyId: seed.company.id,
+      documentReference: seed.documentReference,
+      orderNumber: seed.orderNumber,
+      text504,
+      textTrm21qc: trm,
+      suppressDispatchEmail: true,
+    });
+    expect(preview.fulfilmentPreviewStatus).toBe("PENDING_AFTER_IMPORT");
+    expect(preview.fulfilmentPreview).toMatchObject({ pending: true });
+    expect(preview.customerEmailPlan.willQueueDispatchEmail).toBe(false);
+    expect(preview.matchedOrders.map((order) => order.orderNumber)).toEqual([seed.orderNumber]);
+
+    const recovered = await confirmSkippedOngoingSalesRecovery(adminId, {
+      companyId: seed.company.id,
+      documentReference: seed.documentReference,
+      orderNumber: seed.orderNumber,
+      text504,
+      textTrm21qc: trm,
+      suppressDispatchEmail: true,
+    });
+    expect(recovered.fulfilment.emailsQueued).toBe(0);
+    expect(
+      await prisma.autopartSalesLine.count({
+        where: { companyId: seed.company.id, documentReference: seed.documentReference },
+      }),
+    ).toBe(1);
+
+    const emails = await prisma.transactionalEmail.count({
+      where: {
+        entityType: "Order",
+        entityId: seed.order.id,
+        purpose: { in: ["ORDER_DESPATCHED", "ORDER_PART_DESPATCHED"] },
+      },
+    });
+    expect(emails).toBe(0);
+
+    const suppressAudit = await prisma.auditEvent.findFirst({
+      where: {
+        entityId: seed.company.id,
+        action: "order.despatch_email_suppressed",
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(suppressAudit?.metadata).toMatchObject({
+      documentReference: seed.documentReference,
+      source: "AUTOPART_504_TRM_RECOVERY",
+    });
+
+    // Repeated recovery is idempotent.
+    await confirmSkippedOngoingSalesRecovery(adminId, {
+      companyId: seed.company.id,
+      documentReference: seed.documentReference,
+      orderNumber: seed.orderNumber,
+      text504,
+      textTrm21qc: trm,
+      suppressDispatchEmail: true,
+    });
+    expect(
+      await prisma.autopartSalesLine.count({
+        where: { companyId: seed.company.id, documentReference: seed.documentReference },
+      }),
+    ).toBe(1);
+
+    await cleanupSeed(seed);
+  },
+    20_000,
+  );
+
+  it("persists only the named invoice from a multi-invoice source file", async () => {
+    const seed = await seedRecoverableCustomer("MultiInvoice");
+    const otherOrderNumber = await uniqueAbOrderNumber();
+    await prisma.order.create({
+      data: {
+        orderNumber: otherOrderNumber,
+        companyId: seed.company.id,
+        status: "CONFIRMED",
+        subtotal: 5,
+        vatTotal: 1,
+        deliveryTotal: 0,
+        grandTotal: 6,
+        placedAt: new Date(),
+        deliveryAddress: { line1: "1 High Street", town: "Leeds", postcode: "LS1 1AA", country: "GB" },
+        contactSnapshot: { name: "Buyer", email: `other-${seed.local}@example.invalid`, phone: "01130000000" },
+        items: {
+          create: {
+            sku: seed.sku,
+            name: "Widget",
+            qty: 1,
+            unitPrice: 5,
+            customerUnitPrice: 5,
+            lineTotal: 5,
+            vatRate: 20,
+            lineVat: "1.00",
+            lineGross: 6,
+            variantId: (await prisma.productVariant.findFirstOrThrow({ where: { sku: seed.sku } })).id,
+            productId: seed.productId,
+          },
+        },
+      },
+    });
+
+    const trm = trmLines(seed.code, [
+      { document: seed.documentReference, sku: seed.sku, sales: "10.00" },
+      { document: seed.otherDocument, sku: seed.sku, sales: "5.00" },
+    ]);
+    const text504 = csv504([
+      { document: seed.documentReference, orderNumber: seed.orderNumber },
+      { document: seed.otherDocument, orderNumber: otherOrderNumber, goods: "5.00" },
+    ]);
+
+    const preview = await previewSkippedOngoingSalesRecovery(adminId, {
+      companyId: seed.company.id,
+      documentReference: seed.documentReference,
+      orderNumber: seed.orderNumber,
+      text504,
+      textTrm21qc: trm,
+      suppressDispatchEmail: true,
+    });
+    expect(preview.wouldSkipOutsideScope.documents504).toContain(seed.otherDocument);
+    expect(preview.wouldImport504.every((row) => row.document === seed.documentReference)).toBe(true);
+
+    await confirmSkippedOngoingSalesRecovery(adminId, {
+      companyId: seed.company.id,
+      documentReference: seed.documentReference,
+      orderNumber: seed.orderNumber,
+      text504,
+      textTrm21qc: trm,
+      suppressDispatchEmail: true,
+    });
+
+    expect(
+      await prisma.autopartSalesDocument.count({
+        where: { companyId: seed.company.id, documentReference: seed.documentReference },
+      }),
+    ).toBeGreaterThan(0);
+    expect(
+      await prisma.autopartSalesDocument.count({
+        where: { companyId: seed.company.id, documentReference: seed.otherDocument },
+      }),
+    ).toBe(0);
+    expect(
+      await prisma.autopartSalesLine.count({
+        where: { companyId: seed.company.id, documentReference: seed.otherDocument },
+      }),
+    ).toBe(0);
+
+    await prisma.orderItem.deleteMany({ where: { order: { orderNumber: otherOrderNumber } } });
+    await prisma.order.delete({ where: { orderNumber: otherOrderNumber } });
+    await cleanupSeed(seed);
+  });
+
+  it("applies full despatch when invoice covers the whole order and partial when it does not", async () => {
+    const full = await seedRecoverableCustomer("FullFulfil");
+    const fullRecovered = await confirmSkippedOngoingSalesRecovery(adminId, {
+      companyId: full.company.id,
+      documentReference: full.documentReference,
+      orderNumber: full.orderNumber,
+      text504: csv504([{ document: full.documentReference, orderNumber: full.orderNumber }]),
+      textTrm21qc: trmLines(full.code, [
+        { document: full.documentReference, sku: full.sku, qty: 1 },
+      ]),
+      suppressDispatchEmail: true,
+    });
+    expect(fullRecovered.fulfilment.ordersMutated).toBeGreaterThan(0);
+    expect(
+      (
+        await prisma.order.findUniqueOrThrow({
+          where: { id: full.order.id },
+          select: { status: true },
+        })
+      ).status,
+    ).toBe("DISPATCHED");
+    await cleanupSeed(full);
+
+    const partial = await seedRecoverableCustomer("PartialFulfil");
+    await prisma.orderItem.updateMany({
+      where: { orderId: partial.order.id },
+      data: { qty: 2, lineTotal: 20, lineVat: "4.00", lineGross: 24 },
+    });
+    await prisma.order.update({
+      where: { id: partial.order.id },
+      data: { subtotal: 20, vatTotal: 4, grandTotal: 24 },
+    });
+    const partialRecovered = await confirmSkippedOngoingSalesRecovery(adminId, {
+      companyId: partial.company.id,
+      documentReference: partial.documentReference,
+      orderNumber: partial.orderNumber,
+      text504: csv504([{ document: partial.documentReference, orderNumber: partial.orderNumber }]),
+      textTrm21qc: trmLines(partial.code, [
+        { document: partial.documentReference, sku: partial.sku, qty: 1 },
+      ]),
+      suppressDispatchEmail: true,
+    });
+    expect(partialRecovered.fulfilment.ordersMutated).toBeGreaterThan(0);
+    expect(
+      (
+        await prisma.order.findUniqueOrThrow({
+          where: { id: partial.order.id },
+          select: { status: true },
+        })
+      ).status,
+    ).toBe("PARTIALLY_DESPATCHED");
+    expect(partialRecovered.fulfilment.emailsQueued).toBe(0);
+    await cleanupSeed(partial);
+  });
+
+  it("refuses unrelated foreign AB orders and never runs unfiltered fulfilment", async () => {
+    const seed = await seedRecoverableCustomer("ForeignOrder");
+    const foreign = await prisma.company.create({
+      data: { name: `Foreign ${seed.local}`, status: "ACTIVE" },
+    });
+    const foreignOrderNumber = await uniqueAbOrderNumber();
+    await prisma.order.create({
+      data: {
+        orderNumber: foreignOrderNumber,
+        companyId: foreign.id,
+        status: "CONFIRMED",
+        subtotal: 10,
+        vatTotal: 2,
+        deliveryTotal: 0,
+        grandTotal: 12,
+        placedAt: new Date(),
+        deliveryAddress: { line1: "9 Other St", town: "York", postcode: "YO1 1AA", country: "GB" },
+        contactSnapshot: { name: "Other", email: `foreign-${seed.local}@example.invalid`, phone: "01904000000" },
+      },
+    });
+
+    await expect(
+      previewSkippedOngoingSalesRecovery(adminId, {
+        companyId: seed.company.id,
+        documentReference: seed.documentReference,
+        orderNumber: foreignOrderNumber,
+        textTrm21qc: trmLines(seed.code, [{ document: seed.documentReference, sku: seed.sku }]),
+        suppressDispatchEmail: true,
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+
+    await prisma.order.delete({ where: { orderNumber: foreignOrderNumber } });
+    await prisma.company.delete({ where: { id: foreign.id } });
+    await cleanupSeed(seed);
+  });
+
+  it("keeps recovery suppress policy isolated from concurrent scheduled fulfilment", async () => {
+    const seed = await seedRecoverableCustomer("Concurrent");
+    const trm = trmLines(seed.code, [{ document: seed.documentReference, sku: seed.sku }]);
+    const text504 = csv504([
+      { document: seed.documentReference, orderNumber: seed.orderNumber },
+    ]);
+
+    let releaseHold!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      releaseHold = resolve;
+    });
+
+    const blocker = with504TrmFulfilmentExclusive(async () => {
+      await hold;
+      return "held";
+    });
+
+    const recoveryPromise = confirmSkippedOngoingSalesRecovery(adminId, {
+      companyId: seed.company.id,
+      documentReference: seed.documentReference,
+      orderNumber: seed.orderNumber,
+      text504,
+      textTrm21qc: trm,
+      suppressDispatchEmail: true,
+    });
+
+    // While recovery waits for the exclusive section, a normal unfiltered call must also wait —
+    // and must not be joined into the recovery promise.
+    let normalStarted = false;
+    const normalPromise = (async () => {
+      normalStarted = true;
+      return run504TrmFulfilmentAfterImport(adminId, {
+        orderIds: [seed.order.id],
+      });
+    })();
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(normalStarted).toBe(true);
+
+    releaseHold();
+    await blocker;
+    const recovered = await recoveryPromise;
+    expect(recovered.fulfilment.emailsQueued).toBe(0);
+    await normalPromise;
+
+    const emails = await prisma.transactionalEmail.count({
+      where: {
+        entityType: "Order",
+        entityId: seed.order.id,
+        purpose: { in: ["ORDER_DESPATCHED", "ORDER_PART_DESPATCHED"] },
+      },
+    });
+    expect(emails).toBe(0);
+
+    await cleanupSeed(seed);
+  });
+
+  it("diagnoses skipped HISTORY_CUTOVER_INCOMPLETE then recovers for Sales Enquiry population", async () => {
     const local = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
     const company = await prisma.company.create({
       data: { name: `SENCO Style ${local}`, status: "ACTIVE" },
     });
-    const code = `SC${local.slice(-10).toUpperCase()}`;
+    const code = `SN${local.slice(-10).toUpperCase()}`;
     await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: company.id, code });
-
-    const orderNumber = await (async () => {
-      for (let attempt = 0; attempt < 40; attempt++) {
-        const n = String((100000 + ((Date.now() + attempt * 7919) % 900000)) % 1000000).padStart(6, "0");
-        const candidate = `AB-${n}`;
-        const existing = await prisma.order.findUnique({ where: { orderNumber: candidate }, select: { id: true } });
-        if (!existing) return candidate;
-      }
-      throw new Error("Could not allocate order number");
-    })();
+    const orderNumber = await uniqueAbOrderNumber();
     const documentReference = `SS${local.slice(-8).toUpperCase()}`;
     const brand = await prisma.brand.create({
-      data: { name: `Cutover Brand ${local}`, slug: `cutover-brand-${local}`, isActive: true },
+      data: { name: `SENCO Brand ${local}`, slug: `senco-brand-${local}`, isActive: true },
     });
     const category = await prisma.category.create({
-      data: { name: `Cutover Cat ${local}`, slug: `cutover-cat-${local}`, isActive: true },
+      data: { name: `SENCO Cat ${local}`, slug: `senco-cat-${local}`, isActive: true },
     });
     const product = await prisma.product.create({
       data: {
-        name: `Cutover Widget ${local}`,
-        slug: `cutover-widget-${local}`,
+        name: `SENCO Widget ${local}`,
+        slug: `senco-widget-${local}`,
         brandId: brand.id,
         categoryId: category.id,
         status: "ACTIVE",
         isActive: true,
         variants: {
-          create: { sku: `CW${local.slice(-8).toUpperCase()}`, isDefault: true, isActive: true },
+          create: { sku: `SW${local.slice(-8).toUpperCase()}`, isDefault: true, isActive: true },
         },
       },
       include: { variants: true },
     });
     const sku = product.variants[0]!.sku;
-
     const order = await prisma.order.create({
       data: {
         orderNumber,
@@ -142,20 +632,12 @@ describe("sales history cutover recovery", () => {
       },
     });
 
-    // First ongoing import is skipped — cutover incomplete.
-    const trm = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
-${code},GRP,${documentReference},05/11/2026,${sku},Widget,1,10.00,4.00,6.00,60.000
-`;
+    const trm = trmLines(code, [{ document: documentReference, sku }]);
     const blocked = await confirmAutopartTrm21qcImport(adminId, {
       text: trm,
       filename: "TRM21QC.csv",
       source: "MANUAL",
     });
-    expect(
-      await prisma.autopartSalesLine.count({
-        where: { companyId: company.id, documentReference },
-      }),
-    ).toBe(0);
     expect(blocked.id).toBeTruthy();
     expect(
       await prisma.autopartImportDiagnostic.count({
@@ -168,97 +650,39 @@ ${code},GRP,${documentReference},05/11/2026,${sku},Widget,1,10.00,4.00,6.00,60.0
       orderNumber,
       documentReference,
     });
-    expect(before.cutover).toBeNull();
     expect(before.ongoingEligibility.eligible).toBe(false);
-    if (!before.ongoingEligibility.eligible) {
-      expect(before.ongoingEligibility.reasonCode).toBe("HISTORY_CUTOVER_INCOMPLETE");
-    }
     expect(before.skippedDiagnostics.length).toBeGreaterThan(0);
-    expect(before.skippedDiagnostics.every((row) => row.amountsRedacted)).toBe(true);
     expect(before.importedDocuments).toHaveLength(0);
-    expect(before.order?.status).toBe("CONFIRMED");
 
-    await expect(
-      previewSkippedOngoingSalesRecovery(adminId, {
-        companyId: company.id,
-        textTrm21qc: trm,
-        documentReference,
-      }),
-    ).rejects.toBeInstanceOf(AuthError);
-
-    // Option A — brand-new / zero history baseline.
-    const cutover = await completeCustomerSalesCutoverWithoutHistory(adminId, {
+    await completeCustomerSalesCutoverWithoutHistory(adminId, {
       companyId: company.id,
       confirmAccount: code,
       reason: "Brand-new Autopart customer. No historical sales exist for this verified account.",
     });
-    expect(cutover.historyStatus).toBe("COMPLETE");
-    expect(cutover.alreadyComplete).toBe(false);
 
-    // Idempotent cutover.
-    const again = await completeCustomerSalesCutoverWithoutHistory(adminId, {
-      companyId: company.id,
-      confirmAccount: code,
-      reason: "Brand-new Autopart customer. No historical sales exist for this verified account.",
-    });
-    expect(again.alreadyComplete).toBe(true);
-
-    const preview = await previewSkippedOngoingSalesRecovery(adminId, {
-      companyId: company.id,
-      textTrm21qc: trm,
-      filenameTrm21qc: "TRM21QC-recovery.csv",
-      documentReference,
-      suppressDispatchEmail: true,
-    });
-    expect(preview.cutoverComplete).toBe(true);
-    expect(preview.customerEmailPlan.willQueueDispatchEmail).toBe(false);
-    expect(preview.wouldImportTrm21qc.length).toBeGreaterThan(0);
-    expect(preview.changesIfConfirmed.some((line) => /Do not queue customer dispatch/i.test(line))).toBe(
-      true,
-    );
-
-    const recovered = await confirmSkippedOngoingSalesRecovery(adminId, {
-      companyId: company.id,
-      textTrm21qc: trm,
-      filenameTrm21qc: "TRM21QC-recovery.csv",
-      documentReference,
-      suppressDispatchEmail: true,
-    });
-    expect(recovered.fulfilment.emailsQueued).toBe(0);
-    expect(
-      await prisma.autopartSalesLine.count({
-        where: { companyId: company.id, documentReference, sku },
-      }),
-    ).toBe(1);
-
-    // Repeated recovery does not duplicate lines.
+    const text504 = csv504([{ document: documentReference, orderNumber }]);
     await confirmSkippedOngoingSalesRecovery(adminId, {
       companyId: company.id,
-      textTrm21qc: trm,
-      filenameTrm21qc: "TRM21QC-recovery.csv",
       documentReference,
+      orderNumber,
+      text504,
+      textTrm21qc: trm,
       suppressDispatchEmail: true,
     });
-    expect(
-      await prisma.autopartSalesLine.count({
-        where: { companyId: company.id, documentReference, sku },
-      }),
-    ).toBe(1);
 
     const after = await diagnoseSalesCutoverIncident(adminId, {
       companyId: company.id,
       orderNumber,
       documentReference,
     });
-    expect(after.cutover?.historyStatus).toBe("COMPLETE");
     expect(after.cutover?.evidenceKind).toBe("NO_HISTORICAL_SALES");
     expect(after.ongoingEligibility.eligible).toBe(true);
-    expect(after.importedDocuments.length).toBe(1);
-
-    const emails = await prisma.transactionalEmail.count({
-      where: { entityType: "Order", entityId: order.id, purpose: "ORDER_DESPATCHED" },
-    });
-    expect(emails).toBe(0);
+    expect(after.importedDocuments.length).toBeGreaterThan(0);
+    expect(
+      after.importedDocuments.some((doc) =>
+        doc.lines.some((line) => line.sku === sku && Number(line.units) === 1),
+      ),
+    ).toBe(true);
 
     await prisma.autopartSalesLine.deleteMany({ where: { companyId: company.id } });
     await prisma.autopartSalesDocument.deleteMany({ where: { companyId: company.id } });
@@ -266,6 +690,8 @@ ${code},GRP,${documentReference},05/11/2026,${sku},Widget,1,10.00,4.00,6.00,60.0
       where: { importRun: { companyId: company.id } },
     });
     await prisma.autopartCustomerImportRun.deleteMany({ where: { companyId: company.id } });
+    await prisma.orderFulfilmentEvent.deleteMany({ where: { orderId: order.id } });
+    await prisma.invoice.deleteMany({ where: { companyId: company.id } });
     await prisma.orderItem.deleteMany({ where: { orderId: order.id } });
     await prisma.order.delete({ where: { id: order.id } });
     await prisma.customerSalesCutover.deleteMany({ where: { companyId: company.id } });

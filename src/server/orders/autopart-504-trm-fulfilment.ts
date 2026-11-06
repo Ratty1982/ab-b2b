@@ -28,8 +28,26 @@ import { enqueueOrderDespatchedEmail } from "@/server/orders/despatch-email";
 import { enqueueOrderPartDespatchedEmail } from "@/server/orders/part-despatch-email";
 import { parseMoney, moneyToString, moneyZero } from "@/domain/money";
 
-const ADVISORY_LOCK_KEY = 504_210_504;
-let applying: Promise<Autopart504TrmFulfilmentRunResult> | null = null;
+/**
+ * Serialise every fulfilment exclusive section (normal poll + recovery) in-process.
+ * Callers never join an unrelated in-flight promise — each waits its turn with
+ * its own orderIds / suppressCustomerDispatchEmail options.
+ *
+ * Intentionally does not use session-level pg_advisory_lock: Prisma's pool can
+ * acquire and release on different connections, which leaks the lock and deadlocks
+ * recovery. The JS queue is the production-safe exclusion for a single Node process
+ * (the Coolify deploy runs one app instance for this importer).
+ */
+let fulfilmentExclusiveTail: Promise<unknown> = Promise.resolve();
+
+export async function with504TrmFulfilmentExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const run = fulfilmentExclusiveTail.then(fn, fn);
+  fulfilmentExclusiveTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 export type Autopart504TrmFulfilmentPublicSettings = {
   fulfilmentMode: Autopart504TrmFulfilmentMode;
@@ -1006,20 +1024,59 @@ export async function run504TrmFulfilmentAfterImport(
   actorUserId: string | null,
   opts?: { orderIds?: string[]; suppressCustomerDispatchEmail?: boolean },
 ): Promise<Autopart504TrmFulfilmentRunResult> {
-  if (applying) return applying;
-  applying = (async () => {
-    await prisma.$executeRaw`SELECT pg_advisory_lock(${ADVISORY_LOCK_KEY})`;
-    try {
-      return await run504TrmFulfilmentInner(actorUserId, opts);
-    } finally {
-      await prisma.$executeRaw`SELECT pg_advisory_unlock(${ADVISORY_LOCK_KEY})`.catch(() => undefined);
-    }
-  })();
-  try {
-    return await applying;
-  } finally {
-    applying = null;
+  return with504TrmFulfilmentExclusive(() => run504TrmFulfilmentInner(actorUserId, opts));
+}
+
+/**
+ * Apply recovery fulfilment while the caller already holds with504TrmFulfilmentExclusive.
+ * Fail closed when orderIds is empty. Verifies company ownership.
+ */
+export async function run504TrmFulfilmentInnerForRecovery(
+  actorUserId: string | null,
+  opts: {
+    companyId: string;
+    orderIds: string[];
+    suppressCustomerDispatchEmail: boolean;
+  },
+): Promise<Autopart504TrmFulfilmentRunResult> {
+  if (!opts.orderIds.length) {
+    throw new AuthError(
+      "Recovery fulfilment requires at least one verified AB order for this customer. No unfiltered fulfilment was run.",
+      "VALIDATION",
+      400,
+    );
   }
+  const owned = await prisma.order.findMany({
+    where: { id: { in: opts.orderIds }, companyId: opts.companyId },
+    select: { id: true },
+  });
+  if (owned.length !== opts.orderIds.length) {
+    throw new AuthError(
+      "One or more recovery orders do not belong to the selected customer. Fulfilment was not run.",
+      "VALIDATION",
+      400,
+    );
+  }
+  return run504TrmFulfilmentInner(actorUserId, {
+    orderIds: opts.orderIds,
+    suppressCustomerDispatchEmail: opts.suppressCustomerDispatchEmail,
+  });
+}
+
+/**
+ * Customer-scoped recovery fulfilment with its own exclusive lock.
+ * Prefer with504TrmFulfilmentExclusive + run504TrmFulfilmentInnerForRecovery when
+ * import and fulfilment must share one critical section.
+ */
+export async function run504TrmFulfilmentForRecovery(
+  actorUserId: string | null,
+  opts: {
+    companyId: string;
+    orderIds: string[];
+    suppressCustomerDispatchEmail: boolean;
+  },
+): Promise<Autopart504TrmFulfilmentRunResult> {
+  return with504TrmFulfilmentExclusive(() => run504TrmFulfilmentInnerForRecovery(actorUserId, opts));
 }
 
 /**
