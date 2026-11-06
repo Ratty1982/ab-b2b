@@ -1366,9 +1366,9 @@ model ProductVariant {
   externalRef    String?  @unique
   isDefault      Boolean  @default(true)
   isActive       Boolean  @default(true)
-  /// DENY for newly created variants (unknown stock must not inherit global ALLOW).
-  /// Existing rows keep their stored policy; INHERIT still resolves against the global setting.
-  backorderPolicy BackorderPolicy @default(DENY)
+  /// INHERIT (default): use global trade ordering setting. ALLOW/DENY override per SKU.
+  /// Unconfirmed stock is blocked independently of this policy.
+  backorderPolicy BackorderPolicy @default(INHERIT)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

@@ -25,10 +25,10 @@ export const DEFAULT_GLOBAL_BACKORDER_POLICY: EffectiveBackorderPolicy = "ALLOW"
 
 /**
  * Default for newly created ProductVariant rows.
- * Unknown / unsynced stock must not inherit global ALLOW automatically.
- * Existing variants keep whatever policy is already stored.
+ * INHERIT follows TradeOrderingSettings (production global default ALLOW).
+ * Unconfirmed / missing Inventory is blocked independently of this policy.
  */
-export const DEFAULT_VARIANT_BACKORDER_POLICY: VariantBackorderPolicy = "DENY";
+export const DEFAULT_VARIANT_BACKORDER_POLICY: VariantBackorderPolicy = "INHERIT";
 
 /**
  * @deprecated Use DEFAULT_GLOBAL_BACKORDER_POLICY / resolveBackorderPolicy.

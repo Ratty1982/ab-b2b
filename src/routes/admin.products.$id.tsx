@@ -645,14 +645,14 @@ function InventoryPanel({
 }) {
   type Policy = "INHERIT" | "ALLOW" | "DENY";
   const [policy, setPolicy] = useState<Policy>(
-    (product.backorderPolicy as Policy) ?? "DENY",
+    (product.backorderPolicy as Policy) ?? "INHERIT",
   );
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [manualQty, setManualQty] = useState("0");
   const [manualReason, setManualReason] = useState("");
   const [savingManual, setSavingManual] = useState(false);
   useEffect(() => {
-    setPolicy((product.backorderPolicy as Policy) ?? "DENY");
+    setPolicy((product.backorderPolicy as Policy) ?? "INHERIT");
   }, [product.backorderPolicy, product.id]);
   useEffect(() => {
     const row = product.inventory[0];

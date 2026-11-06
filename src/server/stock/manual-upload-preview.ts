@@ -1,7 +1,10 @@
 /**
  * Confirm-before-apply manual 231PO3NEW upload.
  * Preview uses the same parser + classify path as live apply; apply requires the
- * exact previewed file hash and rejects expired/consumed previews.
+ * exact previewed file hash and rejects expired/consumed/stale-baseline previews.
+ *
+ * If Autopart inventory changes between preview and confirm (e.g. a scheduled
+ * sync), confirmation is refused so the operator must re-preview against current stock.
  */
 
 import { createHash } from "node:crypto";
@@ -16,6 +19,50 @@ import { AUTOPART_FEED_SOURCE, skuMatchKey } from "@/domain/stock";
 import { applyStockFeed } from "@/server/stock/service";
 
 const PREVIEW_TTL_MS = 30 * 60 * 1000;
+
+export type PreviewInventoryBaselineRow = {
+  variantId: string;
+  /** null = no Inventory row (unconfirmed). */
+  qtyOnHand: number | null;
+  manualOverrideQty: number | null;
+  updatedAt: string | null;
+};
+
+export type ManualUploadPreviewSummary = {
+  filename: string;
+  fileHash: string;
+  byteLength: number;
+  encoding: string;
+  reportKind: string;
+  rowsRead: number;
+  matched: number;
+  unmatched: number;
+  invalid: number;
+  duplicates: number;
+  wouldUpdate: number;
+  unchanged: number;
+  newlyConfirmed: number;
+  zeroConfirmations: number;
+  proposedSample: Array<{
+    sku: string;
+    productName: string | null;
+    previousQty: number | null;
+    newQty: number;
+    kind:
+      | "new_confirm"
+      | "increase"
+      | "decrease"
+      | "unchanged"
+      | "external"
+      | "invalid"
+      | "duplicate"
+      | "conflict";
+  }>;
+  proposedTotal: number;
+  /** Catalogue variants the preview reasoned about — used to re-validate on confirm. */
+  inventoryBaseline: PreviewInventoryBaselineRow[];
+  inventoryBaselineHash: string;
+};
 
 async function requireUploadActor(actorUserId: string) {
   const profile = await requireAnySystemPermission(actorUserId, [
@@ -32,6 +79,60 @@ async function requireUploadActor(actorUserId: string) {
 
 function fileHash(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+export function inventoryBaselineFingerprint(rows: PreviewInventoryBaselineRow[]): string {
+  const normalized = [...rows]
+    .sort((a, b) => a.variantId.localeCompare(b.variantId))
+    .map(
+      (r) =>
+        `${r.variantId}:${r.qtyOnHand ?? "∅"}:${r.manualOverrideQty ?? "∅"}:${r.updatedAt ?? "∅"}`,
+    )
+    .join("|");
+  return createHash("sha256").update(normalized, "utf8").digest("hex");
+}
+
+export async function loadPreviewInventoryBaseline(
+  variantIds: string[],
+): Promise<PreviewInventoryBaselineRow[]> {
+  const unique = [...new Set(variantIds)].sort();
+  if (!unique.length) return [];
+  const warehouse = await prisma.warehouse.findUnique({ where: { code: "AUTOPART" } });
+  if (!warehouse) {
+    return unique.map((variantId) => ({
+      variantId,
+      qtyOnHand: null,
+      manualOverrideQty: null,
+      updatedAt: null,
+    }));
+  }
+  const inventory = await prisma.inventory.findMany({
+    where: { warehouseId: warehouse.id, variantId: { in: unique } },
+    select: {
+      variantId: true,
+      qtyOnHand: true,
+      manualOverrideQty: true,
+      updatedAt: true,
+    },
+  });
+  const byVariant = new Map(inventory.map((row) => [row.variantId, row]));
+  return unique.map((variantId) => {
+    const row = byVariant.get(variantId);
+    if (!row) {
+      return {
+        variantId,
+        qtyOnHand: null,
+        manualOverrideQty: null,
+        updatedAt: null,
+      };
+    }
+    return {
+      variantId,
+      qtyOnHand: row.qtyOnHand,
+      manualOverrideQty: row.manualOverrideQty ?? null,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  });
 }
 
 const previewSchema = z.object({
@@ -91,13 +192,8 @@ export async function previewManualStockUpload(actorUserId: string, raw: unknown
   let unchanged = 0;
   let newlyConfirmed = 0;
   let zeroConfirmations = 0;
-  const proposed: Array<{
-    sku: string;
-    productName: string | null;
-    previousQty: number | null;
-    newQty: number;
-    kind: "new_confirm" | "increase" | "decrease" | "unchanged" | "external" | "invalid" | "duplicate" | "conflict";
-  }> = [];
+  const matchedVariantIds: string[] = [];
+  const proposed: ManualUploadPreviewSummary["proposedSample"] = [];
 
   for (const row of classified) {
     if (row.kind === "missing_sku" || row.kind === "invalid") {
@@ -147,6 +243,7 @@ export async function previewManualStockUpload(actorUserId: string, raw: unknown
     }
     matched += 1;
     const hit = hits[0]!;
+    matchedVariantIds.push(hit.id);
     const had = qtyByVariant.has(hit.id);
     const prev = had ? qtyByVariant.get(hit.id)! : null;
     if (!had) {
@@ -180,9 +277,11 @@ export async function previewManualStockUpload(actorUserId: string, raw: unknown
     }
   }
 
+  const inventoryBaseline = await loadPreviewInventoryBaseline(matchedVariantIds);
+  const inventoryBaselineHash = inventoryBaselineFingerprint(inventoryBaseline);
   const hash = fileHash(decoded.text);
   const expiresAt = new Date(Date.now() + PREVIEW_TTL_MS);
-  const summary = {
+  const summary: ManualUploadPreviewSummary = {
     filename: input.filename,
     fileHash: hash,
     byteLength: decoded.byteLength,
@@ -201,6 +300,8 @@ export async function previewManualStockUpload(actorUserId: string, raw: unknown
       .filter((row) => row.kind === "new_confirm" || row.kind === "increase" || row.kind === "decrease")
       .slice(0, 100),
     proposedTotal: proposed.length,
+    inventoryBaseline,
+    inventoryBaselineHash,
   };
 
   const preview = await prisma.stockSyncPreview.create({
@@ -228,6 +329,7 @@ export async function previewManualStockUpload(actorUserId: string, raw: unknown
       matched,
       newlyConfirmed,
       encoding: decoded.encoding,
+      inventoryBaselineHash,
     },
   });
 
@@ -242,6 +344,65 @@ const confirmSchema = z.object({
   previewId: z.string().cuid(),
   fileHash: z.string().regex(/^[a-f0-9]{64}$/i),
 });
+
+function readStoredBaseline(summaryJson: unknown): {
+  rows: PreviewInventoryBaselineRow[];
+  hash: string | null;
+} {
+  if (!summaryJson || typeof summaryJson !== "object") {
+    return { rows: [], hash: null };
+  }
+  const summary = summaryJson as Partial<ManualUploadPreviewSummary>;
+  const rows = Array.isArray(summary.inventoryBaseline) ? summary.inventoryBaseline : [];
+  const hash =
+    typeof summary.inventoryBaselineHash === "string" ? summary.inventoryBaselineHash : null;
+  return { rows, hash };
+}
+
+/**
+ * Ensures the operator's preview still matches live Autopart inventory.
+ * Rejects when a scheduled/IMAP sync (or any other write) changed matched stock.
+ */
+export async function assertPreviewInventoryBaselineFresh(input: {
+  previewCreatedAt: Date;
+  summaryJson: unknown;
+}): Promise<void> {
+  const stored = readStoredBaseline(input.summaryJson);
+  const variantIds = stored.rows.map((row) => row.variantId);
+  const live = await loadPreviewInventoryBaseline(variantIds);
+  const liveHash = inventoryBaselineFingerprint(live);
+  const expectedHash = stored.hash ?? inventoryBaselineFingerprint(stored.rows);
+
+  if (liveHash !== expectedHash) {
+    throw new AuthError(
+      "Stock changed since this preview (likely a scheduled Autopart sync). Upload and preview the file again before confirming.",
+      "CONFLICT",
+      409,
+    );
+  }
+
+  // Defensive: a live sync completed after preview that touched any of these variants.
+  if (variantIds.length) {
+    const intervening = await prisma.stockSyncChange.findFirst({
+      where: {
+        variantId: { in: variantIds },
+        createdAt: { gt: input.previewCreatedAt },
+        run: {
+          status: { in: ["SUCCESS", "PARTIAL"] },
+          mode: { not: "dry-run" },
+        },
+      },
+      select: { id: true, runId: true },
+    });
+    if (intervening) {
+      throw new AuthError(
+        "A stock sync updated catalogue inventory after this preview. Upload and preview the file again before confirming.",
+        "CONFLICT",
+        409,
+      );
+    }
+  }
+}
 
 export async function confirmManualStockUpload(actorUserId: string, raw: unknown) {
   await requireUploadActor(actorUserId);
@@ -260,6 +421,11 @@ export async function confirmManualStockUpload(actorUserId: string, raw: unknown
   if (preview.fileHash.toLowerCase() !== input.fileHash.toLowerCase()) {
     throw new AuthError("File hash does not match the previewed file", "VALIDATION", 400);
   }
+
+  await assertPreviewInventoryBaselineFresh({
+    previewCreatedAt: preview.createdAt,
+    summaryJson: preview.summaryJson,
+  });
 
   const result = await applyStockFeed({
     text: preview.fileText,

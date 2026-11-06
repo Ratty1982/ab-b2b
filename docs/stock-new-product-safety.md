@@ -73,14 +73,24 @@ IMAP applies the attachment bytes through the server path (successful 09:15 run)
 
 ## Fixes in this PR
 
-1. **Confirmed-stock contract** — missing Inventory = unconfirmed; never orderable (customer or staff), even if backorders ALLOW.
-2. **New variants default `backorderPolicy = DENY`** (schema default + explicit create). Existing rows unchanged.
+1. **Confirmed-stock contract** — missing Inventory = unconfirmed; never orderable (customer or staff), even if backorders ALLOW. Enforced independently of the effective backorder policy.
+2. **New variants keep `backorderPolicy = INHERIT`** so they follow the global trade ordering setting. Explicit variant DENY is always respected. Existing rows unchanged.
 3. **Reconcile on create / SKU change** — trusted `AutopartProduct` initialises Inventory (including Avail 0) without inventing qty; never overwrites existing Inventory/manual overrides.
 4. **Manual override** — audited quantity including 0; Autopart Avail still updates; override not cleared by polls.
 5. **Sync counters** — `newlyConfirmed` distinct from unchanged 0→0.
-6. **Manual upload** — decode-aware preview → confirm with file hash; same apply pipeline + lock.
+6. **Manual upload** — decode-aware preview → confirm with file hash; same apply pipeline + lock. Confirm rejects when Autopart inventory for matched SKUs changed after preview (e.g. scheduled sync).
 7. **Inventory UI** — stock source, override, backorder clarity, unconfirmed warning.
 8. **Diagnostic script** — read-only per-SKU report for production operators.
+
+### Orderability matrix (effective)
+
+| Inventory | Global / effective policy | Customer status | Orderable |
+|-----------|---------------------------|-----------------|-----------|
+| None (unconfirmed) | ALLOW | Stock not confirmed | No |
+| Avail 0 (confirmed) | ALLOW | Available to Backorder | Yes |
+| Avail 0 (confirmed) | DENY | Out of Stock | No |
+| Avail 20 (confirmed) | any | Low Stock | Yes |
+| Any | Explicit variant DENY (zero sellable) | Out of Stock | No |
 
 ## Explicitly not done / operator actions
 
@@ -91,19 +101,21 @@ IMAP applies the attachment bytes through the server path (successful 09:15 run)
 
 ### Recommended production rollout
 
-1. Deploy migration `20261106120000_stock_confirmation_safety`.
+1. Deploy migrations `20261106120000_stock_confirmation_safety` and `20261106130000_restore_variant_backorder_inherit`.
 2. Run `diagnose-sku-stock.ts` for the three kits; attach output to the change ticket.
 3. For PMEBIKK / PMECAVK only if diagnosis shows a trusted master and missing Inventory: either wait for next successful poll **or** use product create reconcile by a no-op SKU save after deploy (idempotent) — confirm proposed Avail with the operator before relying on it for sellable stock.
 4. Leave PMECARK Inventory untouched.
-5. Do not bulk-mutate existing `INHERIT` policies.
+5. Do not bulk-mutate existing `INHERIT` policies or the global backorder setting.
 
 ## Behaviour before / after
 
 | Scenario | Before | After |
 |----------|--------|-------|
 | New product, no Inventory, INHERIT/ALLOW | Orderable as backorder | Blocked (“Stock not confirmed”) |
-| New product default policy | INHERIT | DENY |
+| New product default policy | INHERIT | INHERIT (unchanged; confirmation gated separately) |
+| Confirmed Avail 0 + global ALLOW | Backorder | Available to Backorder (orderable) |
+| Confirmed Avail 0 + global/variant DENY | Out of Stock | Out of Stock (not orderable) |
 | New product with trusted master Avail 20 | Wait for next feed | Inventory initialised at create |
 | New product with trusted master Avail 0 | Wait for next feed; 0→0 counted unchanged | Inventory confirmed zero; `newlyConfirmed` |
-| Manual 231PO3NEW upload | Immediate apply via `file.text()` | Preview + hash confirm; encoding-aware decode |
+| Manual 231PO3NEW upload | Immediate apply via `file.text()` | Preview + hash confirm; encoding-aware decode; stale baseline refused |
 | Manual override during poll | N/A | Autopart Avail updates; override persists |

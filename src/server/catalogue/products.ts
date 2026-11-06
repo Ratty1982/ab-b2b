@@ -339,8 +339,8 @@ export async function createProduct(actorUserId: string, raw: unknown) {
         minOrderQty: 1,
         orderIncrement: 1,
         unit: "EA",
-        // New variants must not inherit global ALLOW while stock is unconfirmed.
-        backorderPolicy: "DENY",
+        // INHERIT → global backorder setting. Unconfirmed stock is gated separately.
+        backorderPolicy: "INHERIT",
       },
     });
     return created;
@@ -762,7 +762,7 @@ export async function saveProductVariant(actorUserId: string, raw: unknown) {
         barcode: input.barcode || null,
         isDefault: false,
         isActive: input.isActive ?? true,
-        backorderPolicy: "DENY",
+        backorderPolicy: "INHERIT",
       },
     });
     variantId = created.id;

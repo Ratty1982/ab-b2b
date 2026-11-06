@@ -713,8 +713,8 @@ export async function saveProduct(actorUserId: string, raw: unknown): Promise<Pr
           data: {
             ...variantData,
             productId: product.id,
-            // New catalogue variants must not inherit global ALLOW while unconfirmed.
-            ...(existingVariant ? {} : { backorderPolicy: "DENY" as const }),
+            // INHERIT → global backorder setting. Unconfirmed stock is gated separately.
+            backorderPolicy: "INHERIT",
           },
         });
 

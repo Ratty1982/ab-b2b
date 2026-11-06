@@ -1,9 +1,5 @@
--- New catalogue variants default to DENY (do not inherit global ALLOW for unknown stock).
--- Existing ProductVariant.backorderPolicy values are preserved.
-ALTER TABLE "ProductVariant"
-  ALTER COLUMN "backorderPolicy" SET DEFAULT 'DENY';
-
 -- Manual stock override (survives Autopart polls; qtyOnHand remains latest Autopart Avail).
+-- ProductVariant.backorderPolicy remains INHERIT by default; unconfirmed stock is gated separately.
 ALTER TABLE "Inventory"
   ADD COLUMN IF NOT EXISTS "manualOverrideQty" INTEGER,
   ADD COLUMN IF NOT EXISTS "manualOverrideReason" TEXT,

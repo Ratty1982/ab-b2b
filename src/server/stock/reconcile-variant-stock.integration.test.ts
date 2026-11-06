@@ -54,8 +54,8 @@ afterAll(async () => {
 });
 
 describe("reconcileVariantStockFromAutopartMaster", () => {
-  it("defaults new variant policy constant to DENY", () => {
-    expect(DEFAULT_VARIANT_BACKORDER_POLICY).toBe("DENY");
+  it("defaults new variant policy constant to INHERIT", () => {
+    expect(DEFAULT_VARIANT_BACKORDER_POLICY).toBe("INHERIT");
   });
 
   it("initialises inventory from a trusted master with positive Avail", async () => {
@@ -69,7 +69,7 @@ describe("reconcileVariantStockFromAutopartMaster", () => {
         status: "ACTIVE",
         isActive: true,
         variants: {
-          create: { sku, isDefault: true, isActive: true, backorderPolicy: "DENY" },
+          create: { sku, isDefault: true, isActive: true, backorderPolicy: "INHERIT" },
         },
       },
       include: { variants: true },
@@ -123,7 +123,7 @@ describe("reconcileVariantStockFromAutopartMaster", () => {
         status: "ACTIVE",
         isActive: true,
         variants: {
-          create: { sku, isDefault: true, isActive: true, backorderPolicy: "DENY" },
+          create: { sku, isDefault: true, isActive: true, backorderPolicy: "INHERIT" },
         },
       },
       include: { variants: true },
@@ -162,7 +162,7 @@ describe("reconcileVariantStockFromAutopartMaster", () => {
         status: "ACTIVE",
         isActive: true,
         variants: {
-          create: { sku, isDefault: true, isActive: true, backorderPolicy: "DENY" },
+          create: { sku, isDefault: true, isActive: true, backorderPolicy: "INHERIT" },
         },
       },
       include: { variants: true },
@@ -189,7 +189,7 @@ describe("reconcileVariantStockFromAutopartMaster", () => {
         status: "ACTIVE",
         isActive: true,
         variants: {
-          create: { sku, isDefault: true, isActive: true, backorderPolicy: "DENY" },
+          create: { sku, isDefault: true, isActive: true, backorderPolicy: "INHERIT" },
         },
       },
       include: { variants: true },

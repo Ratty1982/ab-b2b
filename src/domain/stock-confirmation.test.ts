@@ -124,6 +124,112 @@ describe("stock confirmation states", () => {
     ).toBe(true);
   });
 
+  it("covers the PR #95 business matrix independently of backorder defaults", () => {
+    // No inventory + global ALLOW → Stock not confirmed — cannot order.
+    expect(
+      adminStockStatusLabel({
+        state: "UNSYNCED",
+        sellableQty: 0,
+        backorderAllowed: true,
+        availability: null,
+      }),
+    ).toBe("Stock not confirmed");
+    expect(
+      isOrderableWithConfirmedStock({
+        stockConfirmed: false,
+        sellableQty: 0,
+        stale: false,
+        backorderPolicy: "ALLOW",
+      }),
+    ).toBe(false);
+
+    // Inventory Avail 0 + global ALLOW → Available to Backorder — can order.
+    expect(
+      publicAvailabilityFromConfirmation({
+        state: "CONFIRMED_ZERO",
+        sellableQty: 0,
+        stale: false,
+        backorderAllowed: true,
+      }),
+    ).toBe("backorder");
+    expect(
+      adminStockStatusLabel({
+        state: "CONFIRMED_ZERO",
+        sellableQty: 0,
+        backorderAllowed: true,
+        availability: "backorder",
+      }),
+    ).toBe("Available to Backorder");
+    expect(
+      isOrderableWithConfirmedStock({
+        stockConfirmed: true,
+        sellableQty: 0,
+        stale: false,
+        backorderPolicy: "ALLOW",
+      }),
+    ).toBe(true);
+
+    // Inventory Avail 0 + global DENY → Out of Stock — cannot order.
+    expect(
+      publicAvailabilityFromConfirmation({
+        state: "CONFIRMED_ZERO",
+        sellableQty: 0,
+        stale: false,
+        backorderAllowed: false,
+      }),
+    ).toBe("out");
+    expect(
+      adminStockStatusLabel({
+        state: "CONFIRMED_ZERO",
+        sellableQty: 0,
+        backorderAllowed: false,
+        availability: "out",
+      }),
+    ).toBe("Out of Stock");
+    expect(
+      isOrderableWithConfirmedStock({
+        stockConfirmed: true,
+        sellableQty: 0,
+        stale: false,
+        backorderPolicy: "DENY",
+      }),
+    ).toBe(false);
+
+    // Inventory Avail 20 → Low Stock — can order (even with explicit DENY — positive stock).
+    expect(
+      publicAvailabilityFromConfirmation({
+        state: "CONFIRMED_POSITIVE",
+        sellableQty: 20,
+        stale: false,
+        backorderAllowed: false,
+      }),
+    ).toBe("low");
+    expect(
+      adminStockStatusLabel({
+        state: "CONFIRMED_POSITIVE",
+        sellableQty: 20,
+        backorderAllowed: false,
+        availability: "low",
+      }),
+    ).toBe("Low Stock");
+    expect(
+      isOrderableWithConfirmedStock({
+        stockConfirmed: true,
+        sellableQty: 20,
+        stale: false,
+        backorderPolicy: "DENY",
+      }),
+    ).toBe(true);
+
+    // Explicit variant DENY at zero sellable is always respected.
+    expect(
+      isOrderableByStockPolicy(
+        { sellableQty: 0, stale: false, availability: "out", stockConfirmed: true },
+        "DENY",
+      ),
+    ).toBe(false);
+  });
+
   it("labels admin status clearly", () => {
     expect(
       adminStockStatusLabel({
