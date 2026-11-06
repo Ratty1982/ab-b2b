@@ -20,6 +20,7 @@ import { publicOrderingFromVariant } from "@/domain/case-ordering";
 import {
   AUTOPART_FEED_SOURCE,
   customerAvailabilityForStock,
+  getEffectiveSellableQuantity,
   warehouseDisplayName,
 } from "@/domain/stock";
 import { stockFreshness } from "@/server/stock/service";
@@ -282,7 +283,7 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
                   : freshness.stale
                     ? "Stale"
                     : "Unknown"
-        : "Not synced",
+        : "Stock not confirmed",
       availability,
       imageSrc: row.media[0]?.mediaId ? cmsMediaPublicPath(row.media[0].mediaId) : null,
       updatedAt: row.updatedAt.toISOString(),
@@ -338,17 +339,35 @@ export async function createProduct(actorUserId: string, raw: unknown) {
         minOrderQty: 1,
         orderIncrement: 1,
         unit: "EA",
+        // INHERIT → global backorder setting. Unconfirmed stock is gated separately.
+        backorderPolicy: "INHERIT",
       },
     });
     return created;
   });
+
+  const variant = await prisma.productVariant.findFirst({
+    where: { productId: product.id, sku },
+    select: { id: true },
+  });
+  let reconcile: unknown = null;
+  if (variant) {
+    const { reconcileVariantStockFromAutopartMaster } = await import(
+      "@/server/stock/reconcile-variant-stock"
+    );
+    reconcile = await reconcileVariantStockFromAutopartMaster({
+      variantId: variant.id,
+      sku,
+      actorUserId,
+    });
+  }
 
   await recordAuditEvent({
     action: "catalogue.product_created",
     entityType: "Product",
     entityId: product.id,
     actorUserId,
-    metadata: { sku },
+    metadata: { sku, reconcile },
   });
   return { id: product.id, sku };
 }
@@ -477,18 +496,33 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
     })),
     inventory: product.variants.flatMap((v) =>
       v.inventory.map((inv) => {
-        const sellable = Math.max(0, inv.qtyOnHand - inv.qtyReserved);
+        const manualOverrideQty = inv.manualOverrideQty ?? null;
+        const stockSource = manualOverrideQty != null ? ("MANUAL" as const) : ("AUTOPART" as const);
+        const staleForRow = stockSource === "MANUAL" ? false : freshness.stale;
+        const sellable = getEffectiveSellableQuantity({
+          autopartAvail: inv.qtyOnHand,
+          reservedQty: inv.qtyReserved,
+          manualOverrideQty,
+        });
         return {
+          variantId: v.id,
           variantSku: v.sku,
           warehouse: warehouseDisplayName(inv.warehouse.code, inv.warehouse.name),
           warehouseCode: inv.warehouse.code,
           qtyOnHand: canSeeQty ? inv.qtyOnHand : null,
           qtyReserved: canSeeQty ? inv.qtyReserved : null,
           sellableQty: canSeeQty ? sellable : null,
+          manualOverrideQty: canSeeQty ? manualOverrideQty : null,
+          manualOverrideReason: canSeeQty ? inv.manualOverrideReason : null,
+          manualOverrideAt: inv.manualOverrideAt?.toISOString() ?? null,
+          manualOverrideByUserId: inv.manualOverrideByUserId,
+          stockSource,
+          stockConfirmed: true,
           sourceAvailRaw: canSeeQty ? inv.sourceAvailRaw : null,
           customerAvailability: customerAvailabilityForStock({
-            sellableQty: freshness.stale && sellable > 0 ? 0 : sellable,
-            stale: freshness.stale,
+            sellableQty: staleForRow && sellable > 0 ? 0 : sellable,
+            stale: staleForRow,
+            unknown: false,
             backorderAllowed:
               resolveBackorderPolicy({
                 globalPolicy: globalBackorderPolicy,
@@ -500,7 +534,7 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
             variantPolicy: v.backorderPolicy,
           }),
           variantBackorderPolicy: v.backorderPolicy as VariantBackorderPolicy,
-          stale: freshness.stale,
+          stale: staleForRow,
           status: inv.status,
           source: inv.warehouse.code === "AUTOPART" ? AUTOPART_FEED_SOURCE : inv.warehouse.name,
           externalSyncedAt: inv.externalSyncedAt?.toISOString() ?? null,
@@ -699,6 +733,12 @@ export async function saveProductVariant(actorUserId: string, raw: unknown) {
   const clash = await prisma.productVariant.findUnique({ where: { sku } });
   if (clash && clash.id !== input.id) throw new AuthError(`SKU ${sku} is already used`, "VALIDATION", 400);
 
+  let variantId = input.id ?? null;
+  const previousSku =
+    input.id
+      ? (await prisma.productVariant.findUnique({ where: { id: input.id }, select: { sku: true } }))
+          ?.sku
+      : null;
   if (input.id) {
     await prisma.productVariant.update({
       where: { id: input.id },
@@ -714,7 +754,7 @@ export async function saveProductVariant(actorUserId: string, raw: unknown) {
       where: { productId: product.id, isDefault: true },
       data: {},
     });
-    await prisma.productVariant.create({
+    const created = await prisma.productVariant.create({
       data: {
         productId: product.id,
         sku,
@@ -722,7 +762,19 @@ export async function saveProductVariant(actorUserId: string, raw: unknown) {
         barcode: input.barcode || null,
         isDefault: false,
         isActive: input.isActive ?? true,
+        backorderPolicy: "INHERIT",
       },
+    });
+    variantId = created.id;
+  }
+  if (variantId && (!input.id || previousSku?.toUpperCase() !== sku)) {
+    const { reconcileVariantStockFromAutopartMaster } = await import(
+      "@/server/stock/reconcile-variant-stock"
+    );
+    await reconcileVariantStockFromAutopartMaster({
+      variantId,
+      sku,
+      actorUserId,
     });
   }
   await recordAuditEvent({

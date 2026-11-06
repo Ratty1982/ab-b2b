@@ -710,7 +710,12 @@ export async function saveProduct(actorUserId: string, raw: unknown): Promise<Pr
           data: variantData,
         })
       : await tx.productVariant.create({
-          data: { ...variantData, productId: product.id },
+          data: {
+            ...variantData,
+            productId: product.id,
+            // INHERIT → global backorder setting. Unconfirmed stock is gated separately.
+            backorderPolicy: "INHERIT",
+          },
         });
 
     await tx.quantityBreak.upsert({
@@ -722,8 +727,19 @@ export async function saveProduct(actorUserId: string, raw: unknown): Promise<Pr
     return { isUpdate, product: await tx.product.findUniqueOrThrow({
       where: { id: product.id },
       include: productInclude,
-    }) };
+    }), variantId: variant.id, sku: variant.sku };
   });
+
+  if (!saved.isUpdate) {
+    const { reconcileVariantStockFromAutopartMaster } = await import(
+      "@/server/stock/reconcile-variant-stock"
+    );
+    await reconcileVariantStockFromAutopartMaster({
+      variantId: saved.variantId,
+      sku: saved.sku,
+      actorUserId,
+    });
+  }
 
   const mapped = mapProductRow(saved.product);
   if (!mapped) throw new AuthError("Product saved without a SKU", "INTERNAL", 500);

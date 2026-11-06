@@ -2440,6 +2440,57 @@ export const runManualStockSyncFn = createServerFn({ method: "POST" })
     }
   });
 
+export const previewManualStockUploadFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const preview = await import("@/server/stock/manual-upload-preview");
+      return { ok: true as const, data: await preview.previewManualStockUpload(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmManualStockUploadFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { previewId?: string; fileHash?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const preview = await import("@/server/stock/manual-upload-preview");
+      return {
+        ok: true as const,
+        data: await preview.confirmManualStockUpload(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const setManualStockOverrideFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const override = await import("@/server/stock/manual-override");
+      return { ok: true as const, data: await override.setManualStockOverride(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const clearManualStockOverrideFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const override = await import("@/server/stock/manual-override");
+      return { ok: true as const, data: await override.clearManualStockOverride(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getProductAutopartCostFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { variantId: string })
   .handler(async ({ data }) => {

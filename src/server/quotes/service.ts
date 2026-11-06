@@ -263,8 +263,11 @@ async function buildQuoteLines(
       stale: stock?.stale ?? true,
     });
     const orderableByStock = stock
-      ? isOrderableByStockPolicy(stock, backorderPolicy)
-      : backorderPolicy === "ALLOW";
+      ? isOrderableByStockPolicy(
+          { ...stock, stockConfirmed: stock.stockConfirmed !== false },
+          backorderPolicy,
+        )
+      : false;
     const ordering = resolveCustomerOrdering({
       caseQty: variant.caseQty,
       minimumOrderQty: variant.minOrderQty,
@@ -1340,10 +1343,15 @@ async function convertQuoteToOrder(input: {
     });
     const orderableByStock = stock
       ? isOrderableByStockPolicy(
-          { sellableQty: rawSellable, stale: stock.stale, availability: stock.availability },
+          {
+            sellableQty: rawSellable,
+            stale: stock.stale,
+            availability: stock.availability,
+            stockConfirmed: stock.stockConfirmed !== false,
+          },
           backorderPolicy,
         )
-      : backorderPolicy === "ALLOW";
+      : false;
     // Validate against snapshotted case qty — live catalogue case pack must not rewrite the quote.
     const qtyIssue = assessBasketLineQuantity({
       quantity: item.qty,

@@ -12,6 +12,8 @@ import {
   listAutopartProductsFn,
   pollImapNowFn,
   runManualStockSyncFn,
+  previewManualStockUploadFn,
+  confirmManualStockUploadFn,
   saveImapSettingsFn,
   stockOperationsOverviewFn,
   testImapConnectionFn,
@@ -180,6 +182,29 @@ function AutopartStockOps() {
   const [allowed, setAllowed] = useState("");
   const [pattern, setPattern] = useState("231PO3NEW*.txt");
   const [enabled, setEnabled] = useState(false);
+  const [uploadPreview, setUploadPreview] = useState<{
+    previewId: string;
+    expiresAt: string;
+    filename: string;
+    fileHash: string;
+    encoding: string;
+    rowsRead: number;
+    matched: number;
+    unmatched: number;
+    invalid: number;
+    duplicates: number;
+    wouldUpdate: number;
+    unchanged: number;
+    newlyConfirmed: number;
+    zeroConfirmations: number;
+    proposedSample: Array<{
+      sku: string;
+      productName: string | null;
+      previousQty: number | null;
+      newQty: number;
+      kind: string;
+    }>;
+  } | null>(null);
 
   const load = useCallback(async () => {
     const [ov, history, unmatchedRows, productRows] = await Promise.all([
@@ -299,16 +324,47 @@ function AutopartStockOps() {
     return noticeFromSync(kind, r.data);
   }
 
-  async function runSync(dryRun: boolean, csv?: string) {
-    const kind = csv ? "Upload" : dryRun ? "Dry run" : "Live sync";
+  async function runSync(dryRun: boolean) {
+    const kind = dryRun ? "Dry run" : "Live sync";
     await runAction(kind, async () =>
-      applySyncResult(kind, await runManualStockSyncFn({ data: { dryRun, ...(csv ? { csv } : {}) } })),
+      applySyncResult(kind, await runManualStockSyncFn({ data: { dryRun } })),
     );
   }
 
   async function runPoll(dryRun: boolean) {
     const kind = dryRun ? "Poll dry run" : "Poll live";
     await runAction(kind, async () => applySyncResult(kind, await pollImapNowFn({ data: { dryRun } })));
+  }
+
+  async function previewUpload(file: File) {
+    await runAction("Upload preview", async () => {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]!);
+      const base64 = btoa(binary);
+      const r = await previewManualStockUploadFn({
+        data: { filename: file.name, base64 },
+      });
+      if (!r.ok) return { tone: "bad" as const, title: "Upload preview failed", detail: r.error };
+      setUploadPreview(r.data);
+      return {
+        tone: "warn" as const,
+        title: "Preview ready — confirm to apply",
+        detail: `${r.data.filename}: ${r.data.rowsRead} rows, ${r.data.matched} matched, ${r.data.newlyConfirmed} newly confirmed, ${r.data.wouldUpdate} quantity changes. Encoding: ${r.data.encoding}.`,
+      };
+    });
+  }
+
+  async function confirmUpload() {
+    if (!uploadPreview) return;
+    await runAction("Upload confirm", async () => {
+      const r = await confirmManualStockUploadFn({
+        data: { previewId: uploadPreview.previewId, fileHash: uploadPreview.fileHash },
+      });
+      setUploadPreview(null);
+      return applySyncResult("Upload confirm", r);
+    });
   }
 
   const waitingForEmail = overview?.scheduler?.currentWindow.status === "WAITING_EMAIL";
@@ -333,7 +389,7 @@ function AutopartStockOps() {
                   const file = e.target.files?.[0];
                   e.target.value = "";
                   if (!file) return;
-                  void file.text().then((csv) => runSync(false, csv));
+                  void previewUpload(file);
                 }}
               />
               <button type="button" disabled={working} className={buttonClass()} onClick={() => void runSync(true)}>
@@ -346,7 +402,7 @@ function AutopartStockOps() {
                 {busy === "Poll live" ? "Working…" : "Poll now (live)"}
               </button>
               <button type="button" disabled={working} className={buttonClass()} onClick={() => fileRef.current?.click()}>
-                {busy === "Upload" ? "Working…" : "Upload 231PO3NEW"}
+                {busy === "Upload preview" ? "Working…" : "Upload 231PO3NEW"}
               </button>
               <button type="button" disabled={working} className={buttonClass(true)} onClick={() => void runSync(false)}>
                 {busy === "Live sync" ? "Working…" : "Sync Autopart stock"}
@@ -357,6 +413,70 @@ function AutopartStockOps() {
       />
 
       <div className="space-y-4 px-4 py-4 sm:px-6">
+      {uploadPreview ? (
+        <div
+          className="rounded-md border border-warn/50 bg-warn/10 px-4 py-3 text-sm"
+          data-stock-upload-preview="true"
+        >
+          <p className="font-semibold">Confirm 231PO3NEW upload</p>
+          <p className="mt-1 text-steel">
+            {uploadPreview.filename} · hash {uploadPreview.fileHash.slice(0, 12)}… · encoding{" "}
+            {uploadPreview.encoding} · expires {new Date(uploadPreview.expiresAt).toLocaleString("en-GB")}
+          </p>
+          <ul className="mt-2 grid gap-1 text-[13px] sm:grid-cols-2">
+            <li>Rows read: {uploadPreview.rowsRead}</li>
+            <li>Catalogue matched: {uploadPreview.matched}</li>
+            <li>Newly confirmed: {uploadPreview.newlyConfirmed}</li>
+            <li>Quantity changes: {uploadPreview.wouldUpdate}</li>
+            <li>Unchanged: {uploadPreview.unchanged}</li>
+            <li>External master: {uploadPreview.unmatched}</li>
+            <li>Zero confirmations: {uploadPreview.zeroConfirmations}</li>
+            <li>Invalid/duplicates: {uploadPreview.invalid + uploadPreview.duplicates}</li>
+          </ul>
+          {uploadPreview.proposedSample.length ? (
+            <div className="mt-3 max-h-48 overflow-auto rounded border border-border bg-background/60">
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr className="border-b border-border text-left text-[10px] uppercase text-steel">
+                    <th className="px-2 py-1">SKU</th>
+                    <th className="px-2 py-1">Change</th>
+                    <th className="px-2 py-1 text-right">From</th>
+                    <th className="px-2 py-1 text-right">To</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {uploadPreview.proposedSample.map((row) => (
+                    <tr key={`${row.sku}-${row.kind}-${row.newQty}`} className="border-b border-border/50">
+                      <td className="num px-2 py-1">{row.sku}</td>
+                      <td className="px-2 py-1">{row.kind}</td>
+                      <td className="num px-2 py-1 text-right">{row.previousQty ?? "—"}</td>
+                      <td className="num px-2 py-1 text-right">{row.newQty}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={working}
+              className={buttonClass(true)}
+              onClick={() => void confirmUpload()}
+            >
+              {busy === "Upload confirm" ? "Applying…" : "Confirm and apply"}
+            </button>
+            <button
+              type="button"
+              disabled={working}
+              className={buttonClass()}
+              onClick={() => setUploadPreview(null)}
+            >
+              Cancel preview
+            </button>
+          </div>
+        </div>
+      ) : null}
       {notice ? (
         <div
           role="status"

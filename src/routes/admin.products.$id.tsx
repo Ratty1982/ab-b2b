@@ -648,13 +648,24 @@ function InventoryPanel({
     (product.backorderPolicy as Policy) ?? "INHERIT",
   );
   const [savingPolicy, setSavingPolicy] = useState(false);
+  const [manualQty, setManualQty] = useState("0");
+  const [manualReason, setManualReason] = useState("");
+  const [savingManual, setSavingManual] = useState(false);
   useEffect(() => {
     setPolicy((product.backorderPolicy as Policy) ?? "INHERIT");
   }, [product.backorderPolicy, product.id]);
+  useEffect(() => {
+    const row = product.inventory[0];
+    setManualQty(String(row?.manualOverrideQty ?? row?.qtyOnHand ?? 0));
+    setManualReason("");
+  }, [product.id, product.inventory]);
 
   const effective =
     product.effectiveBackorderPolicy ??
     (policy === "ALLOW" ? "ALLOW" : policy === "DENY" ? "DENY" : product.globalBackorderPolicy ?? "ALLOW");
+  const stockUnconfirmed = product.inventory.length === 0;
+  const primaryInv = product.inventory[0];
+  const primaryVariantId = primaryInv?.variantId ?? product.defaultVariantId;
 
   async function saveBackorderPolicy(next: Policy) {
     const previous = policy;
@@ -682,8 +693,175 @@ function InventoryPanel({
     }
   }
 
+  async function saveManualOverride() {
+    if (!primaryVariantId) {
+      toast.error("No variant available for stock override");
+      return;
+    }
+    const quantity = Number.parseInt(manualQty, 10);
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      toast.error("Enter a whole-number quantity (0 or more)");
+      return;
+    }
+    if (manualReason.trim().length < 3) {
+      toast.error("A reason is required for manual stock changes");
+      return;
+    }
+    setSavingManual(true);
+    try {
+      const { setManualStockOverrideFn } = await import("@/server/phase2/fns");
+      const result = await setManualStockOverrideFn({
+        data: { variantId: primaryVariantId, quantity, reason: manualReason.trim() },
+      });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Manual stock override saved");
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save override");
+    } finally {
+      setSavingManual(false);
+    }
+  }
+
+  async function clearManualOverride() {
+    if (!primaryVariantId) return;
+    if (manualReason.trim().length < 3) {
+      toast.error("A reason is required when clearing a manual override");
+      return;
+    }
+    setSavingManual(true);
+    try {
+      const { clearManualStockOverrideFn } = await import("@/server/phase2/fns");
+      const result = await clearManualStockOverrideFn({
+        data: { variantId: primaryVariantId, reason: manualReason.trim() },
+      });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Returned to automatic Autopart stock");
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not clear override");
+    } finally {
+      setSavingManual(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
+      {stockUnconfirmed ? (
+        <div
+          className="max-w-xl rounded-lg border border-warn/50 bg-warn/10 p-4"
+          data-admin-section="stock-unconfirmed"
+          role="status"
+        >
+          <p className="font-semibold">Stock not confirmed</p>
+          <p className="mt-2 text-[13px] text-steel">
+            This active product has no trusted inventory observation yet. Customers cannot add it
+            to basket or place a backorder until Autopart stock is confirmed or an authorised
+            manual override is set. Existing open orders are not changed.
+          </p>
+        </div>
+      ) : null}
+
+      <div className="max-w-xl rounded-lg border border-border p-4" data-admin-section="stock-management">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">
+          Stock management
+        </p>
+        <dl className="mt-3 grid gap-2 text-[13px]">
+          <div className="flex justify-between gap-3">
+            <dt className="text-steel">Stock source</dt>
+            <dd className="font-semibold">
+              {primaryInv?.stockSource === "MANUAL" ? "Manual override" : "Automatic Autopart"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-steel">Autopart Avail</dt>
+            <dd className="num">{primaryInv?.qtyOnHand ?? "—"}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-steel">AB Reserved</dt>
+            <dd className="num">{primaryInv?.qtyReserved ?? "—"}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-steel">Manual override</dt>
+            <dd className="num">
+              {primaryInv?.manualOverrideQty != null ? primaryInv.manualOverrideQty : "Not set"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-steel">Effective available</dt>
+            <dd className="num font-semibold">{primaryInv?.sellableQty ?? 0}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-steel">Last feed confirmation</dt>
+            <dd>
+              {primaryInv?.externalSyncedAt ? (
+                <InstantText value={primaryInv.externalSyncedAt} />
+              ) : (
+                "Never"
+              )}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-steel">Source freshness</dt>
+            <dd>
+              {stockUnconfirmed ? "Unknown" : primaryInv?.stale ? "Stale" : "Current"}
+            </dd>
+          </div>
+        </dl>
+        <div className="mt-4 grid gap-3">
+          <Field label="Manual quantity" htmlFor="ws-manual-qty">
+            <input
+              id="ws-manual-qty"
+              className={inputClass}
+              inputMode="numeric"
+              value={manualQty}
+              onChange={(e) => setManualQty(e.target.value)}
+              disabled={savingManual || !primaryVariantId}
+            />
+          </Field>
+          <Field label="Reason (required)" htmlFor="ws-manual-reason">
+            <input
+              id="ws-manual-reason"
+              className={inputClass}
+              value={manualReason}
+              onChange={(e) => setManualReason(e.target.value)}
+              disabled={savingManual || !primaryVariantId}
+              placeholder="Why is this override needed?"
+            />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+              disabled={savingManual || !primaryVariantId}
+              onClick={() => void saveManualOverride()}
+            >
+              {savingManual ? "Saving…" : "Save manual override"}
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase disabled:opacity-50"
+              disabled={savingManual || !primaryVariantId || primaryInv?.manualOverrideQty == null}
+              onClick={() => void clearManualOverride()}
+            >
+              Return to automatic
+            </button>
+          </div>
+          {primaryInv?.manualOverrideAt ? (
+            <p className="text-[12px] text-steel">
+              Last override change: <InstantText value={primaryInv.manualOverrideAt} />
+              {primaryInv.manualOverrideReason ? ` — ${primaryInv.manualOverrideReason}` : ""}
+            </p>
+          ) : null}
+        </div>
+      </div>
+
       <div className="max-w-xl rounded-lg border border-border p-4" data-admin-section="backorders">
         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">Backorders</p>
         <Field label="Backorders" htmlFor="ws-backorder-policy">
@@ -694,9 +872,9 @@ function InventoryPanel({
             value={policy}
             onChange={(e) => void saveBackorderPolicy(e.target.value as Policy)}
           >
-            <option value="INHERIT">Use global setting</option>
-            <option value="ALLOW">Allow</option>
             <option value="DENY">Do not allow</option>
+            <option value="ALLOW">Allow (explicit)</option>
+            <option value="INHERIT">Use global setting</option>
           </select>
         </Field>
         <p className="mt-3 text-[13px]" data-effective-backorder={effective}>
@@ -704,11 +882,22 @@ function InventoryPanel({
           {effective === "ALLOW" ? "Allowed" : "Not allowed"}
           {policy === "INHERIT" ? (
             <span className="ml-1 text-steel">(from global default)</span>
-          ) : null}
+          ) : policy === "ALLOW" ? (
+            <span className="ml-1 text-steel">(explicit)</span>
+          ) : (
+            <span className="ml-1 text-steel">(disabled)</span>
+          )}
         </p>
+        {stockUnconfirmed && policy === "INHERIT" && effective === "ALLOW" ? (
+          <p className="mt-2 text-[12px] text-warn" role="status">
+            Global backorders are ALLOW, but unconfirmed stock cannot be ordered. Confirm Autopart
+            stock or set an explicit policy after stock is known.
+          </p>
+        ) : null}
         <p className="mt-2 text-[12px] text-steel">
-          When allowed, trade customers can order this SKU when stock is unavailable. Unfulfilled
-          quantity is recorded as backordered. Does not change Autopart Avail or create stock.
+          Confirmed zero stock with Allow shows Available to Backorder. Unconfirmed stock never
+          becomes orderable from the global setting alone. Existing customer backorders are not
+          cancelled by this control.
         </p>
       </div>
 
@@ -717,7 +906,8 @@ function InventoryPanel({
           <p className="font-semibold">No Autopart stock recorded</p>
           <p className="mt-2 text-[13px] text-steel">
             Sellable quantity comes from Autopart 231PO3NEW Avail minus ACTIVE Automotive Brands
-            order reservations. Nothing is invented here until a successful sync.
+            order reservations, or from an authorised manual override. Nothing is invented until a
+            trusted observation exists.
           </p>
         </div>
       ) : (

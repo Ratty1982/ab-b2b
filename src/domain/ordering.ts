@@ -668,15 +668,18 @@ export function basketLineIssueMessage(issue: BasketLineIssue): string | null {
 
 /**
  * Stock policy for ordering.
+ * - Unconfirmed / missing inventory is never orderable (including backorder).
  * - Stale positive stock is never trusted as available allocation.
- * - When effective policy is ALLOW, ordering may proceed as a full backorder
- *   (callers must pass trusted sellable qty = 0 for stale rows).
- * - Zero stock is orderable only when effective backorderPolicy = ALLOW.
+ * - Confirmed zero stock is orderable only when effective backorderPolicy = ALLOW.
  */
 export function isOrderableByStockPolicy(
-  stock: Pick<VariantStock, "sellableQty" | "stale" | "availability">,
+  stock: Pick<VariantStock, "sellableQty" | "stale" | "availability"> & {
+    stockConfirmed?: boolean;
+  },
   backorderPolicy?: BackorderPolicyValue | null,
 ): boolean {
+  // Missing inventory / unsynced catalogue SKUs must not fall through to backorder ALLOW.
+  if (stock.stockConfirmed === false) return false;
   const allowBackorder = isEffectiveBackorderAllowed(backorderPolicy);
   if (stock.stale && stock.sellableQty > 0) {
     return allowBackorder;

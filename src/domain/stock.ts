@@ -39,11 +39,18 @@ export type VariantStock = {
   variantId: string;
   sku: string;
   /**
-   * Effective B2B sellable = max(0, Autopart Avail − ACTIVE AB reservations).
-   * Not raw Autopart Avail; see getEffectiveSellableQuantity.
+   * Effective B2B sellable = max(0, on-hand − ACTIVE AB reservations).
+   * On-hand is manual override when set, otherwise Autopart Avail (qtyOnHand).
    */
   sellableQty: number;
   reservedQty: number;
+  /** Latest Autopart Avail (qtyOnHand). Not reduced by reservations. */
+  autopartAvailQty: number;
+  /** Manual override quantity when active. */
+  manualOverrideQty: number | null;
+  /** True when an Inventory row exists (trusted observation). Missing = unsynced. */
+  stockConfirmed: boolean;
+  stockSource: "AUTOPART" | "MANUAL";
   availability: PublicAvailability | null;
   stale: boolean;
   syncedAt: string | null;
@@ -55,13 +62,30 @@ export type VariantStock = {
 
 /**
  * Effective sellable for B2B ordering under AB reservations.
- * qtyOnHand / autopartAvail stays as latest Autopart Avail; reserved is AB-only.
+ * On-hand is manual override when set; otherwise Autopart Avail (qtyOnHand).
+ * Reserved is AB-only and must never be double-subtracted.
  */
 export function getEffectiveSellableQuantity(input: {
-  autopartAvail: number; // qtyOnHand / trusted Avail
+  autopartAvail: number; // qtyOnHand / trusted Autopart Avail
   reservedQty: number;
+  manualOverrideQty?: number | null;
 }): number {
-  return Math.max(0, Math.trunc(input.autopartAvail) - Math.max(0, Math.trunc(input.reservedQty)));
+  const onHand =
+    input.manualOverrideQty != null && Number.isFinite(input.manualOverrideQty)
+      ? Math.trunc(input.manualOverrideQty)
+      : Math.trunc(input.autopartAvail);
+  return Math.max(0, onHand - Math.max(0, Math.trunc(input.reservedQty)));
+}
+
+/** On-hand used for status bands before reservation subtraction. */
+export function getEffectiveOnHandQuantity(input: {
+  autopartAvail: number;
+  manualOverrideQty?: number | null;
+}): number {
+  if (input.manualOverrideQty != null && Number.isFinite(input.manualOverrideQty)) {
+    return Math.max(0, Math.trunc(input.manualOverrideQty));
+  }
+  return Math.max(0, Math.trunc(input.autopartAvail));
 }
 
 /** Phase 6 will call this. Does not enforce case multiples. */

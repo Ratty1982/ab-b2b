@@ -704,10 +704,15 @@ export async function resolveOrderLinesFromItems(
     const sellableQty = staffStock.sellableQty;
     const orderableByStockPolicy = stock
       ? isOrderableByStockPolicy(
-          { sellableQty, stale, availability: stock.availability },
+          {
+            sellableQty,
+            stale,
+            availability: stock.availability,
+            stockConfirmed: stock.stockConfirmed !== false,
+          },
           backorderPolicy,
         )
-      : isEffectiveBackorderAllowed(backorderPolicy);
+      : false;
     const resolution = priceByVariant.get(variant.id) ?? null;
     const hasPrice = Boolean(
       resolution && resolution.source !== "NONE" && resolution.unitPriceExVat,

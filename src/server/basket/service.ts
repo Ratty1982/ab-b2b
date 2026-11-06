@@ -56,7 +56,15 @@ type BackorderPolicyValue = EffectiveBackorderPolicy;
 
 function resolveLineOrderingStock(input: {
   variantPolicy: string | null | undefined;
-  stock: { sellableQty: number; stale: boolean; availability: import("@/domain/availability").PublicAvailability | null; backorderPolicy?: EffectiveBackorderPolicy } | undefined;
+  stock:
+    | {
+        sellableQty: number;
+        stale: boolean;
+        availability: import("@/domain/availability").PublicAvailability | null;
+        backorderPolicy?: EffectiveBackorderPolicy;
+        stockConfirmed?: boolean;
+      }
+    | undefined;
   globalPolicy: EffectiveBackorderPolicy;
 }): {
   backorderPolicy: EffectiveBackorderPolicy;
@@ -78,16 +86,18 @@ function resolveLineOrderingStock(input: {
   const rawSellable = input.stock?.sellableQty ?? 0;
   const stale = input.stock?.stale ?? true;
   const sellableQty = trustedSellableForOrdering({ sellableQty: rawSellable, stale });
+  // Missing Inventory = unconfirmed stock. Never fall through to global/backorder ALLOW.
   const orderableByStockPolicy = input.stock
     ? isOrderableByStockPolicy(
         {
           sellableQty: rawSellable,
           stale,
           availability: input.stock.availability,
+          stockConfirmed: input.stock.stockConfirmed !== false,
         },
         backorderPolicy,
       )
-    : isEffectiveBackorderAllowed(backorderPolicy);
+    : false;
   return { backorderPolicy, sellableQty, orderableByStockPolicy };
 }
 
