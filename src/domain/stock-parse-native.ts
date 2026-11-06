@@ -491,11 +491,29 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
   }
   const lines = normaliseReportLines(text);
   const headerLine = findHeaderLine(lines);
-  if (!headerLine) return AVAIL_FAIL;
+  if (!headerLine) {
+    return {
+      code: "MISSING_AVAIL_HEADER",
+      message:
+        "231PO3NEW was detected, but the Part Number / Stk / Avail / Pick Qty header line could not be found. Check the file is complete and not truncated.",
+    };
+  }
   const identity = detectIdentity(headerLine);
-  if (!identity) return AVAIL_FAIL;
+  if (!identity) {
+    return {
+      code: "MISSING_AVAIL_HEADER",
+      message:
+        "231PO3NEW was detected, but Part Number / Description columns could not be located on the header line. No stock was changed.",
+    };
+  }
   const numeric = detectNumericLayout(lines, identity);
-  if (!numeric) return AVAIL_FAIL;
+  if (!numeric) {
+    return {
+      code: "MISSING_AVAIL_HEADER",
+      message:
+        "231PO3NEW was detected, but the Avail column could not be parsed reliably. This often means the file encoding is wrong (use the original bytes, not a re-saved UTF-8 text) or the numeric columns are misaligned. No stock was changed.",
+    };
+  }
   const usageLayout = detectUsageLayout(headerLine, numeric.physicalStkEnd);
   const incomingLayout = detectIncomingLayout(headerLine, findLabelStart(headerLine, "Avail"));
 
@@ -541,7 +559,13 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
     });
   }
 
-  if (!rows.length) return AVAIL_FAIL;
+  if (!rows.length) {
+    return {
+      code: "MISSING_AVAIL_HEADER",
+      message:
+        "231PO3NEW was detected, but no product rows with a parsable Part Number were found. No stock was changed.",
+    };
+  }
   return {
     delimiter: "native",
     skuHeader: "Part Number",

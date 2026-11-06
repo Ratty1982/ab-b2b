@@ -1366,8 +1366,9 @@ model ProductVariant {
   externalRef    String?  @unique
   isDefault      Boolean  @default(true)
   isActive       Boolean  @default(true)
-  /// INHERIT (default): use global trade ordering setting. ALLOW/DENY override per SKU.
-  backorderPolicy BackorderPolicy @default(INHERIT)
+  /// DENY for newly created variants (unknown stock must not inherit global ALLOW).
+  /// Existing rows keep their stored policy; INHERIT still resolves against the global setting.
+  backorderPolicy BackorderPolicy @default(DENY)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -1464,9 +1465,10 @@ model Inventory {
   variantId        String
   warehouseId      String
   /// Latest Autopart Avail (authoritative on-hand from 231PO3NEW). Sync updates this only.
+  /// When manualOverrideQty is set, sellable uses the override instead of this value.
   qtyOnHand        Int         @default(0)
   /// Sum of ACTIVE Automotive Brands OrderStockReservation quantities.
-  /// Sync must NEVER reset qtyReserved — effective sellable = max(0, qtyOnHand - qtyReserved).
+  /// Sync must NEVER reset qtyReserved — effective sellable = max(0, onHand - qtyReserved).
   qtyReserved      Int         @default(0)
   status           StockStatus @default(IN_STOCK)
   /// When true, UI may show status but exact qty is trade-only policy elsewhere
@@ -1479,6 +1481,11 @@ model Inventory {
   incomingQty      Int?
   /// Raw P/Ord Qty cell from 231PO3NEW for diagnostics.
   sourceIncomingRaw String?
+  /// When set, authorised manual stock override (including 0). Survives Autopart polls.
+  manualOverrideQty Int?
+  manualOverrideReason String?
+  manualOverrideAt  DateTime?
+  manualOverrideByUserId String?
 
   variant      ProductVariant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
   warehouse    Warehouse              @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
@@ -1486,6 +1493,7 @@ model Inventory {
 
   @@unique([variantId, warehouseId])
   @@index([status])
+  @@index([manualOverrideQty])
 }
 
 model StockSyncRun {
@@ -1500,6 +1508,8 @@ model StockSyncRun {
   matched        Int             @default(0)
   updated        Int             @default(0)
   unchanged      Int             @default(0)
+  /// First trusted Inventory confirmation for a matched SKU (including Avail 0).
+  newlyConfirmed Int             @default(0)
   unmatched      Int             @default(0)
   invalid        Int             @default(0)
   duplicates     Int             @default(0)
@@ -1516,6 +1526,27 @@ model StockSyncRun {
 
   @@index([startedAt])
   @@index([status, startedAt])
+}
+
+/// Preview payload for manual 231PO3NEW upload (confirm-before-apply).
+/// Bytes live in Postgres so Coolify redeploys do not drop staged files.
+model StockSyncPreview {
+  id            String   @id @default(cuid())
+  fileHash      String
+  filename      String
+  byteLength    Int
+  encoding      String
+  actorUserId   String
+  summaryJson   Json
+  fileText      String   @db.Text
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  consumedAt    DateTime?
+  consumedRunId String?
+
+  @@index([actorUserId, createdAt])
+  @@index([expiresAt])
+  @@index([fileHash])
 }
 
 /// Live Autopart quantity change (old → new). Unchanged SKUs and unmatched

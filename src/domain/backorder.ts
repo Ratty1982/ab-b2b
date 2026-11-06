@@ -23,8 +23,12 @@ export type BackorderPolicyValue = EffectiveBackorderPolicy;
 /** Global production default when settings row is missing. */
 export const DEFAULT_GLOBAL_BACKORDER_POLICY: EffectiveBackorderPolicy = "ALLOW";
 
-/** Variant column default. */
-export const DEFAULT_VARIANT_BACKORDER_POLICY: VariantBackorderPolicy = "INHERIT";
+/**
+ * Default for newly created ProductVariant rows.
+ * Unknown / unsynced stock must not inherit global ALLOW automatically.
+ * Existing variants keep whatever policy is already stored.
+ */
+export const DEFAULT_VARIANT_BACKORDER_POLICY: VariantBackorderPolicy = "DENY";
 
 /**
  * @deprecated Use DEFAULT_GLOBAL_BACKORDER_POLICY / resolveBackorderPolicy.

@@ -183,6 +183,13 @@ describe("backorder ordering scenarios", () => {
     const stock = { sellableQty: 0, stale: false, availability: "out" as const };
     expect(isOrderableByStockPolicy(stock, "DENY")).toBe(false);
     expect(isOrderableByStockPolicy(stock, "ALLOW")).toBe(true);
+    // Unconfirmed / missing inventory must never become orderable via ALLOW.
+    expect(
+      isOrderableByStockPolicy(
+        { sellableQty: 0, stale: false, availability: null, stockConfirmed: false },
+        "ALLOW",
+      ),
+    ).toBe(false);
     // Stale positive stock is untrusted; ALLOW still permits ordering as backorder.
     expect(isOrderableByStockPolicy({ sellableQty: 10, stale: true, availability: null }, "ALLOW")).toBe(
       true,

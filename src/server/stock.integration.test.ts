@@ -164,13 +164,24 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect((await getVariantStock(variantOne.id))?.availability).toBe("low");
 
     const variantZero = await prisma.productVariant.findUniqueOrThrow({ where: { sku: skus.zero } });
+    // New variants default to DENY — confirmed zero is Out of Stock, not backorder.
+    expect((await getVariantStock(variantZero.id))?.availability).toBe("out");
+    await prisma.productVariant.update({
+      where: { id: variantZero.id },
+      data: { backorderPolicy: "ALLOW" },
+    });
     expect((await getVariantStock(variantZero.id))?.availability).toBe("backorder");
 
     const variantNeg = await prisma.productVariant.findUniqueOrThrow({ where: { sku: skus.neg } });
     const stockNeg = await getVariantStock(variantNeg.id);
     expect(stockNeg?.sellableQty).toBe(0);
     expect(stockNeg?.sourceAvailRaw).toBe("-7");
-    expect(stockNeg?.availability).toBe("backorder");
+    expect(stockNeg?.availability).toBe("out");
+    await prisma.productVariant.update({
+      where: { id: variantNeg.id },
+      data: { backorderPolicy: "ALLOW" },
+    });
+    expect((await getVariantStock(variantNeg.id))?.availability).toBe("backorder");
 
     const variantCase = await prisma.productVariant.findUniqueOrThrow({ where: { sku: skus.case } });
     expect((await getVariantStock(variantCase.id))?.sellableQty).toBe(11);

@@ -315,19 +315,43 @@ export async function applyStockFeed(input: {
 
     const existing = await prisma.inventory.findMany({
       where: { warehouseId: warehouse.id, variantId: { in: toApply.map((row) => row.variantId) } },
-      select: { variantId: true, qtyOnHand: true },
+      select: {
+        variantId: true,
+        qtyOnHand: true,
+        qtyReserved: true,
+        manualOverrideQty: true,
+      },
     });
-    const existingQty = new Map(existing.map((row) => [row.variantId, row.qtyOnHand]));
+    const existingByVariant = new Map(existing.map((row) => [row.variantId, row]));
     let updated = 0;
     let unchanged = 0;
+    let newlyConfirmed = 0;
     const now = input.observedAt ?? new Date();
     // `now` is also the observation timestamp for commercial cost/usage snapshots.
     type ChangeDraft = ApplyRow & { previousQty: number; newQty: number; previousAvailability: string; newAvailability: string };
     const changeDrafts: ChangeDraft[] = [];
     for (const row of toApply) {
       const sellable = sellableQuantityFromAvail(row.avail);
-      const prev = existingQty.has(row.variantId) ? existingQty.get(row.variantId)! : 0;
-      const described = describeStockQtyChange(prev, sellable);
+      const prior = existingByVariant.get(row.variantId);
+      if (!prior) {
+        // First trusted Inventory confirmation — including Avail 0. Not an "unchanged" 0→0.
+        newlyConfirmed += 1;
+        if (sellable !== 0) {
+          const described = describeStockQtyChange(0, sellable);
+          if (described) {
+            updated += 1;
+            changeDrafts.push({
+              ...row,
+              previousQty: described.previousQty,
+              newQty: described.newQty,
+              previousAvailability: described.previousAvailability,
+              newAvailability: described.newAvailability,
+            });
+          }
+        }
+        continue;
+      }
+      const described = describeStockQtyChange(prior.qtyOnHand, sellable);
       if (!described) {
         unchanged += 1;
         continue;
@@ -351,7 +375,18 @@ export async function applyStockFeed(input: {
         await prisma.$transaction([
           ...chunk.map((row) => {
             const sellable = sellableQuantityFromAvail(row.avail);
-            const status = internalStatusFromSellable(sellable) as StockStatus;
+            const prior = existingByVariant.get(row.variantId);
+            // Keep Autopart Avail current; never clear manual overrides during poll/upload.
+            const effectiveOnHand =
+              prior?.manualOverrideQty != null ? prior.manualOverrideQty : sellable;
+            const status = internalStatusFromSellable(
+              getEffectiveSellableQuantity({
+                autopartAvail: sellable,
+                reservedQty: prior?.qtyReserved ?? 0,
+                manualOverrideQty: prior?.manualOverrideQty ?? null,
+              }),
+            ) as StockStatus;
+            void effectiveOnHand;
             return prisma.inventory.upsert({
               where: { variantId_warehouseId: { variantId: row.variantId, warehouseId: warehouse.id } },
               create: {
@@ -367,6 +402,7 @@ export async function applyStockFeed(input: {
                   : {}),
               },
               // Never reset qtyReserved — AB order reservations survive Autopart Avail sync.
+              // Never clear manualOverride* — authorised overrides survive polls.
               // Incoming is purchasing-only (P/Ord Qty) and is never added to qtyOnHand.
               update: {
                 qtyOnHand: sellable,
@@ -514,6 +550,7 @@ export async function applyStockFeed(input: {
       matched,
       updated: input.dryRun ? 0 : updated,
       unchanged,
+      newlyConfirmed,
       unmatched,
       invalid,
       duplicates,
@@ -530,6 +567,7 @@ export async function applyStockFeed(input: {
       rowsRead: parsed.rows.length,
       matched,
       updated: input.dryRun ? 0 : updated,
+      newlyConfirmed,
       unmatched,
       invalid,
       duplicates,
@@ -547,7 +585,15 @@ export async function applyStockFeed(input: {
         entityType: "StockSyncRun",
         entityId: run.id,
         actorUserId: input.actorUserId ?? null,
-        after: { status: finalStatus, matched, updated, unmatched, invalid, commercial: commercialRecord },
+        after: {
+          status: finalStatus,
+          matched,
+          updated,
+          newlyConfirmed,
+          unmatched,
+          invalid,
+          commercial: commercialRecord,
+        },
       });
     }
 
@@ -561,6 +607,7 @@ export async function applyStockFeed(input: {
       wouldUpdate: updated,
       updated: input.dryRun ? 0 : updated,
       unchanged,
+      newlyConfirmed,
       unmatched,
       invalid,
       duplicates,
@@ -599,6 +646,7 @@ async function finishRun(
     matched?: number;
     updated?: number;
     unchanged?: number;
+    newlyConfirmed?: number;
     unmatched?: number;
     invalid?: number;
     duplicates?: number;
@@ -617,6 +665,7 @@ async function finishRun(
       ...(data.matched != null ? { matched: data.matched } : {}),
       ...(data.updated != null ? { updated: data.updated } : {}),
       ...(data.unchanged != null ? { unchanged: data.unchanged } : {}),
+      ...(data.newlyConfirmed != null ? { newlyConfirmed: data.newlyConfirmed } : {}),
       ...(data.unmatched != null ? { unmatched: data.unmatched } : {}),
       ...(data.invalid != null ? { invalid: data.invalid } : {}),
       ...(data.duplicates != null ? { duplicates: data.duplicates } : {}),
@@ -1130,6 +1179,7 @@ function serializeRun(row: {
   matched: number;
   updated: number;
   unchanged: number;
+  newlyConfirmed?: number;
   unmatched: number;
   invalid: number;
   duplicates: number;
@@ -1149,6 +1199,7 @@ function serializeRun(row: {
     matched: row.matched,
     updated: row.updated,
     unchanged: row.unchanged,
+    newlyConfirmed: row.newlyConfirmed ?? 0,
     unmatched: row.unmatched,
     invalid: row.invalid,
     duplicates: row.duplicates,
@@ -1179,27 +1230,37 @@ export async function loadStockByVariantIds(variantIds: string[], now = new Date
       })
     : [];
   for (const row of rows) {
+    const manualOverrideQty = row.manualOverrideQty ?? null;
+    const stockSource = manualOverrideQty != null ? ("MANUAL" as const) : ("AUTOPART" as const);
+    // Manual overrides are confirmed observations — do not treat Autopart feed age as stale for them.
+    const staleForRow = stockSource === "MANUAL" ? false : freshness.stale;
     const sellable = getEffectiveSellableQuantity({
       autopartAvail: row.qtyOnHand,
       reservedQty: row.qtyReserved,
+      manualOverrideQty,
     });
     const backorderPolicy = resolveBackorderPolicy({
       globalPolicy,
       variantPolicy: row.variant.backorderPolicy,
     });
-    // Stale positive stock is not advertised as trusted available (treat as 0 for bands).
-    const bandSellable = freshness.stale && sellable > 0 ? 0 : sellable;
+    // Stale positive Autopart stock is not advertised as trusted available (treat as 0 for bands).
+    const bandSellable = staleForRow && sellable > 0 ? 0 : sellable;
     out.set(row.variantId, {
       variantId: row.variantId,
       sku: row.variant.sku,
       sellableQty: sellable,
       reservedQty: row.qtyReserved,
+      autopartAvailQty: row.qtyOnHand,
+      manualOverrideQty,
+      stockConfirmed: true,
+      stockSource,
       availability: customerAvailabilityForStock({
         sellableQty: bandSellable,
-        stale: freshness.stale,
+        stale: staleForRow,
+        unknown: false,
         backorderAllowed: backorderPolicy === "ALLOW",
       }),
-      stale: freshness.stale,
+      stale: staleForRow,
       syncedAt: row.externalSyncedAt?.toISOString() ?? null,
       source: AUTOPART_FEED_SOURCE,
       sourceAvailRaw: row.sourceAvailRaw,

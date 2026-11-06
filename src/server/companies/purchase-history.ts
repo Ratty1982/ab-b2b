@@ -456,6 +456,7 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
             sellableQty: rawSellable,
             stale,
             availability: stock?.availability ?? null,
+            stockConfirmed: stock != null && stock.stockConfirmed !== false,
           },
           backorderPolicy,
         )
