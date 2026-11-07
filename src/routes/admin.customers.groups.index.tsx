@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
+import { BulkAssignCustomerGroupPanel } from "@/components/ab/BulkAssignCustomerGroupPanel";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
 import {
@@ -76,6 +77,12 @@ function CustomerGroupsPage() {
 
       <div className="space-y-4 px-4 py-4 sm:px-6">
         {error ? <p className="text-[13px] text-bad">{error}</p> : null}
+        <BulkAssignCustomerGroupPanel />
+        <p className="text-[12px] text-steel">
+          Sales Enquiry remains company-scoped. After bulk assignment, open the Customer Group
+          workspace or Sales Intelligence group summary for consolidated group reporting. Group
+          assignment does not by itself invent Sales Enquiry aggregation.
+        </p>
         <label className="flex items-center gap-2 text-[12px] text-steel">
           <input
             type="checkbox"
