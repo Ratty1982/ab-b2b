@@ -419,17 +419,30 @@ export function PanelHeader({
   sub,
   actions,
   crumbs,
+  dense,
 }: {
   title: string;
   sub?: string;
   actions?: React.ReactNode;
   crumbs?: Array<{ label: string; to?: string }>;
+  /** Tighter padding for operational workspaces that need content above the fold. */
+  dense?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-3 border-b border-border/70 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+    <div
+      className={cn(
+        "flex flex-col border-b border-border/70 px-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between",
+        dense ? "gap-2 py-2.5" : "gap-3 py-4",
+      )}
+    >
       <div className="min-w-0">
-        {crumbs ? <div className="mb-1"><AppBreadcrumb crumbs={crumbs} /></div> : null}
-        <h1 className="break-words font-display text-xl font-semibold uppercase tracking-tight sm:text-2xl">
+        {crumbs ? <div className={cn(dense ? "mb-0.5" : "mb-1")}><AppBreadcrumb crumbs={crumbs} /></div> : null}
+        <h1
+          className={cn(
+            "break-words font-display font-semibold uppercase tracking-tight",
+            dense ? "text-lg sm:text-xl" : "text-xl sm:text-2xl",
+          )}
+        >
           {title}
         </h1>
         {sub ? <p className="mt-0.5 break-words text-[12px] text-steel">{sub}</p> : null}

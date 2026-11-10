@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { guardStaffPage } from "@/lib/guard-staff-page";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   Boxes,
@@ -442,132 +442,144 @@ function BackordersPage() {
   const counts = data?.viewCounts;
 
   return (
-    <>
-      <PanelHeader
-        title="Backorders"
-        sub="Current Autopart 216V outstanding position. Avail and Incoming come from 231PO3NEW and are not reservations."
-        crumbs={[{ label: "Purchasing", to: ROUTES.purchasing }, { label: "Backorders" }]}
-        actions={
-          <>
-            <button
-              type="button"
-              className={btnClass}
-              disabled={exporting || !data?.current}
-              onClick={() => void exportCsv()}
-              aria-label="Export backorders CSV"
-              title="Download the current filtered backorders with every field shown on the lines"
-            >
-              <Download className="mr-2 size-3.5" aria-hidden />
-              {exporting ? "Exporting…" : "Export CSV"}
-            </button>
-            <button
-              type="button"
-              className={btnClass}
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Open backorder settings"
-            >
-              <Settings className="mr-2 size-3.5" aria-hidden />
-              Backorder Settings
-            </button>
-          </>
-        }
-      />
-      {notice ? <ImportNoticeBanner notice={notice} /> : null}
-      {error && error !== notice?.message ? <ErrorState message={error} /> : null}
-      {data?.freshness ? (
-        <FreshnessBar
-          freshness={data.freshness}
-          lastError={data.feed.lastError}
-          canManage={Boolean(data.canManage)}
-          busy={busy}
-          uploadId={`${uploadId}-recovery`}
-          onUpload={(file) => {
-            setSettingsOpen(true);
-            void onPickManualFile(file);
-          }}
-          onOpenSettings={() => setSettingsOpen(true)}
+    <div className="flex min-h-0 flex-1 flex-col" data-backorders-page="">
+      <div className="shrink-0" data-backorders-chrome="">
+        <PanelHeader
+          title="Backorders"
+          sub="Current Autopart 216V outstanding position. Avail and Incoming come from 231PO3NEW and are not reservations."
+          crumbs={[{ label: "Purchasing", to: ROUTES.purchasing }, { label: "Backorders" }]}
+          dense
+          actions={
+            <>
+              <button
+                type="button"
+                className={btnClass}
+                disabled={exporting || !data?.current}
+                onClick={() => void exportCsv()}
+                aria-label="Export backorders CSV"
+                title="Download the current filtered backorders with every field shown on the lines"
+              >
+                <Download className="mr-2 size-3.5" aria-hidden />
+                {exporting ? "Exporting…" : "Export CSV"}
+              </button>
+              <button
+                type="button"
+                className={btnClass}
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Open backorder settings"
+              >
+                <Settings className="mr-2 size-3.5" aria-hidden />
+                Backorder Settings
+              </button>
+            </>
+          }
         />
-      ) : null}
-      {current && data ? (
-        <Metrics
-          current={current}
-          attentionCount={data.attentionSummary.unique}
-          movement={movement}
-          onMovement={(next) => patch(toggleBackorderMovement(search, next))}
-        />
-      ) : null}
-      {data?.current && data.attentionSummary.unique > 0 ? (
-        <AttentionSummary summary={data.attentionSummary} onView={() => patch({ view: "attention", movement: undefined, page: undefined })} />
-      ) : null}
-      <div className="grid gap-2 border-b border-border/70 px-4 py-3 sm:grid-cols-2 sm:px-6 lg:grid-cols-4">
-        <ViewCard
-          id="lines"
-          label="Lines"
-          hint="All backorders"
-          count={counts?.lines ?? current?.outstandingLines ?? 0}
-          icon={ClipboardList}
-          accent="cyan"
-          active={!movement && view === "lines"}
-          onSelect={() => patch({ view: "lines", movement: undefined, page: undefined })}
-        />
-        <ViewCard
-          id="sku"
-          label="Products"
-          hint="SKU pressure"
-          count={counts?.skus ?? 0}
-          icon={Boxes}
-          accent="steel"
-          active={!movement && view === "sku"}
-          onSelect={() => patch({ view: "sku", movement: undefined, page: undefined })}
-        />
-        <ViewCard
-          id="customer"
-          label="Customers"
-          hint="Customer impact"
-          count={counts?.customers ?? 0}
-          icon={Users}
-          accent="info"
-          active={!movement && view === "customer"}
-          onSelect={() => patch({ view: "customer", movement: undefined, page: undefined })}
-        />
-        <ViewCard
-          id="attention"
-          label="Attention"
-          hint="Needs review"
-          count={counts?.attention ?? 0}
-          icon={AlertTriangle}
-          accent="attention"
-          strong={Boolean(counts?.attention)}
-          active={!movement && view === "attention"}
-          onSelect={() => patch({ view: "attention", movement: undefined, page: undefined })}
+        {notice ? <ImportNoticeBanner notice={notice} /> : null}
+        {error && error !== notice?.message ? <ErrorState message={error} /> : null}
+        {data?.freshness ? (
+          <FreshnessBar
+            freshness={data.freshness}
+            lastError={data.feed.lastError}
+            canManage={Boolean(data.canManage)}
+            busy={busy}
+            uploadId={`${uploadId}-recovery`}
+            onUpload={(file) => {
+              setSettingsOpen(true);
+              void onPickManualFile(file);
+            }}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        ) : null}
+        {current && data ? (
+          <Metrics
+            current={current}
+            attentionCount={data.attentionSummary.unique}
+            attentionSummary={data.attentionSummary}
+            movement={movement}
+            onMovement={(next) => patch(toggleBackorderMovement(search, next))}
+            onViewAttention={() => patch({ view: "attention", movement: undefined, page: undefined })}
+          />
+        ) : null}
+        <Filters
+          search={search}
+          q={q}
+          setQ={setQ}
+          data={data}
+          patch={patch}
+          views={
+            <nav className="flex flex-wrap gap-1" aria-label="Backorder views" data-backorders-views="">
+              <ViewCard
+                id="lines"
+                label="Lines"
+                hint="All backorders"
+                count={counts?.lines ?? current?.outstandingLines ?? 0}
+                icon={ClipboardList}
+                accent="cyan"
+                active={!movement && view === "lines"}
+                onSelect={() => patch({ view: "lines", movement: undefined, page: undefined })}
+              />
+              <ViewCard
+                id="sku"
+                label="Products"
+                hint="SKU pressure"
+                count={counts?.skus ?? 0}
+                icon={Boxes}
+                accent="steel"
+                active={!movement && view === "sku"}
+                onSelect={() => patch({ view: "sku", movement: undefined, page: undefined })}
+              />
+              <ViewCard
+                id="customer"
+                label="Customers"
+                hint="Customer impact"
+                count={counts?.customers ?? 0}
+                icon={Users}
+                accent="info"
+                active={!movement && view === "customer"}
+                onSelect={() => patch({ view: "customer", movement: undefined, page: undefined })}
+              />
+              <ViewCard
+                id="attention"
+                label="Attention"
+                hint="Needs review"
+                count={counts?.attention ?? 0}
+                icon={AlertTriangle}
+                accent="attention"
+                strong={Boolean(counts?.attention)}
+                active={!movement && view === "attention"}
+                onSelect={() => patch({ view: "attention", movement: undefined, page: undefined })}
+              />
+            </nav>
+          }
         />
       </div>
-      <Filters search={search} q={q} setQ={setQ} data={data} patch={patch} />
-      {!data && !error ? <LoadingState label="Loading backorders…" /> : null}
-      {data && !current ? (
-        <EmptyState
-          title="No 216V snapshot yet"
-          body="The daily Autopart 216V report has not been imported. Outstanding backorders will appear here after the first successful file."
-        />
-      ) : null}
-      {data && current && data.movement ? (
-        <MovementPanel
-          movement={data.movement}
-          onClear={() => patch({ movement: undefined, page: undefined })}
-          onPage={(page) => patch({ page })}
-          onOpen={(row) => (row.currentlyOutstanding ? void openLine(row.id) : setClearedDetail(row))}
-        />
-      ) : null}
-      {data && current && !data.movement && view === "lines" ? (
-        <LinesTable rows={data.lines.rows} total={data.lines.total} page={data.lines.page} pageSize={data.lines.pageSize} onPage={(page) => patch({ page })} onOpen={openLine} />
-      ) : null}
-      {data && current && !data.movement && view === "sku" ? (
-        <SkuTable groups={data.skus.rows} total={data.skus.total} page={data.skus.page} pageSize={data.skus.pageSize} expanded={expandedSku} onExpand={setExpandedSku} onPage={(page) => patch({ page })} onOpen={openLine} />
-      ) : null}
-      {data && current && !data.movement && view === "customer" ? (
-        <CustomerTable groups={data.customerGroups.rows} total={data.customerGroups.total} page={data.customerGroups.page} pageSize={data.customerGroups.pageSize} onPage={(page) => patch({ page })} onOpen={openLine} />
-      ) : null}
-      {data && current && !data.movement && view === "attention" ? <AttentionBoard data={data} onOpen={openLine} /> : null}
+      <div className="min-h-[min(50vh,22rem)] flex-1 overflow-auto" data-backorders-scroll="">
+        {!data && !error ? <LoadingState label="Loading backorders…" /> : null}
+        {data && !current ? (
+          <EmptyState
+            title="No 216V snapshot yet"
+            body="The daily Autopart 216V report has not been imported. Outstanding backorders will appear here after the first successful file."
+          />
+        ) : null}
+        {data && current && data.movement ? (
+          <MovementPanel
+            movement={data.movement}
+            onClear={() => patch({ movement: undefined, page: undefined })}
+            onPage={(page) => patch({ page })}
+            onOpen={(row) => (row.currentlyOutstanding ? void openLine(row.id) : setClearedDetail(row))}
+          />
+        ) : null}
+        {data && current && !data.movement && view === "lines" ? (
+          <LinesTable rows={data.lines.rows} total={data.lines.total} page={data.lines.page} pageSize={data.lines.pageSize} onPage={(page) => patch({ page })} onOpen={openLine} />
+        ) : null}
+        {data && current && !data.movement && view === "sku" ? (
+          <SkuTable groups={data.skus.rows} total={data.skus.total} page={data.skus.page} pageSize={data.skus.pageSize} expanded={expandedSku} onExpand={setExpandedSku} onPage={(page) => patch({ page })} onOpen={openLine} />
+        ) : null}
+        {data && current && !data.movement && view === "customer" ? (
+          <CustomerTable groups={data.customerGroups.rows} total={data.customerGroups.total} page={data.customerGroups.page} pageSize={data.customerGroups.pageSize} onPage={(page) => patch({ page })} onOpen={openLine} />
+        ) : null}
+        {data && current && !data.movement && view === "attention" ? <AttentionBoard data={data} onOpen={openLine} /> : null}
+      </div>
       <Drawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -616,7 +628,7 @@ function BackordersPage() {
       >
         {clearedDetail ? <ClearedDetailBody row={clearedDetail} /> : null}
       </Drawer>
-    </>
+    </div>
   );
 }
 
@@ -655,45 +667,72 @@ function FreshnessBar({
         : "border-warn/40 bg-warn/10";
   const dot =
     headline.tone === "good" ? "bg-good" : headline.tone === "bad" ? "bg-destructive" : "bg-warn";
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsId = useId();
   return (
     <div
-      className={cn("border-b px-4 py-3 text-[13px] sm:px-6", toneClass)}
+      className={cn("border-b px-4 py-2 text-[12px] sm:px-6", toneClass)}
       data-backorder-freshness={freshness.operationalKind ?? headline.key}
     >
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <p className="flex items-center gap-2 font-semibold uppercase tracking-[0.12em] text-[11px] text-ink">
           <span className={cn("size-2 rounded-full", dot)} aria-hidden />
           <span>{headline.label}</span>
         </p>
-        <span>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Latest report date</span>{" "}
+        <span className="text-ink">
+          <span className="text-steel">Report </span>
           {freshness.latestReportDateLabel}
         </span>
-        <span>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Report received</span>{" "}
+        <span className="hidden text-ink sm:inline">
+          <span className="text-steel">Received </span>
           {freshness.lastReceivedLabel}
         </span>
-        {freshness.sourceLabel ? (
-          <span>
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Source</span>{" "}
-            {freshness.sourceLabel}
-          </span>
-        ) : null}
-        {freshness.filename ? (
-          <span>
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">File</span>{" "}
-            {freshness.filename}
-          </span>
-        ) : null}
-        <span>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Next automatic report</span>{" "}
+        <span className="hidden text-ink lg:inline">
+          <span className="text-steel">Next </span>
           {freshness.nextExpectedLabel}
         </span>
+        <button
+          type="button"
+          className="ml-auto text-[11px] font-semibold uppercase tracking-[0.12em] text-ink underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-expanded={detailsOpen}
+          aria-controls={detailsId}
+          onClick={() => setDetailsOpen((open) => !open)}
+        >
+          {detailsOpen ? "Hide report detail" : "Report detail"}
+        </button>
       </div>
       {freshness.warning ? (
-        <p className="mt-1" data-backorder-status-message="">
+        <p className="mt-1 text-[12px]" data-backorder-status-message="">
           {freshness.warning}
         </p>
+      ) : null}
+      {detailsOpen ? (
+        <div id={detailsId} className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-border/40 pt-2 text-[12px] text-ink">
+          <span>
+            <span className="text-steel">Latest report date </span>
+            {freshness.latestReportDateLabel}
+          </span>
+          <span>
+            <span className="text-steel">Report received </span>
+            {freshness.lastReceivedLabel}
+          </span>
+          {freshness.sourceLabel ? (
+            <span>
+              <span className="text-steel">Source </span>
+              {freshness.sourceLabel}
+            </span>
+          ) : null}
+          {freshness.filename ? (
+            <span>
+              <span className="text-steel">File </span>
+              {freshness.filename}
+            </span>
+          ) : null}
+          <span>
+            <span className="text-steel">Next automatic report </span>
+            {freshness.nextExpectedLabel}
+          </span>
+        </div>
       ) : null}
       {lastError?.trim() && (freshness.stale || headline.tone === "bad") ? (
         <p className="mt-2 whitespace-pre-wrap text-destructive" role="status">
@@ -701,10 +740,10 @@ function FreshnessBar({
         </p>
       ) : null}
       {diagnostics.length > 0 ? (
-        <div className="mt-3 border-t border-border/50 pt-2" data-import-diagnostics="">
+        <div className="mt-2 border-t border-border/50 pt-2" data-import-diagnostics="">
           <button
             type="button"
-            className="flex min-h-11 w-full items-center justify-between gap-3 text-left text-[12px] font-semibold uppercase tracking-[0.12em] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex min-h-9 w-full items-center justify-between gap-3 text-left text-[11px] font-semibold uppercase tracking-[0.12em] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-expanded={diagnosticsOpen}
             aria-controls={diagnosticsId}
             data-import-diagnostics-trigger=""
@@ -748,7 +787,7 @@ function FreshnessBar({
         </div>
       ) : null}
       {needsManualFallback ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           {canManage ? (
             <>
               <input
@@ -792,14 +831,23 @@ function FreshnessBar({
 function Metrics({
   current,
   attentionCount,
+  attentionSummary,
   movement,
   onMovement,
+  onViewAttention,
 }: {
   current: NonNullable<Data["current"]>;
   attentionCount: number;
+  attentionSummary: Data["attentionSummary"];
   movement: Autopart216vMovement | null;
   onMovement: (movement: Autopart216vMovement) => void;
+  onViewAttention: () => void;
 }) {
+  const [secondaryOpen, setSecondaryOpen] = useState(() => Boolean(movement));
+  const secondaryId = useId();
+  useEffect(() => {
+    if (movement) setSecondaryOpen(true);
+  }, [movement]);
   const movementCard = (id: Autopart216vMovement, label: string, count: number, accent: "cyan" | "warn" | "good") => (
     <KpiCard
       label={label}
@@ -813,24 +861,96 @@ function Metrics({
       }`}
     />
   );
+  const attentionItems = [
+    { n: attentionSummary.NO_STOCK_NO_INCOMING, label: "No stock or incoming" },
+    { n: attentionSummary.STOCK_NOW_AVAILABLE, label: "Stock available now" },
+    { n: attentionSummary.INCOMING_DOES_NOT_COVER, label: "Incoming does not cover" },
+    { n: attentionSummary.LONG_STANDING, label: "Long-standing" },
+    { n: attentionSummary.HIGH_VALUE, label: "High outstanding value" },
+  ].filter((item) => item.n > 0);
   return (
-    <div className="grid gap-3 border-b border-border/70 px-4 py-4 sm:px-6">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Outstanding Orders" value={qty(current.outstandingOrders)} accent="cyan" />
-        <KpiCard label="Outstanding Units" value={qty(current.outstandingUnits)} accent="warn" emphasis />
-        <KpiCard label="Outstanding Value" value={gbp(current.outstandingValue)} accent="warn" emphasis />
-        <KpiCard label="Attention" value={qty(attentionCount)} accent={attentionCount > 0 ? "bad" : "steel"} emphasis={attentionCount > 0} />
+    <div className="border-b border-border/70 px-4 py-1.5 sm:px-6" data-backorders-summary="">
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+        <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3 lg:grid-cols-6" aria-label="Outstanding summary">
+          <SummaryStat label="Outstanding orders" value={qty(current.outstandingOrders)} />
+          <SummaryStat label="Outstanding lines" value={qty(current.outstandingLines)} />
+          <SummaryStat label="Outstanding units" value={qty(current.outstandingUnits)} emphasis />
+          <SummaryStat label="Outstanding value" value={gbp(current.outstandingValue)} emphasis />
+          <SummaryStat label="Customers" value={qty(current.customers)} />
+          <SummaryStat
+            label="Needs attention"
+            value={qty(attentionCount)}
+            {...(attentionCount > 0 ? { tone: "warn" as const } : {})}
+            emphasis={attentionCount > 0}
+          />
+        </dl>
+        <button
+          type="button"
+          className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-steel underline-offset-2 hover:text-ink hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-expanded={secondaryOpen}
+          aria-controls={secondaryId}
+          data-backorders-secondary-trigger=""
+          onClick={() => setSecondaryOpen((open) => !open)}
+        >
+          {secondaryOpen ? "Hide movement" : "Daily movement"}
+          {movement ? ` · ${movement}` : ""}
+        </button>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {movementCard("NEW", "New Today", current.newToday, "cyan")}
-        {movementCard("INCREASED", "Increased", current.increasedSincePrevious, "warn")}
-        {movementCard("REDUCED", "Reduced", current.reducedSincePrevious, "good")}
-        {movementCard("CLEARED", "Cleared", current.clearedSincePrevious, "good")}
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <KpiCard label="Outstanding Lines" value={qty(current.outstandingLines)} accent="steel" compact />
-        <KpiCard label="Customers" value={qty(current.customers)} accent="steel" compact />
-      </div>
+      {secondaryOpen ? (
+        <div id={secondaryId} className="mt-2 grid gap-3 border-t border-border/50 pt-2" data-backorders-secondary="">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {movementCard("NEW", "New Today", current.newToday, "cyan")}
+            {movementCard("INCREASED", "Increased", current.increasedSincePrevious, "warn")}
+            {movementCard("REDUCED", "Reduced", current.reducedSincePrevious, "good")}
+            {movementCard("CLEARED", "Cleared", current.clearedSincePrevious, "good")}
+          </div>
+          {attentionItems.length ? (
+            <section aria-label="Needs attention">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-warn">Needs attention</h2>
+                <button type="button" className={btnClass} onClick={onViewAttention}>
+                  View attention
+                </button>
+              </div>
+              <ul className="mt-2 grid gap-1 text-[12px] sm:grid-cols-2 lg:grid-cols-3">
+                {attentionItems.map((item) => (
+                  <li key={item.label}>
+                    <span className="num mr-2 font-display text-base font-semibold">{item.n}</span>
+                    {item.label}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+  emphasis,
+  tone,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+  tone?: "warn";
+}) {
+  return (
+    <div className="min-w-0">
+      <dt className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">{label}</dt>
+      <dd
+        className={cn(
+          "num mt-0.5 truncate font-display font-semibold",
+          emphasis ? "text-lg sm:text-xl" : "text-base sm:text-lg",
+          tone === "warn" && "text-warn",
+        )}
+      >
+        {value}
+      </dd>
     </div>
   );
 }
@@ -867,13 +987,13 @@ function KpiCard({
   const body = (
     <>
       <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">{label}</div>
-      <div className={cn("num mt-1 font-display font-semibold", emphasis || !compact ? "text-2xl" : "text-lg")}>
+      <div className={cn("num mt-1 font-display font-semibold", emphasis || !compact ? "text-xl" : "text-lg")}>
         {value}
       </div>
     </>
   );
   if (!onSelect) {
-    return <div className={cn("border border-border border-l-4 px-3 py-3", border, compact && "py-2")}>{body}</div>;
+    return <div className={cn("border border-border border-l-4 px-3 py-2", border)}>{body}</div>;
   }
   return (
     <button
@@ -882,9 +1002,8 @@ function KpiCard({
       aria-label={ariaLabel ?? `${label}, ${value}`}
       onClick={onSelect}
       className={cn(
-        "cursor-pointer border border-border border-l-4 px-3 py-3 text-left transition-colors hover:border-primary hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "cursor-pointer border border-border border-l-4 px-3 py-2 text-left transition-colors hover:border-primary hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         border,
-        compact && "py-2",
         selected && "border-primary bg-secondary/80 ring-1 ring-primary",
       )}
     >
@@ -893,43 +1012,6 @@ function KpiCard({
         <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">Showing these lines</div>
       ) : null}
     </button>
-  );
-}
-
-function AttentionSummary({
-  summary,
-  onView,
-}: {
-  summary: Data["attentionSummary"];
-  onView: () => void;
-}) {
-  const items = [
-    { n: summary.NO_STOCK_NO_INCOMING, label: "No stock or incoming" },
-    { n: summary.STOCK_NOW_AVAILABLE, label: "Stock available now" },
-    { n: summary.INCOMING_DOES_NOT_COVER, label: "Incoming does not cover" },
-    { n: summary.LONG_STANDING, label: "Long-standing" },
-    { n: summary.HIGH_VALUE, label: "High outstanding value" },
-  ].filter((item) => item.n > 0);
-  if (!items.length) return null;
-  return (
-    <section className="border-b border-border/70 px-4 py-3 sm:px-6" aria-label="Needs attention">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-warn">Needs attention</h2>
-          <ul className="mt-2 grid gap-1 text-[13px] sm:grid-cols-2">
-            {items.map((item) => (
-              <li key={item.label}>
-                <span className="num mr-2 font-display text-lg font-semibold">{item.n}</span>
-                {item.label}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <button type="button" className={primaryBtnClass} onClick={onView}>
-          View attention
-        </button>
-      </div>
-    </section>
   );
 }
 
@@ -969,21 +1051,17 @@ function ViewCard({
       type="button"
       aria-pressed={active}
       aria-label={`${label}, ${count}. ${hint}`}
+      title={hint}
       onClick={onSelect}
       className={cn(
-        "flex items-start justify-between gap-3 border px-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "inline-flex min-h-9 items-center gap-2 border px-2.5 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-3",
         accentClass,
         active ? "bg-secondary/80 ring-1 ring-foreground/20" : "bg-surface/40 hover:bg-secondary/40",
       )}
     >
-      <div>
-        <div className="flex items-center gap-2">
-          <Icon className="size-3.5 text-steel" aria-hidden />
-          <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">{label}</span>
-        </div>
-        <div className="mt-1 text-[12px] text-steel">{hint}</div>
-      </div>
-      <span className={cn("num font-display text-2xl font-semibold", id === "attention" && count > 0 && "text-warn")}>
+      <Icon className="size-3.5 shrink-0 text-steel" aria-hidden />
+      <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">{label}</span>
+      <span className={cn("num font-display text-base font-semibold", id === "attention" && count > 0 && "text-warn")}>
         {qty(count)}
       </span>
     </button>
@@ -996,12 +1074,14 @@ function Filters({
   setQ,
   data,
   patch,
+  views,
 }: {
   search: BackorderSearch;
   q: string;
   setQ: (v: string) => void;
   data: Data | null;
   patch: (next: BackorderSearchPatch) => void;
+  views?: ReactNode;
 }) {
   const chips = activeBackorderFilterChips(search);
   const statusOff = backorderFilterIgnoredByMovement(search, "status");
@@ -1013,101 +1093,118 @@ function Filters({
       : search.movement
         ? "Status filter is not applied while a movement is selected."
         : null;
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreId = useId();
   return (
-    <div className="border-b border-border/70 px-4 py-3 sm:px-6">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">Filters</div>
-      <div className="mb-3 flex flex-wrap gap-2">
-        <QuickFilter
-          label="Needs Attention"
-          active={!search.movement && search.view === "attention"}
-          onClick={() => patch({ view: "attention", movement: undefined, page: undefined })}
-        />
-        <QuickFilter
-          label="Stock Available"
-          active={!positionOff && search.position === "STOCK_AVAILABLE"}
-          disabled={positionOff}
-          onClick={() => patch({ position: search.position === "STOCK_AVAILABLE" ? undefined : "STOCK_AVAILABLE", page: undefined })}
-        />
-        <QuickFilter
-          label="No Stock / No Incoming"
-          active={!positionOff && search.position === "NO_STOCK_NO_INCOMING"}
-          disabled={positionOff}
-          onClick={() =>
-            patch({
-              position: search.position === "NO_STOCK_NO_INCOMING" ? undefined : "NO_STOCK_NO_INCOMING",
-              page: undefined,
-            })
-          }
-        />
-        <QuickFilter
-          label="7+ Days"
-          active={!ageOff && search.ageDays === 7}
-          disabled={ageOff}
-          onClick={() => patch({ ageDays: search.ageDays === 7 ? undefined : 7, page: undefined })}
-        />
-        <QuickFilter
-          label="Product Issue"
-          active={search.condition === "HAS"}
-          onClick={() => patch({ condition: search.condition === "HAS" ? undefined : "HAS", page: undefined })}
-        />
-      </div>
+    <div className="border-b border-border/70 px-4 py-1.5 sm:px-6" data-backorders-filters="">
+      {views ? <div className="mb-1.5">{views}</div> : null}
       <form
-        className="flex flex-wrap gap-2"
+        className="flex flex-col gap-1.5"
         onSubmit={(event) => {
           event.preventDefault();
           patch({ q: q.trim() || undefined, page: undefined });
         }}
       >
-        <input
-          className={`${controlClass} min-w-[240px] flex-1 sm:min-w-[380px]`}
-          placeholder="Search order, customer, account, SKU or reference…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          aria-label="Search order, customer, account, SKU or reference"
-        />
-        <select className={cn(controlClass, statusOff && "opacity-50")} disabled={statusOff} title={statusOff ? ignoredNote ?? undefined : undefined} value={search.status ?? ""} onChange={(e) => patch({ status: e.target.value || undefined, page: undefined })} aria-label="Status">
-          {BACKORDER_STATUS_FILTERS.map((opt) => (
-            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-        <select className={cn(controlClass, positionOff && "opacity-50")} disabled={positionOff} title={positionOff ? ignoredNote ?? undefined : undefined} value={search.position ?? ""} onChange={(e) => patch({ position: e.target.value || undefined, page: undefined })} aria-label="Stock position">
-          {BACKORDER_POSITION_FILTERS.map((opt) => (
-            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-        <select className={cn(controlClass, ageOff && "opacity-50")} disabled={ageOff} title={ageOff ? ignoredNote ?? undefined : undefined} value={search.ageDays ? String(search.ageDays) : ""} onChange={(e) => patch({ ageDays: e.target.value ? Number(e.target.value) : undefined, page: undefined })} aria-label="Age">
-          {BACKORDER_AGE_FILTERS.map((opt) => (
-            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-        <select className={controlClass} value={search.customerAccount ?? ""} onChange={(e) => patch({ customerAccount: e.target.value || undefined, page: undefined })} aria-label="Customer">
-          <option value="">All customers</option>
-          {(data?.customers ?? []).map((c) => (
-            <option key={c.account} value={c.account}>{c.name} ({c.account})</option>
-          ))}
-        </select>
-        <select className={controlClass} value={search.brand ?? ""} onChange={(e) => patch({ brand: e.target.value || undefined, page: undefined })} aria-label="Brand">
-          <option value="">All brands</option>
-          {(data?.brands ?? []).map((brand) => (
-            <option key={brand} value={brand}>{brand}</option>
-          ))}
-        </select>
-        <select className={controlClass} value={search.condition ?? ""} onChange={(e) => patch({ condition: (e.target.value as BackorderSearch["condition"]) || undefined, page: undefined })} aria-label="Product condition">
-          {BACKORDER_CONDITION_FILTERS.map((opt) => (
-            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-        <select className={controlClass} value={search.catalogueType ?? ""} onChange={(e) => patch({ catalogueType: (e.target.value as BackorderSearch["catalogueType"]) || undefined, page: undefined })} aria-label="Catalogue type">
-          <option value="">All catalogue types</option>
-          <option value="CATALOGUE">Catalogue</option>
-          <option value="EXTERNAL">External product</option>
-          <option value="HISTORIC_ONLY">Historic/not current</option>
-        </select>
-        <button type="submit" className={btnClass}>Search</button>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input
+            className={`${controlClass} min-h-8 min-w-[160px] flex-1 basis-[200px] sm:min-w-[240px]`}
+            placeholder="Search order, customer, account, SKU or reference…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            aria-label="Search order, customer, account, SKU or reference"
+          />
+          <select className={cn(controlClass, "min-h-8", statusOff && "opacity-50")} disabled={statusOff} title={statusOff ? ignoredNote ?? undefined : undefined} value={search.status ?? ""} onChange={(e) => patch({ status: e.target.value || undefined, page: undefined })} aria-label="Status">
+            {BACKORDER_STATUS_FILTERS.map((opt) => (
+              <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <select className={cn(controlClass, "min-h-8", positionOff && "opacity-50")} disabled={positionOff} title={positionOff ? ignoredNote ?? undefined : undefined} value={search.position ?? ""} onChange={(e) => patch({ position: e.target.value || undefined, page: undefined })} aria-label="Stock position">
+            {BACKORDER_POSITION_FILTERS.map((opt) => (
+              <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <select className={cn(controlClass, "min-h-8", ageOff && "opacity-50")} disabled={ageOff} title={ageOff ? ignoredNote ?? undefined : undefined} value={search.ageDays ? String(search.ageDays) : ""} onChange={(e) => patch({ ageDays: e.target.value ? Number(e.target.value) : undefined, page: undefined })} aria-label="Age">
+            {BACKORDER_AGE_FILTERS.map((opt) => (
+              <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <button type="submit" className={cn(btnClass, "min-h-8")}>Search</button>
+          <button
+            type="button"
+            className="text-[11px] font-semibold uppercase tracking-[0.12em] text-steel underline-offset-2 hover:text-ink hover:underline"
+            aria-expanded={moreOpen}
+            aria-controls={moreId}
+            onClick={() => setMoreOpen((open) => !open)}
+          >
+            {moreOpen ? "Fewer filters" : "More filters"}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          <QuickFilter
+            label="Needs Attention"
+            active={!search.movement && search.view === "attention"}
+            onClick={() => patch({ view: "attention", movement: undefined, page: undefined })}
+          />
+          <QuickFilter
+            label="Stock Available"
+            active={!positionOff && search.position === "STOCK_AVAILABLE"}
+            disabled={positionOff}
+            onClick={() => patch({ position: search.position === "STOCK_AVAILABLE" ? undefined : "STOCK_AVAILABLE", page: undefined })}
+          />
+          <QuickFilter
+            label="No Stock / No Incoming"
+            active={!positionOff && search.position === "NO_STOCK_NO_INCOMING"}
+            disabled={positionOff}
+            onClick={() =>
+              patch({
+                position: search.position === "NO_STOCK_NO_INCOMING" ? undefined : "NO_STOCK_NO_INCOMING",
+                page: undefined,
+              })
+            }
+          />
+          <QuickFilter
+            label="7+ Days"
+            active={!ageOff && search.ageDays === 7}
+            disabled={ageOff}
+            onClick={() => patch({ ageDays: search.ageDays === 7 ? undefined : 7, page: undefined })}
+          />
+          <QuickFilter
+            label="Product Issue"
+            active={search.condition === "HAS"}
+            onClick={() => patch({ condition: search.condition === "HAS" ? undefined : "HAS", page: undefined })}
+          />
+        </div>
+        {moreOpen ? (
+          <div id={moreId} className="flex flex-wrap gap-2" data-backorders-more-filters="">
+            <select className={cn(controlClass, "min-h-9")} value={search.customerAccount ?? ""} onChange={(e) => patch({ customerAccount: e.target.value || undefined, page: undefined })} aria-label="Customer">
+              <option value="">All customers</option>
+              {(data?.customers ?? []).map((c) => (
+                <option key={c.account} value={c.account}>{c.name} ({c.account})</option>
+              ))}
+            </select>
+            <select className={cn(controlClass, "min-h-9")} value={search.brand ?? ""} onChange={(e) => patch({ brand: e.target.value || undefined, page: undefined })} aria-label="Brand">
+              <option value="">All brands</option>
+              {(data?.brands ?? []).map((brand) => (
+                <option key={brand} value={brand}>{brand}</option>
+              ))}
+            </select>
+            <select className={cn(controlClass, "min-h-9")} value={search.condition ?? ""} onChange={(e) => patch({ condition: (e.target.value as BackorderSearch["condition"]) || undefined, page: undefined })} aria-label="Product condition">
+              {BACKORDER_CONDITION_FILTERS.map((opt) => (
+                <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <select className={cn(controlClass, "min-h-9")} value={search.catalogueType ?? ""} onChange={(e) => patch({ catalogueType: (e.target.value as BackorderSearch["catalogueType"]) || undefined, page: undefined })} aria-label="Catalogue type">
+              <option value="">All catalogue types</option>
+              <option value="CATALOGUE">Catalogue</option>
+              <option value="EXTERNAL">External product</option>
+              <option value="HISTORIC_ONLY">Historic/not current</option>
+            </select>
+          </div>
+        ) : null}
       </form>
-      {ignoredNote ? <p className="mt-2 text-[12px] text-steel">{ignoredNote}</p> : null}
+      {ignoredNote ? <p className="mt-1 text-[12px] text-steel">{ignoredNote}</p> : null}
       {chips.length ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           {chips.map((chip) => (
             <button
               key={chip.key}
@@ -1648,9 +1745,9 @@ function LinesTable({
   }
   return (
     <>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[1280px] text-left text-[13px]">
-          <thead className="sticky top-0 z-10 bg-surface text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+      <div className="overflow-x-auto" data-backorders-table-hscroll="">
+        <table className="w-full min-w-[1100px] text-left text-[13px]" data-backorders-lines-table="">
+          <thead className="sticky top-0 z-20 border-b border-border bg-surface/95 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel backdrop-blur-sm">
             <tr className="border-b border-border/80">
               <th className="px-3 pt-2 pb-0" colSpan={2}>History</th>
               <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={4}>Order</th>
@@ -1659,10 +1756,10 @@ function LinesTable({
               <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={3}>Stock</th>
               <th className="px-3 pt-2 pb-0"> </th>
             </tr>
-            <tr className="bg-secondary/50">
+            <tr className="bg-secondary/80">
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">First seen</th>
-              <th className="sticky left-0 z-20 border-l border-border/60 bg-secondary/50 px-3 py-2">Order No</th>
+              <th className="sticky left-0 z-30 border-l border-r border-border/60 bg-secondary/95 px-3 py-2">Order No</th>
               <th className="px-3 py-2">Customer</th>
               <th className="px-3 py-2">Customer Account</th>
               <th className="px-3 py-2">Customer Order Ref</th>
@@ -1696,7 +1793,7 @@ function LinesTable({
               >
                 <td className="px-3 py-2.5"><ChangeStatusBadge status={row.status} label={row.statusLabel} /></td>
                 <td className="px-3 py-2.5">{row.ageLabel}</td>
-                <td className={cn("sticky left-0 z-10 px-3 py-2.5 font-mono text-[12px] font-semibold", i % 2 === 1 ? "bg-secondary/20" : "bg-background")}>
+                <td className={cn("sticky left-0 z-10 border-r border-border/50 px-3 py-2.5 font-mono text-[12px] font-semibold", i % 2 === 1 ? "bg-secondary/20" : "bg-background")}>
                   {row.orderNumber}
                 </td>
                 <td className="px-3 py-2.5">
