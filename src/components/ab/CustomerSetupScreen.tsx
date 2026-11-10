@@ -24,6 +24,12 @@ import {
   setCompanyCustomerGroupFn,
 } from "@/server/phase2/fns";
 
+/**
+ * Customer Setup fills AppShell `main` and owns its own scroll region.
+ * A sticky bottom footer inside AppShell's overflow container inflates
+ * scrollHeight and leaves a large blank area below the real content.
+ */
+
 type SetupData = Extract<Awaited<ReturnType<typeof getCustomerSetupFn>>, { ok: true }>["data"];
 
 type ContactDraft = {
@@ -386,35 +392,41 @@ export function CustomerSetupScreen({
     toast.success(result.data.message);
   }
 
-  return (
-    <div data-customer-setup-screen="">
-      <PanelHeader
-        title={data?.company.name ?? "Customer setup"}
-        sub="One screen: verify Autopart, record sales history, contacts, addresses, and terms — then enable ordering."
-        crumbs={[
-          { label: "Sales" },
-          { label: "Customers", to: ROUTES.adminCustomers },
-          { label: "Setup" },
-        ]}
-        actions={
-          companyId ? (
-            <Link
-              to="/admin/customers/$id"
-              params={{ id: companyId }}
-              className={buttonClass()}
-              onClick={(event) => {
-                if (dirty && !window.confirm("You have unsaved changes. Leave anyway?")) {
-                  event.preventDefault();
-                }
-              }}
-            >
-              Open customer record
-            </Link>
-          ) : null
-        }
-      />
+  const showFooter = Boolean(data && companyId);
 
-      <div className="grid gap-6 p-4 sm:p-6">
+  return (
+    <div
+      data-customer-setup-screen=""
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+    >
+      <div data-customer-setup-scroll="" className="min-h-0 flex-1 overflow-x-clip overflow-y-auto">
+        <PanelHeader
+          title={data?.company.name ?? "Customer setup"}
+          sub="One screen: verify Autopart, record sales history, contacts, addresses, and terms — then enable ordering."
+          crumbs={[
+            { label: "Sales" },
+            { label: "Customers", to: ROUTES.adminCustomers },
+            { label: "Setup" },
+          ]}
+          actions={
+            companyId ? (
+              <Link
+                to="/admin/customers/$id"
+                params={{ id: companyId }}
+                className={buttonClass()}
+                onClick={(event) => {
+                  if (dirty && !window.confirm("You have unsaved changes. Leave anyway?")) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                Open customer record
+              </Link>
+            ) : null
+          }
+        />
+
+        <div className="grid gap-6 p-4 sm:p-6">
         {!companyId ? (
           <section className="grid gap-4 rounded-lg border border-border p-4" data-setup-find="">
             <h2 className="font-display text-lg uppercase">Find or create customer</h2>
@@ -1164,34 +1176,43 @@ export function CustomerSetupScreen({
               </label>
             </section>
 
-            <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background/95 p-4 backdrop-blur">
-              <p className="text-[13px] text-steel">
-                {dirty ? "Unsaved changes on this page." : "All local edits saved or unchanged."}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={buttonClass()}
-                  disabled={busy || !data.permissions.canEditCompany}
-                  onClick={() => void saveSetup(false)}
-                  data-save-draft=""
-                >
-                  {busy ? "Saving…" : "Save draft"}
-                </button>
-                <button
-                  type="button"
-                  className={buttonClass(true)}
-                  disabled={busy || !data.permissions.canEditCompany}
-                  onClick={() => void saveSetup(true)}
-                  data-save-enable-ordering=""
-                >
-                  {busy ? "Saving…" : "Save & enable ordering"}
-                </button>
-              </div>
-            </div>
           </>
         ) : null}
+        </div>
       </div>
+
+      {showFooter ? (
+        <div
+          data-customer-setup-footer=""
+          className="shrink-0 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[13px] text-steel">
+              {dirty ? "Unsaved changes on this page." : "All local edits saved or unchanged."}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className={buttonClass()}
+                disabled={busy || !data!.permissions.canEditCompany}
+                onClick={() => void saveSetup(false)}
+                data-save-draft=""
+              >
+                {busy ? "Saving…" : "Save draft"}
+              </button>
+              <button
+                type="button"
+                className={buttonClass(true)}
+                disabled={busy || !data!.permissions.canEditCompany}
+                onClick={() => void saveSetup(true)}
+                data-save-enable-ordering=""
+              >
+                {busy ? "Saving…" : "Save & enable ordering"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
