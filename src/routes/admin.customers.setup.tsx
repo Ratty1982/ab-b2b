@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { CustomerCreationWizard } from "@/components/ab/CustomerCreationWizard";
+import { CustomerSetupScreen } from "@/components/ab/CustomerSetupScreen";
 import { parseWizardStep, type WizardStepId } from "@/domain/customer-creation-wizard";
 
 export const Route = createFileRoute("/admin/customers/setup")({
@@ -10,6 +10,7 @@ export const Route = createFileRoute("/admin/customers/setup")({
     const companyId =
       typeof companyIdRaw === "string" && companyIdRaw.length > 0 ? companyIdRaw : undefined;
     const step = parseWizardStep(search["step"]);
+    // Legacy wizard `step` remains accepted for old links but is unused — setup is one page.
     return {
       ...(companyId ? { companyId } : {}),
       ...(step ? { step } : {}),
@@ -18,7 +19,11 @@ export const Route = createFileRoute("/admin/customers/setup")({
   head: () => ({
     meta: [
       { title: "Customer setup — Automotive Brands Admin" },
-      { name: "description", content: "Guided customer creation and onboarding." },
+      {
+        name: "description",
+        content:
+          "Single-page customer setup: Autopart, history, contacts, addresses, and ordering.",
+      },
     ],
   }),
   component: AdminCustomerSetup,
@@ -28,16 +33,12 @@ function AdminCustomerSetup() {
   const search = Route.useSearch();
   const navigate = useNavigate();
   return (
-    <CustomerCreationWizard
+    <CustomerSetupScreen
       companyId={search.companyId}
-      step={search.step}
-      onNavigate={(next) => {
+      onCompanyIdChange={(companyId) => {
         void navigate({
           to: "/admin/customers/setup",
-          search: {
-            ...(next.companyId ? { companyId: next.companyId } : {}),
-            ...(next.step ? { step: next.step } : {}),
-          },
+          search: { companyId },
         });
       }}
     />

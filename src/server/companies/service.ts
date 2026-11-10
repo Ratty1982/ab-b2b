@@ -45,6 +45,10 @@ function companySelect() {
     taxStatus: true,
     paymentTerms: true,
     creditLimit: true,
+    creditLimitReviewedAt: true,
+    creditLimitReviewedById: true,
+    orderingEnabledAt: true,
+    orderingEnabledById: true,
     currency: true,
     priceListId: true,
     externalRef: true,
@@ -222,6 +226,8 @@ function serializeCompany(row: {
   taxStatus: string;
   paymentTerms: string | null;
   creditLimit?: { toString(): string } | string | null;
+  creditLimitReviewedAt?: Date | null;
+  orderingEnabledAt?: Date | null;
   currency: string;
   priceListId: string | null;
   externalRef: string | null;
@@ -267,6 +273,8 @@ function serializeCompany(row: {
     paymentTerms: row.paymentTerms,
     creditLimit: creditLimitAmount,
     creditLimitDisplay: formatCreditLimitGbp(creditLimitAmount),
+    creditLimitReviewedAt: row.creditLimitReviewedAt?.toISOString() ?? null,
+    orderingEnabledAt: row.orderingEnabledAt?.toISOString() ?? null,
     currency: row.currency,
     priceListId: row.priceListId,
     priceList: row.priceList ?? null,
