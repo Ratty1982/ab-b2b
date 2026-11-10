@@ -36,6 +36,11 @@ import {
   type PortfolioUrlSearch,
 } from "@/domain/sales-portfolio";
 import {
+  PORTFOLIO_ACCOUNT_CLASS_DEFAULT,
+  PORTFOLIO_ACCOUNT_CLASS_OPTIONS,
+  type PortfolioAccountClass,
+} from "@/domain/sales-portfolio-eligibility";
+import {
   exportSalesRepPortfolioCsvFn,
   getSalesRepPortfolioFn,
 } from "@/server/phase2/fns";
@@ -99,6 +104,7 @@ function SalesRepPortfolioPage() {
       customerGroupId: search.customerGroupId ?? null,
       brandId: search.brandId ?? null,
       filter: search.filter ?? "ALL",
+      accountClass: search.accountClass ?? PORTFOLIO_ACCOUNT_CLASS_DEFAULT,
       q: search.q ?? null,
       page: search.page ?? 1,
     }),
@@ -123,6 +129,14 @@ function SalesRepPortfolioPage() {
       cancelled = true;
     };
   }, [query]);
+
+  function portfolioFollowUpScope() {
+    return {
+      accountClass: query.accountClass,
+      salesRepId: query.salesRepId,
+      unassigned: query.unassigned || null,
+    };
+  }
 
   function patchSearch(patch: Record<string, unknown>) {
     const next: PortfolioUrlSearch = { ...search, page: 1 };
@@ -256,6 +270,24 @@ function SalesRepPortfolioPage() {
               </select>
             </SiField>
           ) : null}
+          <SiField label="Account type">
+            <select
+              className={siControlClassName()}
+              value={search.accountClass ?? PORTFOLIO_ACCOUNT_CLASS_DEFAULT}
+              onChange={(e) =>
+                patchSearch({
+                  accountClass: (e.target.value as PortfolioAccountClass) || undefined,
+                  page: 1,
+                })
+              }
+            >
+              {(data?.accountClassOptions ?? PORTFOLIO_ACCOUNT_CLASS_OPTIONS).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </SiField>
           <SiField label="Customer group">
             <select
               className={siControlClassName()}
@@ -441,6 +473,7 @@ function SalesRepPortfolioPage() {
                                 period: query.period,
                                 from: query.from,
                                 to: query.to,
+                                ...portfolioFollowUpScope(),
                               })
                             }
                           />
@@ -546,6 +579,7 @@ function SalesRepPortfolioPage() {
                               period: query.period,
                               from: query.from,
                               to: query.to,
+                              ...portfolioFollowUpScope(),
                             })
                           }
                         />
@@ -718,6 +752,7 @@ function SalesRepPortfolioPage() {
                                         period: query.period,
                                         from: query.from,
                                         to: query.to,
+                                        ...portfolioFollowUpScope(),
                                       })
                                     }
                                   />
@@ -740,7 +775,7 @@ function SalesRepPortfolioPage() {
             </section>
 
             <SiProvenance
-              text={`Portfolio uses ongoing 504 and TRM21QC sales. Historical 561L and SLRB purchases are not included. Credits are signed negative and do not create purchase presence. Comparison uses the previous equivalent-length period.${data.salesRepFilterLabel ? ` Scope: ${data.salesRepFilterLabel}.` : ""}`}
+              text={`Portfolio includes Company.status = ACTIVE only (${data.accountClass === "TRADE" ? "trade customers by default" : data.accountClass === "RETAIL_INTERNAL" ? "retail/internal Autopart accounts" : "all active accounts"}). Uses ongoing 504 and TRM21QC sales. Historical 561L and SLRB purchases are not included. Credits are signed negative and do not create purchase presence. Comparison uses the previous equivalent-length period.${data.salesRepFilterLabel ? ` Scope: ${data.salesRepFilterLabel}.` : ""}`}
             />
           </>
         ) : null}

@@ -25,6 +25,10 @@ export type FollowUpRequest = {
   compareTo?: string | null;
   opportunityPeriod?: string | null;
   historySource?: "dated" | "global" | "unified";
+  /** Portfolio workspace filters — keep detail eligibility aligned with the list. */
+  accountClass?: string | null;
+  salesRepId?: string | null;
+  unassigned?: boolean | null;
 };
 
 type PreviewData = Extract<
