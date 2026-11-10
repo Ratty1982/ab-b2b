@@ -769,7 +769,7 @@ describe("order sales rep notification", () => {
     const originalFindFirst = prisma.auditEvent.findFirst.bind(prisma.auditEvent);
     prisma.auditEvent.findFirst = (async () => {
       throw new Error("simulated skip-audit read failure");
-    }) as typeof prisma.auditEvent.findFirst;
+    }) as unknown as typeof prisma.auditEvent.findFirst;
 
     try {
       const result = await sendOrderEmailsAfterCommit(order.id);

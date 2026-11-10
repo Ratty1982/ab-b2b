@@ -13,10 +13,16 @@ describe("customer setup layout scroll contract", () => {
     expect(setup).not.toContain("sticky bottom-0");
   });
 
-  it("keeps AppShell main as a flex column so setup can fill height without page blank space", () => {
-    expect(shell).toContain(
-      'className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip overflow-y-auto"',
+  it("keeps AppShell main as block-flow by default and only fills for Customer Setup", () => {
+    expect(shell).toContain('data-app-shell-main=""');
+    expect(shell).toContain('data-app-shell-main-layout={fillMainContent ? "fill" : "scroll"}');
+    expect(shell).toContain('pathname.startsWith("/admin/customers/setup")');
+    expect(shell).toContain('fillMainContent && "flex flex-col"');
+    // Must not force flex-column on every admin/purchasing page (shrinks fragment siblings).
+    expect(shell).not.toMatch(
+      /main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip overflow-y-auto"/,
     );
+    expect(shell).toContain('"min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto"');
   });
 
   it("keeps file inputs inside a relative drop target and preserves scroll on preview", () => {
