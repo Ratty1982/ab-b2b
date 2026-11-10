@@ -4,8 +4,12 @@ import { ensureAdminAccess } from "@/server/auth/route-guards";
 import { resolvePostLoginPath, safeReturnPath } from "@/server/auth/session";
 import { shellModelFromSession, shellUserFromSession } from "@/lib/nav-permissions";
 import { ROUTES } from "@/lib/app-nav";
+import { privateAreaRobotsMeta } from "@/domain/private-route-seo";
 
 export const Route = createFileRoute("/admin")({
+  head: () => ({
+    meta: [privateAreaRobotsMeta()],
+  }),
   beforeLoad: async ({ location }) => {
     const result = await ensureAdminAccess();
     if (!result.ok) {

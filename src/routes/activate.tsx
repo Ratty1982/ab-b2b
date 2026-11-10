@@ -7,6 +7,7 @@ import {
   getTradeInvitationPreviewFn,
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
+import { authFlowRobotsMeta } from "@/domain/private-route-seo";
 
 type ActivateSearch = { token?: string };
 
@@ -16,7 +17,7 @@ export const Route = createFileRoute("/activate")({
     return typeof token === "string" ? { token } : {};
   },
   head: () => ({
-    meta: [{ title: "Activate account — Automotive Brands" }],
+    meta: [{ title: "Activate account — Automotive Brands" }, authFlowRobotsMeta()],
   }),
   component: ActivateAccount,
 });
