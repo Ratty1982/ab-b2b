@@ -2,10 +2,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { PublicLayout } from "@/components/ab/PublicLayout";
 import { requestPasswordReset } from "@/server/auth/session";
+import { authFlowRobotsMeta } from "@/domain/private-route-seo";
 
 export const Route = createFileRoute("/forgot-password")({
   head: () => ({
-    meta: [{ title: "Forgot password — Automotive Brands" }],
+    meta: [{ title: "Forgot password — Automotive Brands" }, authFlowRobotsMeta()],
   }),
   component: ForgotPassword,
 });

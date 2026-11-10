@@ -3,6 +3,7 @@ import { useState } from "react";
 import { z } from "zod";
 import { PublicLayout } from "@/components/ab/PublicLayout";
 import { completePasswordReset } from "@/server/auth/session";
+import { authFlowRobotsMeta } from "@/domain/private-route-seo";
 
 const searchSchema = z.object({
   token: z.string().optional(),
@@ -11,7 +12,7 @@ const searchSchema = z.object({
 export const Route = createFileRoute("/reset-password")({
   validateSearch: (search) => searchSchema.parse(search),
   head: () => ({
-    meta: [{ title: "Reset password — Automotive Brands" }],
+    meta: [{ title: "Reset password — Automotive Brands" }, authFlowRobotsMeta()],
   }),
   component: ResetPassword,
 });

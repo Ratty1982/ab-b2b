@@ -5,8 +5,12 @@ import { ensurePortalAccess } from "@/server/auth/route-guards";
 import { resolvePostLoginPath, safeReturnPath } from "@/server/auth/session";
 import { shellModelFromSession, shellUserFromSession } from "@/lib/nav-permissions";
 import { ROUTES } from "@/lib/app-nav";
+import { privateAreaRobotsMeta } from "@/domain/private-route-seo";
 
 export const Route = createFileRoute("/portal")({
+  head: () => ({
+    meta: [privateAreaRobotsMeta()],
+  }),
   beforeLoad: async ({ location }) => {
     const result = await ensurePortalAccess();
     if (!result.ok) {

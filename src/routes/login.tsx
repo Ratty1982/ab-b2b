@@ -9,6 +9,7 @@ import {
   signInWithPassword,
   verifyTwoFactorLogin,
 } from "@/server/auth/session";
+import { loginRobotsMeta } from "@/domain/private-route-seo";
 
 const loginSearchSchema = z.object({
   returnTo: z.string().optional(),
@@ -33,6 +34,7 @@ export const Route = createFileRoute("/login")({
       },
       { property: "og:title", content: "Trade Login — Automotive Brands" },
       { property: "og:description", content: "Sign in to the Automotive Brands trade portal." },
+      loginRobotsMeta(),
     ],
   }),
   component: Login,

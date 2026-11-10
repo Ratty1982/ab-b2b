@@ -9,6 +9,7 @@ import {
   getMfaStatusFn,
   regenerateMfaBackupCodesFn,
 } from "@/server/auth/mfa";
+import { authFlowRobotsMeta } from "@/domain/private-route-seo";
 
 export const Route = createFileRoute("/account/security")({
   beforeLoad: async () => {
@@ -21,6 +22,7 @@ export const Route = createFileRoute("/account/security")({
     meta: [
       { title: "Account security — Automotive Brands" },
       { name: "description", content: "Set up an authenticator app for your Automotive Brands account." },
+      authFlowRobotsMeta(),
     ],
   }),
   component: AccountSecurityPage,
