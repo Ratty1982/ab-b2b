@@ -47,11 +47,14 @@ vi.mock("@tanstack/react-router", () => ({
       children,
     ),
   useRouter: () => ({ invalidate: async () => undefined }),
-  useRouterState: (options?: { select?: (state: { location: { pathname: string } }) => unknown }) => {
+  useRouterState: (options?: {
+    select?: (state: { location: { pathname: string } }) => unknown;
+  }) => {
     const state = { location: { pathname: "/" } };
     return options?.select ? options.select(state) : state;
   },
   useNavigate: () => async () => undefined,
+  useRouteContext: () => ({ publicOrigin: "https://example.test" }),
 }));
 
 function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
@@ -92,7 +95,9 @@ function detail(partial: Partial<PublicProductDetail> = {}): PublicProductDetail
       warnings: null,
     },
     gallery: [{ src: "/media/gc5000.jpg", alt: "Window & Glass Cleaner 5 Litre" }],
-    related: [card({ id: "p2", sku: "GC500", slug: "gc500", name: "Window & Glass Cleaner 500ml" })],
+    related: [
+      card({ id: "p2", sku: "GC500", slug: "gc500", name: "Window & Glass Cleaner 500ml" }),
+    ],
     packQty: 1,
     caseQty: 2,
     unit: "EA",
@@ -136,7 +141,10 @@ describe("product detail catalogue navigation", () => {
     expect(markup).toContain("Street Rhino");
     expect(markup).toContain('aria-current="page"');
     expect(markup).toContain("font-semibold text-primary");
-    const sidebarSrc = readFileSync(path.join(process.cwd(), "src/components/public/CatalogueSidebar.tsx"), "utf8");
+    const sidebarSrc = readFileSync(
+      path.join(process.cwd(), "src/components/public/CatalogueSidebar.tsx"),
+      "utf8",
+    );
     expect(sidebarSrc).not.toMatch(/Power Maxed|Steel Seal|Car Care|Additives/);
     expect(sidebarSrc).toContain("brands.map");
     expect(sidebarSrc).toContain("categories.map");
@@ -214,7 +222,10 @@ describe("product detail catalogue navigation", () => {
     expect(routeSrc).toContain("data.card.categorySlug");
     expect(routeSrc).not.toContain("Car Care");
     expect(routeSrc).not.toContain("Power Maxed");
-    const productSrc = readFileSync(path.join(process.cwd(), "src/server/catalogue/products.ts"), "utf8");
+    const productSrc = readFileSync(
+      path.join(process.cwd(), "src/server/catalogue/products.ts"),
+      "utf8",
+    );
     expect(routeSrc).toContain("data.nav.categorySlugsByBrand");
     expect(productSrc).toContain("loadPublicCatalogueNav");
     expect(productSrc).toContain("categorySlugsByBrand: nav.categorySlugsByBrand");
@@ -223,10 +234,19 @@ describe("product detail catalogue navigation", () => {
   });
 
   it("revalidates listing loaders from brand/search deps and wires categorySlugsByBrand into sidebar context", () => {
-    const productsIndex = readFileSync(path.join(process.cwd(), "src/routes/products.index.tsx"), "utf8");
-    const productsCategory = readFileSync(path.join(process.cwd(), "src/routes/products.category.$slug.tsx"), "utf8");
+    const productsIndex = readFileSync(
+      path.join(process.cwd(), "src/routes/products.index.tsx"),
+      "utf8",
+    );
+    const productsCategory = readFileSync(
+      path.join(process.cwd(), "src/routes/products.category.$slug.tsx"),
+      "utf8",
+    );
     const brandPage = readFileSync(path.join(process.cwd(), "src/routes/brands.$slug.tsx"), "utf8");
-    const shellSrc = readFileSync(path.join(process.cwd(), "src/components/public/PublicCatalogueShell.tsx"), "utf8");
+    const shellSrc = readFileSync(
+      path.join(process.cwd(), "src/components/public/PublicCatalogueShell.tsx"),
+      "utf8",
+    );
 
     expect(productsIndex).toContain("loaderDeps:");
     expect(productsIndex).toContain("productsIndexLoaderDeps");
@@ -252,5 +272,10 @@ describe("product detail catalogue navigation", () => {
 
     expect(shellSrc).toContain("data.categorySlugsByBrand");
     expect(shellSrc).toContain("categorySlugsByBrand: data.categorySlugsByBrand");
+    expect(shellSrc).not.toMatch(/active trade-visible line/);
+    expect(shellSrc).toContain("publicCategorySubtitle");
+    expect(shellSrc).toContain("publicProductCountLabel");
+    expect(productsCategory).toContain("publicCategoryMetaDescription");
+    expect(productsCategory).toContain("category.description");
   });
 });

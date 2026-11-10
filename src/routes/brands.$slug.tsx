@@ -12,11 +12,14 @@ import { getClientSession } from "@/server/auth/session";
 import { getPublicBrandFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/brands/$slug")({
-  validateSearch: (search: Record<string, unknown>): { q?: string; page?: number; category?: string } => {
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { q?: string; page?: number; category?: string } => {
     const out: { q?: string; page?: number; category?: string } = {};
     if (typeof search["q"] === "string") out.q = search["q"];
     if (typeof search["category"] === "string") out.category = search["category"];
-    if (typeof search["page"] === "string" || typeof search["page"] === "number") out.page = Number(search["page"]);
+    if (typeof search["page"] === "string" || typeof search["page"] === "number")
+      out.page = Number(search["page"]);
     return out;
   },
   loaderDeps: ({ search }) => brandPageLoaderDeps(search),
@@ -81,7 +84,9 @@ function BrandLanding({
     <div className="mb-2 grid gap-4 rounded-lg border border-border/70 bg-surface/40 p-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <div className="min-w-0">
         {tagline ? (
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan">{tagline}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan">
+            {tagline}
+          </p>
         ) : null}
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-steel">
           {description || `${name} products available to Automotive Brands trade customers.`}
@@ -108,7 +113,11 @@ function BrandLanding({
       </div>
       {logoSrc ? (
         <div className="grid h-24 w-40 place-items-center rounded-md bg-white p-3">
-          <img src={logoSrc} alt={`${name} logo`} className={cn("max-h-full max-w-full", mediaContainClass)} />
+          <img
+            src={logoSrc}
+            alt={`${name} logo`}
+            className={cn("max-h-full max-w-full", mediaContainClass)}
+          />
         </div>
       ) : null}
     </div>
@@ -135,7 +144,11 @@ function BrandPage() {
           ? `${brand.name} · ${brand.catalogue.category.name}`
           : brand.name
       }
-      intro={undefined}
+      intro={
+        brand.appliedCategorySlug && brand.catalogue.category?.description
+          ? brand.catalogue.category.description
+          : undefined
+      }
       breadcrumbs={[
         { label: "Home", to: "/" },
         { label: "Brands", to: "/brands" },
