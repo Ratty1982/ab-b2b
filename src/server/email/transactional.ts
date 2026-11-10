@@ -38,6 +38,14 @@ import {
   isTransactionalEmailEnabled,
 } from "@/server/email/settings";
 import {
+  mergeOrderInternalNotificationRecipients,
+  orderReceivedInternalIdempotencyKey,
+} from "@/domain/order-sales-rep-notification";
+import {
+  recordOrderSalesRepNotificationSkip,
+  resolveOrderSalesRepNotificationEmail,
+} from "@/server/email/order-sales-rep-notification";
+import {
   buildCallbackRequestInternalBodies,
   buildCompanyUserInviteBodies,
   buildMotorsportEnquiryInternalBodies,
@@ -142,6 +150,8 @@ export async function loadOrderEmailSnapshot(orderId: string): Promise<OrderEmai
     salesRepCodeSnapshot: order.salesRepCodeSnapshot,
     sourceQuoteNumber: order.sourceQuoteNumber ?? null,
     fulfilmentChoice: order.fulfilmentChoice === "COLLECTION" ? "COLLECTION" : "DELIVERY",
+    placedByStaffName: order.placedByStaffName,
+    placedByStaffUserId: order.placedByStaffUserId,
     portalOrderUrl: portalOrderUrl(order.id),
     adminOrderUrl: adminOrderUrl(order.id),
   };
@@ -394,11 +404,29 @@ export async function sendOrderEmailsAfterCommit(orderId: string): Promise<{
   const customerOk = await safeAttempt(customerUpsert.id);
   let detail: string | undefined;
 
-  const recipients = await getOrderNotificationRecipients();
+  const configuredRecipients = await getOrderNotificationRecipients();
   // Legacy env fallback only when Admin recipients are empty (transitional).
   const envFallback = (process.env["TRADE_ORDER_NOTIFICATION_EMAIL"] ?? "").trim();
-  const internalList =
-    recipients.length > 0 ? recipients : envFallback ? [envFallback] : [];
+  const configuredOrEnv =
+    configuredRecipients.length > 0 ? configuredRecipients : envFallback ? [envFallback] : [];
+
+  const salesRepResolve = await resolveOrderSalesRepNotificationEmail(orderId);
+  let salesRepEmail: string | null = null;
+  if (salesRepResolve.ok) {
+    salesRepEmail = salesRepResolve.email;
+  } else {
+    detail = `sales_rep_notification_skipped:${salesRepResolve.reason}`;
+    await recordOrderSalesRepNotificationSkip({
+      orderId,
+      companyId: salesRepResolve.companyId,
+      reason: salesRepResolve.reason,
+    });
+  }
+
+  const internalList = mergeOrderInternalNotificationRecipients(
+    configuredOrEnv,
+    salesRepEmail,
+  );
 
   let internalOk: boolean | null = null;
   if (internalList.length > 0) {
@@ -413,7 +441,7 @@ export async function sendOrderEmailsAfterCommit(orderId: string): Promise<{
         htmlBody: internalBodies.html,
         entityType: "Order",
         entityId: orderId,
-        idempotencyKey: `ORDER_RECEIVED_INTERNAL:${orderId}:${toEmail}`,
+        idempotencyKey: orderReceivedInternalIdempotencyKey(orderId, toEmail),
       });
       const ok = await safeAttempt(internalUpsert.id);
       if (ok) anyOk = true;
