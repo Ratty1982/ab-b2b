@@ -201,6 +201,8 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  /** Customer Setup fills main height with a pinned footer; other pages must stay block-flow. */
+  const fillMainContent = pathname.startsWith("/admin/customers/setup");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [whatsNewHistoryOpen, setWhatsNewHistoryOpen] = useState(false);
@@ -383,7 +385,20 @@ export function AppShell({
           </div>
         ) : null}
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip overflow-y-auto">
+        {/*
+          Default main is block flow so multi-child route trees (PanelHeader +
+          filters + table siblings from a fragment) participate in normal
+          document scrolling. Flex-column is opt-in for screens that fill the
+          viewport with their own scroll region (Customer Setup).
+        */}
+        <main
+          data-app-shell-main=""
+          data-app-shell-main-layout={fillMainContent ? "fill" : "scroll"}
+          className={cn(
+            "min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto",
+            fillMainContent && "flex flex-col",
+          )}
+        >
           {children}
         </main>
       </div>
