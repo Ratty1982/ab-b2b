@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { PanelHeader } from "@/components/ab/AppShell";
@@ -9,6 +9,12 @@ import { cn } from "@/lib/utils";
 import { COMPANY_STATUS_LABEL, TAX_STATUSES, type CompanyStatusKey } from "@/domain/company";
 import { BUSINESS_TYPES } from "@/domain/trade-application";
 import { DEFAULT_TRADE_PRICE_HELP, DEFAULT_TRADE_PRICE_LABEL } from "@/domain/default-trade-price";
+import {
+  requirementProgressLabel,
+  requirementProgressTone,
+  resolveCustomerSetupRefreshMode,
+  shouldHydrateFormFields,
+} from "@/domain/customer-setup-form";
 import {
   getCustomerSetupFn,
   saveCustomerCreationDetailsFn,
@@ -60,11 +66,19 @@ type AddressDraft = {
 
 function buttonClass(primary = false) {
   return cn(
-    "inline-flex min-h-11 items-center justify-center rounded-md px-4 text-[13px] font-bold uppercase tracking-wide",
+    "inline-flex min-h-10 items-center justify-center rounded-md px-3 text-[12px] font-bold uppercase tracking-wide",
     primary
       ? "bg-primary text-primary-foreground disabled:opacity-50"
       : "border border-border disabled:opacity-50",
   );
+}
+
+function sectionClass() {
+  return "rounded-lg border border-border p-3 sm:p-4";
+}
+
+function sectionTitle(text: string) {
+  return <h2 className="font-display text-base uppercase tracking-wide">{text}</h2>;
 }
 
 function newKey(prefix: string) {
@@ -82,7 +96,10 @@ export function CustomerSetupScreen({
   const [loading, setLoading] = useState(Boolean(companyId));
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [showCompletion, setShowCompletion] = useState(false);
 
   const [name, setName] = useState("");
   const [tradingName, setTradingName] = useState("");
@@ -111,23 +128,13 @@ export function CustomerSetupScreen({
     Array<{ id: string; name: string; status: string; strength: string; reason: string }>
   >([]);
 
-  async function reload(id = companyId) {
-    if (!id) {
-      setData(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const result = await getCustomerSetupFn({ data: { companyId: id } });
-    setLoading(false);
-    if (!result.ok) {
-      setError(result.error);
-      setData(null);
-      return;
-    }
-    setError(null);
-    setData(result.data);
-    hydrate(result.data);
+  function markDirty() {
+    dirtyRef.current = true;
+    setDirty(true);
+  }
+
+  function clearDirty() {
+    dirtyRef.current = false;
     setDirty(false);
   }
 
@@ -186,8 +193,41 @@ export function CustomerSetupScreen({
     );
   }
 
+  async function refreshFromServer(
+    id = companyId,
+    options: { forceHydrate?: boolean; showLoading?: boolean } = {},
+  ) {
+    if (!id) {
+      setData(null);
+      setLoading(false);
+      setShowCompletion(false);
+      return;
+    }
+    if (options.showLoading !== false) setLoading(true);
+    const result = await getCustomerSetupFn({ data: { companyId: id } });
+    if (options.showLoading !== false) setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      setData(null);
+      return;
+    }
+    setError(null);
+    setData(result.data);
+    const mode = resolveCustomerSetupRefreshMode({
+      dirty: dirtyRef.current,
+      ...(options.forceHydrate ? { forceHydrate: true } : {}),
+    });
+    if (shouldHydrateFormFields(mode)) {
+      hydrate(result.data);
+      if (options.forceHydrate) clearDirty();
+    }
+  }
+
   useEffect(() => {
-    void reload(companyId);
+    clearDirty();
+    setSaveError(null);
+    setShowCompletion(false);
+    void refreshFromServer(companyId, { forceHydrate: true });
     // Intentionally reload only when the selected company changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
@@ -218,13 +258,13 @@ export function CustomerSetupScreen({
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!dirty) return;
+      if (!dirtyRef.current) return;
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [dirty]);
+  }, []);
 
   const readiness = data?.salesReadiness;
   const statusLabel = data
@@ -238,9 +278,10 @@ export function CustomerSetupScreen({
     return { total, done, pct: Math.round((done / total) * 100) };
   }, [readiness]);
 
-  function markDirty() {
-    setDirty(true);
-  }
+  const assignedRepLabel =
+    salesReps.find((rep) => rep.id === salesRepId)?.label ||
+    data?.company.salesperson?.name ||
+    "Unassigned";
 
   async function searchCustomers() {
     const result = await searchCustomerCreationDuplicatesFn({
@@ -300,7 +341,7 @@ export function CustomerSetupScreen({
       return;
     }
     toast.success("Sales code saved (not verified).");
-    await reload(companyId);
+    await refreshFromServer(companyId, { showLoading: false });
   }
 
   async function verifyAutopart() {
@@ -316,7 +357,7 @@ export function CustomerSetupScreen({
       return;
     }
     toast.success("Autopart verified. Prospect accounts activate automatically.");
-    await reload(companyId);
+    await refreshFromServer(companyId, { showLoading: false });
   }
 
   async function saveSetup(enableOrdering: boolean) {
@@ -326,6 +367,7 @@ export function CustomerSetupScreen({
       return;
     }
     setBusy(true);
+    setSaveError(null);
     if (groupId && data.permissions.canManageGroups) {
       await setCompanyCustomerGroupFn({ data: { companyId, customerGroupId: groupId || null } });
     }
@@ -376,21 +418,140 @@ export function CustomerSetupScreen({
     });
     setBusy(false);
     if (!result.ok) {
+      setSaveError(result.error);
       toast.error(result.error);
-      await reload(companyId);
+      // Preserve unsaved input — do not reload/hydrate on failure.
       return;
     }
-    setDirty(false);
+    clearDirty();
     setData(result.data.setup);
     hydrate(result.data.setup);
     toast.success(result.data.message);
+    if (enableOrdering && result.data.salesReadiness.readyForSales) {
+      setShowCompletion(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (enableOrdering && result.data.salesReadiness.incomplete.length > 0) {
+      setSaveError(
+        `Outstanding requirements: ${result.data.salesReadiness.incomplete
+          .map((item) => item.label)
+          .join(", ")}`,
+      );
+    }
+  }
+
+  function startAnotherCustomer() {
+    clearDirty();
+    setShowCompletion(false);
+    setSaveError(null);
+    setData(null);
+    setName("");
+    setTradingName("");
+    setPhone("");
+    setPrimaryEmail("");
+    setCustomerType("");
+    setNotes("");
+    setPaymentTerms("");
+    setCreditLimit("");
+    setCreditReviewed(false);
+    setPriceListId("");
+    setSalesRepId("");
+    setTaxStatus("STANDARD");
+    setGroupId("");
+    setAutopartCode("");
+    setContacts([]);
+    setAddresses([]);
+    setDuplicates([]);
+    setFindQuery("");
+    onCompanyIdChange("");
+  }
+
+  if (showCompletion && data && companyId && readiness?.readyForSales) {
+    return (
+      <div data-customer-setup-screen="" data-setup-complete="">
+        <PanelHeader
+          title="Customer ready for sales"
+          sub="Ordering is approved. Choose the next action."
+          crumbs={[
+            { label: "Sales" },
+            { label: "Customers", to: ROUTES.adminCustomers },
+            { label: "Setup" },
+          ]}
+        />
+        <div className="mx-auto grid max-w-3xl gap-4 p-4 sm:p-6">
+          <section className={cn(sectionClass(), "bg-surface/40")}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+              Customer ready for sales
+            </p>
+            <h2 className="mt-2 font-display text-2xl uppercase tracking-tight">
+              {data.company.name}
+            </h2>
+            <dl className="mt-4 grid gap-3 text-[13px] sm:grid-cols-2">
+              <div>
+                <dt className="text-steel">Autopart account</dt>
+                <dd className="font-semibold">{data.company.autopartAccount.code ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Sales representative</dt>
+                <dd className="font-semibold">{assignedRepLabel}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Credit limit</dt>
+                <dd className="font-semibold">
+                  {data.company.creditLimit ? `£${data.company.creditLimit}` : "Blank / unlimited"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-steel">Payment terms</dt>
+                <dd className="font-semibold">{data.company.paymentTerms ?? "—"}</dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="text-steel">Ordering</dt>
+                <dd className="font-semibold text-good">Enabled — READY FOR SALES confirmed</dd>
+              </div>
+            </dl>
+          </section>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to="/sales/orders/new"
+              search={{ companyId }}
+              className={buttonClass(true)}
+              data-complete-create-order=""
+            >
+              Create sales order
+            </Link>
+            <Link
+              to="/admin/customers/$id"
+              params={{ id: companyId }}
+              className={buttonClass()}
+              data-complete-view-customer=""
+            >
+              View customer
+            </Link>
+            <button
+              type="button"
+              className={buttonClass()}
+              onClick={startAnotherCustomer}
+              data-complete-another=""
+            >
+              Set up another customer
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div data-customer-setup-screen="">
       <PanelHeader
         title={data?.company.name ?? "Customer setup"}
-        sub="One screen: verify Autopart, record sales history, contacts, addresses, and terms — then enable ordering."
+        sub={
+          data
+            ? `${statusLabel ?? data.company.status} · Setup`
+            : "Find or create a customer, then complete setup."
+        }
         crumbs={[
           { label: "Sales" },
           { label: "Customers", to: ROUTES.adminCustomers },
@@ -408,19 +569,19 @@ export function CustomerSetupScreen({
                 }
               }}
             >
-              Open customer record
+              View customer
             </Link>
           ) : null
         }
       />
 
-      <div className="grid gap-6 p-4 sm:p-6">
+      <div className="grid gap-3 p-3 sm:gap-4 sm:p-4 lg:p-5">
         {!companyId ? (
-          <section className="grid gap-4 rounded-lg border border-border p-4" data-setup-find="">
-            <h2 className="font-display text-lg uppercase">Find or create customer</h2>
-            <div className="flex flex-wrap gap-2">
+          <section className={sectionClass()} data-setup-find="">
+            {sectionTitle("Find or create customer")}
+            <div className="mt-3 flex flex-wrap gap-2">
               <input
-                className={cn(inputClass, "min-w-[16rem] flex-1")}
+                className={cn(inputClass, "min-w-[14rem] flex-1")}
                 value={findQuery}
                 onChange={(event) => setFindQuery(event.target.value)}
                 placeholder="Search by name or email"
@@ -434,14 +595,14 @@ export function CustomerSetupScreen({
               </button>
             </div>
             {duplicates.length > 0 ? (
-              <ul className="grid gap-2">
+              <ul className="mt-3 grid gap-1.5">
                 {duplicates.map((row) => (
                   <li
                     key={row.id}
                     className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-[13px]"
                   >
                     <span>
-                      {row.name} · {row.status} · {row.strength}/{row.reason}
+                      {row.name} · {row.status}
                     </span>
                     <button
                       type="button"
@@ -454,7 +615,7 @@ export function CustomerSetupScreen({
                 ))}
               </ul>
             ) : null}
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
               <Field label="Customer name" htmlFor="setup-new-name">
                 <input
                   id="setup-new-name"
@@ -474,7 +635,7 @@ export function CustomerSetupScreen({
             </div>
             <button
               type="button"
-              className={buttonClass(true)}
+              className={cn(buttonClass(true), "mt-3")}
               disabled={busy}
               onClick={() => void createProspect()}
             >
@@ -489,291 +650,300 @@ export function CustomerSetupScreen({
         {data && companyId ? (
           <>
             <section
-              className="rounded-lg border border-border p-4"
+              className={sectionClass()}
               data-setup-progress=""
               data-readiness={readiness?.label}
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <h2 className="font-display text-lg uppercase">Setup progress</h2>
-                  <p className="mt-1 text-[13px] text-steel">{readiness?.summary}</p>
+                  {sectionTitle("Setup progress")}
                   {progress ? (
-                    <p className="mt-2 text-[12px] font-semibold uppercase tracking-wide">
-                      {progress.done}/{progress.total} requirements · {progress.pct}%
+                    <p className="mt-1 text-[12px] font-semibold uppercase tracking-wide">
+                      {progress.done}/{progress.total} complete · {progress.pct}%
                     </p>
                   ) : null}
                 </div>
-                <p className="rounded-md border border-border px-3 py-2 text-[12px] font-semibold uppercase">
+                <p className="rounded-md border border-border px-2.5 py-1 text-[11px] font-semibold uppercase">
                   {readiness?.label.replaceAll("_", " ")}
                 </p>
               </div>
-              <ol className="mt-4 grid gap-2 md:grid-cols-2">
-                {readiness?.requirements.map((item) => (
-                  <li
-                    key={item.id}
-                    className="rounded-md border border-border px-3 py-2 text-[13px]"
-                    data-requirement={item.id}
-                    data-complete={item.complete ? "true" : "false"}
-                  >
-                    <span className="font-semibold">
-                      {item.complete ? "Done" : "Needed"} · {item.label}
-                    </span>
-                    <p className="mt-1 text-steel">{item.detail}</p>
-                  </li>
-                ))}
+              <ol className="mt-2 flex flex-wrap gap-1.5">
+                {readiness?.requirements.map((item) => {
+                  const tone = requirementProgressTone({
+                    complete: item.complete,
+                    orderingApproved: Boolean(readiness.orderingApproved),
+                    requirementId: item.id,
+                  });
+                  return (
+                    <li
+                      key={item.id}
+                      className={cn(
+                        "rounded border px-2 py-1 text-[11px] font-semibold",
+                        item.complete
+                          ? "border-border text-steel"
+                          : "border-amber-500/50 bg-amber-500/10",
+                      )}
+                      data-requirement={item.id}
+                      data-complete={item.complete ? "true" : "false"}
+                      data-tone={tone}
+                      title={item.detail}
+                    >
+                      {requirementProgressLabel(tone)} · {item.label}
+                    </li>
+                  );
+                })}
               </ol>
-              {!readiness?.canCreateStaffOrder ? (
-                <p className="mt-3 text-[13px] text-steel" data-ordering-blocked="">
-                  Staff ordering stays disabled until setup requirements are complete and ordering
-                  is approved
-                  {readiness?.orderingApproved
-                    ? " (approval stamp is present but requirements changed)"
-                    : ""}
-                  .{readiness?.blockReason ? ` ${readiness.blockReason}` : ""}
+              {readiness && !readiness.canCreateStaffOrder && readiness.incomplete.length > 0 ? (
+                <p className="mt-2 text-[12px] text-steel" data-ordering-blocked="">
+                  Outstanding: {readiness.incomplete.map((item) => item.label).join(", ")}.
                 </p>
-              ) : (
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <p className="text-[13px]" data-ordering-ready="">
-                    {readiness?.readyForSales
-                      ? "Staff can create sales orders for this customer."
-                      : "Legacy-eligible customer — staff can create sales orders under the compatibility policy."}
-                  </p>
-                  <Link to="/sales/orders/new" search={{ companyId }} className={buttonClass(true)}>
-                    Create sales order
-                  </Link>
+              ) : null}
+            </section>
+
+            <div className="grid gap-3 lg:grid-cols-2 lg:gap-4">
+              <section className={sectionClass()} data-setup-details="">
+                {sectionTitle("1. Customer details")}
+                <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+                  <Field label="Customer name" htmlFor="setup-name">
+                    <input
+                      id="setup-name"
+                      className={inputClass}
+                      value={name}
+                      onChange={(event) => {
+                        setName(event.target.value);
+                        markDirty();
+                      }}
+                    />
+                  </Field>
+                  <Field label="Status" htmlFor="setup-status">
+                    <input
+                      id="setup-status"
+                      className={inputClass}
+                      value={statusLabel ?? ""}
+                      readOnly
+                    />
+                  </Field>
+                  <Field label="Email" htmlFor="setup-email">
+                    <input
+                      id="setup-email"
+                      className={inputClass}
+                      value={primaryEmail}
+                      onChange={(event) => {
+                        setPrimaryEmail(event.target.value);
+                        markDirty();
+                      }}
+                    />
+                  </Field>
+                  <Field label="Telephone" htmlFor="setup-phone">
+                    <input
+                      id="setup-phone"
+                      className={inputClass}
+                      value={phone}
+                      onChange={(event) => {
+                        setPhone(event.target.value);
+                        markDirty();
+                      }}
+                    />
+                  </Field>
+                  <Field label="Customer type" htmlFor="setup-type">
+                    <select
+                      id="setup-type"
+                      className={inputClass}
+                      value={customerType}
+                      onChange={(event) => {
+                        setCustomerType(event.target.value);
+                        markDirty();
+                      }}
+                    >
+                      <option value="">Select type</option>
+                      {BUSINESS_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Assigned sales representative" htmlFor="setup-rep">
+                    <select
+                      id="setup-rep"
+                      className={inputClass}
+                      value={salesRepId}
+                      data-sales-rep-select=""
+                      onChange={(event) => {
+                        setSalesRepId(event.target.value);
+                        markDirty();
+                      }}
+                    >
+                      <option value="">Unassigned</option>
+                      {salesReps.map((rep) => (
+                        <option key={rep.id} value={rep.id}>
+                          {rep.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
                 </div>
-              )}
-            </section>
+              </section>
 
-            <section
-              className="grid gap-4 rounded-lg border border-border p-4"
-              data-setup-details=""
-            >
-              <h2 className="font-display text-lg uppercase">Customer details</h2>
-              <div className="grid gap-3 md:grid-cols-2">
-                <Field label="Customer name" htmlFor="setup-name">
-                  <input
-                    id="setup-name"
-                    className={inputClass}
-                    value={name}
-                    onChange={(event) => {
-                      setName(event.target.value);
-                      markDirty();
-                    }}
-                  />
-                </Field>
-                <Field label="Status" htmlFor="setup-status">
-                  <input
-                    id="setup-status"
-                    className={inputClass}
-                    value={statusLabel ?? ""}
-                    readOnly
-                  />
-                </Field>
-                <Field label="Account number" htmlFor="setup-account">
-                  <input
-                    id="setup-account"
-                    className={inputClass}
-                    value={data.company.accountNumber ?? "—"}
-                    readOnly
-                  />
-                </Field>
-                <Field label="Customer type" htmlFor="setup-type">
-                  <select
-                    id="setup-type"
-                    className={inputClass}
-                    value={customerType}
-                    onChange={(event) => {
-                      setCustomerType(event.target.value);
-                      markDirty();
-                    }}
-                  >
-                    <option value="">Select type</option>
-                    {BUSINESS_TYPES.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Email" htmlFor="setup-email">
-                  <input
-                    id="setup-email"
-                    className={inputClass}
-                    value={primaryEmail}
-                    onChange={(event) => {
-                      setPrimaryEmail(event.target.value);
-                      markDirty();
-                    }}
-                  />
-                </Field>
-                <Field label="Telephone" htmlFor="setup-phone">
-                  <input
-                    id="setup-phone"
-                    className={inputClass}
-                    value={phone}
-                    onChange={(event) => {
-                      setPhone(event.target.value);
-                      markDirty();
-                    }}
-                  />
-                </Field>
-                <Field label="Assigned sales representative" htmlFor="setup-rep">
-                  <select
-                    id="setup-rep"
-                    className={inputClass}
-                    value={salesRepId}
-                    onChange={(event) => {
-                      setSalesRepId(event.target.value);
-                      markDirty();
-                    }}
-                  >
-                    <option value="">Unassigned</option>
-                    {salesReps.map((rep) => (
-                      <option key={rep.id} value={rep.id}>
-                        {rep.label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-            </section>
-
-            <section
-              className="grid gap-4 rounded-lg border border-border p-4"
-              data-setup-autopart=""
-            >
-              <h2 className="font-display text-lg uppercase">Autopart verification</h2>
-              <p className="text-[13px] text-steel">
-                Successful unique verification activates PROSPECT accounts automatically. Suspended,
-                on-hold, and closed accounts are not overridden here.
-              </p>
-              <div className="grid gap-3 md:grid-cols-2">
-                <Field label="Autopart sales code" htmlFor="setup-autopart">
-                  <input
-                    id="setup-autopart"
-                    className={inputClass}
-                    value={autopartCode}
-                    onChange={(event) => setAutopartCode(event.target.value)}
-                    disabled={!data.permissions.canVerifyAccount}
-                  />
-                </Field>
-                <div className="rounded-md border border-border px-3 py-2 text-[13px]">
-                  <p className="font-semibold">
-                    {data.company.autopartAccount.verified ? "Verified" : "Not verified"}
-                  </p>
-                  <p className="mt-1 text-steel">
-                    {data.company.autopartAccount.verifiedAt
-                      ? `Verified ${new Date(data.company.autopartAccount.verifiedAt).toLocaleString("en-GB", { timeZone: "Europe/London" })} Europe/London`
-                      : "No verification timestamp."}
-                  </p>
-                  <p className="mt-1 text-steel">
-                    Master linked: {data.onboarding.masterLinked ? "yes" : "no"}
-                    {data.masters.length
-                      ? ` (${data.masters.map((row) => row.accountCode).join(", ")})`
-                      : ""}
-                  </p>
+              <section className={sectionClass()} data-setup-autopart="">
+                {sectionTitle("2. Autopart & history")}
+                <p className="mt-1 text-[12px] text-steel">
+                  Unique verification activates prospects. Suspended / on-hold / closed stay
+                  blocked.
+                </p>
+                <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+                  <Field label="Autopart sales code" htmlFor="setup-autopart">
+                    <input
+                      id="setup-autopart"
+                      className={inputClass}
+                      value={autopartCode}
+                      onChange={(event) => setAutopartCode(event.target.value)}
+                      disabled={!data.permissions.canVerifyAccount}
+                    />
+                  </Field>
+                  <div className="rounded-md border border-border px-2.5 py-2 text-[12px]">
+                    <p className="font-semibold">
+                      {data.company.autopartAccount.verified ? "Verified" : "Not verified"}
+                    </p>
+                    <p className="mt-0.5 text-steel">
+                      Master linked: {data.onboarding.masterLinked ? "yes" : "no"}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={buttonClass()}
-                  disabled={busy || !data.permissions.canVerifyAccount}
-                  onClick={() => void saveCodeOnly()}
-                >
-                  Save code without verifying
-                </button>
-                <label className="inline-flex items-center gap-2 text-[13px]">
-                  <input
-                    type="checkbox"
-                    checked={confirmVerify}
-                    onChange={(event) => setConfirmVerify(event.target.checked)}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className={buttonClass()}
+                    disabled={busy || !data.permissions.canVerifyAccount}
+                    onClick={() => void saveCodeOnly()}
+                  >
+                    Save code
+                  </button>
+                  <label className="inline-flex items-center gap-2 text-[12px]">
+                    <input
+                      type="checkbox"
+                      checked={confirmVerify}
+                      onChange={(event) => setConfirmVerify(event.target.checked)}
+                    />
+                    Confirm unique account
+                  </label>
+                  <button
+                    type="button"
+                    className={buttonClass(true)}
+                    disabled={
+                      busy ||
+                      !confirmVerify ||
+                      !autopartCode.trim() ||
+                      !data.permissions.canVerifyAccount
+                    }
+                    onClick={() => void verifyAutopart()}
+                  >
+                    Verify
+                  </button>
+                </div>
+                <div className="mt-3 border-t border-border pt-3" data-setup-history="">
+                  <AutopartHistoryImport
+                    companyId={companyId}
+                    companyName={data.company.name}
+                    verifiedAccount={
+                      data.company.autopartAccount.verified
+                        ? data.company.autopartAccount.code
+                        : null
+                    }
+                    canImport={data.permissions.canImportHistory}
+                    blocked={
+                      !data.company.autopartAccount.verified
+                        ? "Verify Autopart before recording history."
+                        : null
+                    }
+                    historyStatus={data.history.status}
+                    historyKind={data.history.kind}
+                    onChanged={async () => {
+                      await refreshFromServer(companyId, { showLoading: false });
+                    }}
                   />
-                  I confirm this is the unique Autopart sales account
-                </label>
-                <button
-                  type="button"
-                  className={buttonClass(true)}
-                  disabled={
-                    busy ||
-                    !confirmVerify ||
-                    !autopartCode.trim() ||
-                    !data.permissions.canVerifyAccount
-                  }
-                  onClick={() => void verifyAutopart()}
-                >
-                  Verify
-                </button>
-              </div>
-            </section>
+                </div>
+              </section>
+            </div>
 
-            <section
-              className="grid gap-4 rounded-lg border border-border p-4"
-              data-setup-history=""
-            >
-              <h2 className="font-display text-lg uppercase">Historical sales</h2>
-              <AutopartHistoryImport
-                companyId={companyId}
-                companyName={data.company.name}
-                verifiedAccount={
-                  data.company.autopartAccount.verified ? data.company.autopartAccount.code : null
-                }
-                canImport={data.permissions.canImportHistory}
-                blocked={
-                  !data.company.autopartAccount.verified
-                    ? "Verify the Autopart sales account before recording history."
-                    : null
-                }
-                historyStatus={data.history.status}
-                historyKind={data.history.kind}
-                onChanged={async () => {
-                  await reload(companyId);
-                }}
-              />
-            </section>
-
-            <section
-              className="grid gap-4 rounded-lg border border-border p-4"
-              data-setup-contacts=""
-            >
+            <section className={sectionClass()} data-setup-contacts-addresses="">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-display text-lg uppercase">Contacts</h2>
-                <button
-                  type="button"
-                  className={buttonClass()}
-                  onClick={() => {
-                    setContacts((rows) => [
-                      ...rows,
-                      {
-                        key: newKey("contact"),
-                        firstName: "",
-                        lastName: "",
-                        email: "",
-                        phone: "",
-                        jobTitle: "",
-                        isPrimary: rows.every((row) => !row.isPrimary),
-                        isPurchasing: false,
-                        isAccounts: false,
-                        persisted: false,
-                      },
-                    ]);
-                    markDirty();
-                  }}
-                >
-                  Add contact
-                </button>
-              </div>
-              <div className="grid gap-3">
-                {contacts.map((contact, index) => (
-                  <div
-                    key={contact.key}
-                    className="grid gap-3 rounded-md border border-border p-3 md:grid-cols-2"
+                {sectionTitle("3. Contacts & addresses")}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={buttonClass()}
+                    onClick={() => {
+                      setContacts((rows) => [
+                        ...rows,
+                        {
+                          key: newKey("contact"),
+                          firstName: "",
+                          lastName: "",
+                          email: "",
+                          phone: "",
+                          jobTitle: "",
+                          isPrimary: rows.every((row) => !row.isPrimary),
+                          isPurchasing: false,
+                          isAccounts: false,
+                          persisted: false,
+                        },
+                      ]);
+                      markDirty();
+                    }}
                   >
-                    <Field label="First name" htmlFor={`c-fn-${contact.key}`}>
+                    Add contact
+                  </button>
+                  <button
+                    type="button"
+                    className={buttonClass()}
+                    onClick={() => {
+                      setAddresses((rows) => [
+                        ...rows,
+                        {
+                          key: newKey("address"),
+                          type: "DELIVERY",
+                          label: "",
+                          line1: "",
+                          line2: "",
+                          town: "",
+                          county: "",
+                          postcode: "",
+                          country: "GB",
+                          isDefaultBilling: rows.every((row) => !row.isDefaultBilling),
+                          isDefaultDelivery: rows.every((row) => !row.isDefaultDelivery),
+                          contactName: "",
+                          contactPhone: "",
+                          persisted: false,
+                        },
+                      ]);
+                      markDirty();
+                    }}
+                  >
+                    Add address
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-3 lg:grid-cols-2" data-setup-contacts="">
+                <div className="grid gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+                    Contacts
+                  </p>
+                  {contacts.length === 0 ? (
+                    <p className="rounded-md border border-dashed border-border px-3 py-2 text-[12px] text-steel">
+                      No contacts yet.
+                    </p>
+                  ) : null}
+                  {contacts.map((contact, index) => (
+                    <div
+                      key={contact.key}
+                      className="grid gap-2 rounded-md border border-border p-2.5 sm:grid-cols-2"
+                    >
                       <input
-                        id={`c-fn-${contact.key}`}
                         className={inputClass}
+                        placeholder="First name"
+                        aria-label="First name"
                         value={contact.firstName}
                         onChange={(event) => {
                           const value = event.target.value;
@@ -785,11 +955,10 @@ export function CustomerSetupScreen({
                           markDirty();
                         }}
                       />
-                    </Field>
-                    <Field label="Last name" htmlFor={`c-ln-${contact.key}`}>
                       <input
-                        id={`c-ln-${contact.key}`}
                         className={inputClass}
+                        placeholder="Last name"
+                        aria-label="Last name"
                         value={contact.lastName}
                         onChange={(event) => {
                           const value = event.target.value;
@@ -799,11 +968,10 @@ export function CustomerSetupScreen({
                           markDirty();
                         }}
                       />
-                    </Field>
-                    <Field label="Email" htmlFor={`c-em-${contact.key}`}>
                       <input
-                        id={`c-em-${contact.key}`}
                         className={inputClass}
+                        placeholder="Email"
+                        aria-label="Email"
                         value={contact.email}
                         onChange={(event) => {
                           const value = event.target.value;
@@ -813,11 +981,10 @@ export function CustomerSetupScreen({
                           markDirty();
                         }}
                       />
-                    </Field>
-                    <Field label="Phone" htmlFor={`c-ph-${contact.key}`}>
                       <input
-                        id={`c-ph-${contact.key}`}
                         className={inputClass}
+                        placeholder="Phone"
+                        aria-label="Phone"
                         value={contact.phone}
                         onChange={(event) => {
                           const value = event.target.value;
@@ -827,134 +994,76 @@ export function CustomerSetupScreen({
                           markDirty();
                         }}
                       />
-                    </Field>
-                    <Field label="Job title" htmlFor={`c-jt-${contact.key}`}>
-                      <input
-                        id={`c-jt-${contact.key}`}
-                        className={inputClass}
-                        value={contact.jobTitle}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          setContacts((rows) =>
-                            rows.map((row, i) => (i === index ? { ...row, jobTitle: value } : row)),
-                          );
-                          markDirty();
-                        }}
-                      />
-                    </Field>
-                    <div className="flex flex-wrap items-center gap-3 text-[13px]">
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={contact.isPrimary}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setContacts((rows) =>
-                              rows.map((row, i) => ({
-                                ...row,
-                                isPrimary: i === index ? checked : checked ? false : row.isPrimary,
-                              })),
-                            );
-                            markDirty();
-                          }}
-                        />
-                        Primary
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={contact.isPurchasing}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setContacts((rows) =>
-                              rows.map((row, i) =>
-                                i === index ? { ...row, isPurchasing: checked } : row,
-                              ),
-                            );
-                            markDirty();
-                          }}
-                        />
-                        Order contact
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={contact.isAccounts}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setContacts((rows) =>
-                              rows.map((row, i) =>
-                                i === index ? { ...row, isAccounts: checked } : row,
-                              ),
-                            );
-                            markDirty();
-                          }}
-                        />
-                        Accounts
-                      </label>
-                      {!contact.persisted ? (
-                        <button
-                          type="button"
-                          className="text-destructive underline"
-                          onClick={() => {
-                            setContacts((rows) => rows.filter((_, i) => i !== index));
-                            markDirty();
-                          }}
-                        >
-                          Remove
-                        </button>
-                      ) : null}
+                      <div className="flex flex-wrap items-center gap-3 text-[12px] sm:col-span-2">
+                        <label className="inline-flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={contact.isPrimary}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setContacts((rows) =>
+                                rows.map((row, i) => ({
+                                  ...row,
+                                  isPrimary:
+                                    i === index ? checked : checked ? false : row.isPrimary,
+                                })),
+                              );
+                              markDirty();
+                            }}
+                          />
+                          Primary
+                        </label>
+                        <label className="inline-flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={contact.isPurchasing}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setContacts((rows) =>
+                                rows.map((row, i) =>
+                                  i === index ? { ...row, isPurchasing: checked } : row,
+                                ),
+                              );
+                              markDirty();
+                            }}
+                          />
+                          Orders
+                        </label>
+                        {!contact.persisted ? (
+                          <button
+                            type="button"
+                            className="text-destructive underline"
+                            onClick={() => {
+                              setContacts((rows) => rows.filter((_, i) => i !== index));
+                              markDirty();
+                            }}
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+                  ))}
+                </div>
 
-            <section
-              className="grid gap-4 rounded-lg border border-border p-4"
-              data-setup-addresses=""
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-display text-lg uppercase">Addresses</h2>
-                <button
-                  type="button"
-                  className={buttonClass()}
-                  onClick={() => {
-                    setAddresses((rows) => [
-                      ...rows,
-                      {
-                        key: newKey("address"),
-                        type: "DELIVERY",
-                        label: "",
-                        line1: "",
-                        line2: "",
-                        town: "",
-                        county: "",
-                        postcode: "",
-                        country: "GB",
-                        isDefaultBilling: rows.every((row) => !row.isDefaultBilling),
-                        isDefaultDelivery: rows.every((row) => !row.isDefaultDelivery),
-                        contactName: "",
-                        contactPhone: "",
-                        persisted: false,
-                      },
-                    ]);
-                    markDirty();
-                  }}
-                >
-                  Add address
-                </button>
-              </div>
-              <div className="grid gap-3">
-                {addresses.map((address, index) => (
-                  <div
-                    key={address.key}
-                    className="grid gap-3 rounded-md border border-border p-3 md:grid-cols-2"
-                  >
-                    <Field label="Line 1" htmlFor={`a-l1-${address.key}`}>
+                <div className="grid gap-2" data-setup-addresses="">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+                    Addresses
+                  </p>
+                  {addresses.length === 0 ? (
+                    <p className="rounded-md border border-dashed border-border px-3 py-2 text-[12px] text-steel">
+                      No addresses yet.
+                    </p>
+                  ) : null}
+                  {addresses.map((address, index) => (
+                    <div
+                      key={address.key}
+                      className="grid gap-2 rounded-md border border-border p-2.5 sm:grid-cols-2"
+                    >
                       <input
-                        id={`a-l1-${address.key}`}
-                        className={inputClass}
+                        className={cn(inputClass, "sm:col-span-2")}
+                        placeholder="Line 1"
+                        aria-label="Address line 1"
                         value={address.line1}
                         onChange={(event) => {
                           const value = event.target.value;
@@ -964,11 +1073,10 @@ export function CustomerSetupScreen({
                           markDirty();
                         }}
                       />
-                    </Field>
-                    <Field label="Town" htmlFor={`a-town-${address.key}`}>
                       <input
-                        id={`a-town-${address.key}`}
                         className={inputClass}
+                        placeholder="Town"
+                        aria-label="Town"
                         value={address.town}
                         onChange={(event) => {
                           const value = event.target.value;
@@ -978,11 +1086,10 @@ export function CustomerSetupScreen({
                           markDirty();
                         }}
                       />
-                    </Field>
-                    <Field label="Postcode" htmlFor={`a-pc-${address.key}`}>
                       <input
-                        id={`a-pc-${address.key}`}
                         className={inputClass}
+                        placeholder="Postcode"
+                        aria-label="Postcode"
                         value={address.postcode}
                         onChange={(event) => {
                           const value = event.target.value;
@@ -992,79 +1099,65 @@ export function CustomerSetupScreen({
                           markDirty();
                         }}
                       />
-                    </Field>
-                    <Field label="Country" htmlFor={`a-co-${address.key}`}>
-                      <input
-                        id={`a-co-${address.key}`}
-                        className={inputClass}
-                        value={address.country}
-                        onChange={(event) => {
-                          const value = event.target.value.toUpperCase();
-                          setAddresses((rows) =>
-                            rows.map((row, i) => (i === index ? { ...row, country: value } : row)),
-                          );
-                          markDirty();
-                        }}
-                      />
-                    </Field>
-                    <div className="flex flex-wrap items-center gap-3 text-[13px] md:col-span-2">
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={address.isDefaultBilling}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setAddresses((rows) =>
-                              rows.map((row, i) => ({
-                                ...row,
-                                isDefaultBilling:
-                                  i === index ? checked : checked ? false : row.isDefaultBilling,
-                              })),
-                            );
-                            markDirty();
-                          }}
-                        />
-                        Default billing
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={address.isDefaultDelivery}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setAddresses((rows) =>
-                              rows.map((row, i) => ({
-                                ...row,
-                                isDefaultDelivery:
-                                  i === index ? checked : checked ? false : row.isDefaultDelivery,
-                              })),
-                            );
-                            markDirty();
-                          }}
-                        />
-                        Default delivery
-                      </label>
-                      {!address.persisted ? (
-                        <button
-                          type="button"
-                          className="text-destructive underline"
-                          onClick={() => {
-                            setAddresses((rows) => rows.filter((_, i) => i !== index));
-                            markDirty();
-                          }}
-                        >
-                          Remove
-                        </button>
-                      ) : null}
+                      <div className="flex flex-wrap items-center gap-3 text-[12px] sm:col-span-2">
+                        <label className="inline-flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={address.isDefaultBilling}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setAddresses((rows) =>
+                                rows.map((row, i) => ({
+                                  ...row,
+                                  isDefaultBilling:
+                                    i === index ? checked : checked ? false : row.isDefaultBilling,
+                                })),
+                              );
+                              markDirty();
+                            }}
+                          />
+                          Billing
+                        </label>
+                        <label className="inline-flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={address.isDefaultDelivery}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setAddresses((rows) =>
+                                rows.map((row, i) => ({
+                                  ...row,
+                                  isDefaultDelivery:
+                                    i === index ? checked : checked ? false : row.isDefaultDelivery,
+                                })),
+                              );
+                              markDirty();
+                            }}
+                          />
+                          Delivery
+                        </label>
+                        {!address.persisted ? (
+                          <button
+                            type="button"
+                            className="text-destructive underline"
+                            onClick={() => {
+                              setAddresses((rows) => rows.filter((_, i) => i !== index));
+                              markDirty();
+                            }}
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </section>
 
-            <section className="grid gap-4 rounded-lg border border-border p-4" data-setup-terms="">
-              <h2 className="font-display text-lg uppercase">Credit and terms</h2>
-              <div className="grid gap-3 md:grid-cols-2">
+            <section className={sectionClass()} data-setup-terms="">
+              {sectionTitle("4. Credit, terms & pricing")}
+              <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
                 <Field label="Credit limit (£)" htmlFor="setup-credit">
                   <input
                     id="setup-credit"
@@ -1075,7 +1168,7 @@ export function CustomerSetupScreen({
                       setCreditReviewed(false);
                       markDirty();
                     }}
-                    placeholder="Blank = unlimited / not set"
+                    placeholder="Blank = unlimited"
                   />
                 </Field>
                 <Field label="Payment terms" htmlFor="setup-terms">
@@ -1108,7 +1201,7 @@ export function CustomerSetupScreen({
                       </option>
                     ))}
                   </select>
-                  <p className="mt-1 text-[12px] text-steel">{DEFAULT_TRADE_PRICE_HELP}</p>
+                  <p className="mt-1 text-[11px] text-steel">{DEFAULT_TRADE_PRICE_HELP}</p>
                 </Field>
                 <Field label="Customer group" htmlFor="setup-group">
                   <select
@@ -1147,26 +1240,29 @@ export function CustomerSetupScreen({
                   </select>
                 </Field>
               </div>
-              <label className="inline-flex items-start gap-2 text-[13px]">
+              <label className="mt-3 inline-flex items-start gap-2 text-[12px]">
                 <input
                   type="checkbox"
-                  className="mt-1"
+                  className="mt-0.5"
                   checked={creditReviewed}
                   onChange={(event) => {
                     setCreditReviewed(event.target.checked);
                     markDirty();
                   }}
                 />
-                <span>
-                  I have reviewed the credit limit (including blank/unlimited). Credit limit is
-                  informational and does not create automatic credit holds.
-                </span>
+                <span>Credit limit reviewed (blank/unlimited allowed). Informational only.</span>
               </label>
             </section>
 
-            <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background/95 p-4 backdrop-blur">
-              <p className="text-[13px] text-steel">
-                {dirty ? "Unsaved changes on this page." : "All local edits saved or unchanged."}
+            {saveError ? (
+              <p className="text-[13px] text-destructive" data-save-error="" role="alert">
+                {saveError}
+              </p>
+            ) : null}
+
+            <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-background/95 px-3 py-2.5 backdrop-blur">
+              <p className="text-[12px] text-steel">
+                {dirty ? "Unsaved changes." : "No unsaved changes."}
               </p>
               <div className="flex flex-wrap gap-2">
                 <button

@@ -41,11 +41,32 @@ async function ensureUser(email: string, roles: string[]) {
 }
 
 async function cleanupCompany(companyId: string) {
+  await prisma.companyAssignment.deleteMany({ where: { companyId } });
   await prisma.address.deleteMany({ where: { companyId } });
   await prisma.contact.deleteMany({ where: { companyId } });
   await prisma.customerSalesCutover.deleteMany({ where: { companyId } });
   await prisma.order.deleteMany({ where: { companyId } });
   await prisma.company.delete({ where: { id: companyId } }).catch(() => undefined);
+}
+
+async function ensureSalesRep(email: string, name: string, code: string) {
+  const userId = await ensureUser(email, ["SALES_REPRESENTATIVE"]);
+  await prisma.user.update({ where: { id: userId }, data: { name } });
+  const existing = await prisma.salesRep.findUnique({ where: { userId } });
+  if (existing) return existing.id;
+  const rep = await prisma.salesRep.create({
+    data: {
+      userId,
+      code,
+      active: true,
+      displayName: name,
+      businessEmail: email,
+      phone: "01130000099",
+      mobile: "07700000099",
+      customerContactEnabled: true,
+    },
+  });
+  return rep.id;
 }
 
 beforeAll(async () => {
@@ -468,6 +489,120 @@ describe("customer setup READY_FOR_SALES", { timeout: 60_000 }, () => {
     expect(setup.salesReadiness.readyForSales).toBe(false);
     expect(setup.salesReadiness.canCreateStaffOrder).toBe(false);
     await expect(assertCompanyReadyForStaffOrders(companyId)).rejects.toBeInstanceOf(AuthError);
+
+    await cleanupCompany(companyId);
+  });
+
+  it("persists sales rep across Autopart verify, history completion, save, and reload", async () => {
+    const local = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const salesRepId = await ensureSalesRep(
+      `setup.rep.${local}@example.invalid`,
+      `Setup Rep ${local}`,
+      `SR${local.slice(-6).toUpperCase()}`,
+    );
+    const created = await saveCustomerCreationDetails(adminId, {
+      name: `Rep Persist ${local}`,
+      status: "PROSPECT",
+      taxStatus: "STANDARD",
+      primaryEmail: `rep-persist-${local}@example.invalid`,
+    });
+    const companyId = created.companyId;
+    const code = `RP${local.slice(-8).toUpperCase()}`;
+
+    // Select rep before Autopart / history (mirrors unsaved local selection then save).
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId, code });
+    await completeCustomerSalesCutoverWithoutHistory(adminId, {
+      companyId,
+      confirmAccount: code,
+      reason: "Rep persistence regression — zero history.",
+    });
+
+    const saved = await saveCustomerSetupAndEnableOrdering(adminId, {
+      companyId,
+      paymentTerms: "30 DAYS",
+      creditLimit: null,
+      creditLimitReviewed: true,
+      salesRepId,
+      contacts: [
+        {
+          firstName: "Ray",
+          lastName: "Persist",
+          email: `ray-${local}@example.invalid`,
+          isPrimary: true,
+        },
+      ],
+      addresses: [
+        {
+          type: "TRADING",
+          line1: "7 Rep Road",
+          town: "Leeds",
+          postcode: "LS7 7RR",
+          country: "GB",
+          isDefaultBilling: true,
+          isDefaultDelivery: true,
+        },
+      ],
+      enableOrdering: true,
+    });
+
+    expect(saved.salesReadiness.readyForSales).toBe(true);
+    expect(saved.setup.company.salesperson?.salesRepId).toBe(salesRepId);
+
+    const reloaded = await getCustomerSetup(adminId, companyId);
+    expect(reloaded.company.salesperson?.salesRepId).toBe(salesRepId);
+
+    // Explicit Unassigned clears the assignment; verify does not clear unless requested.
+    const cleared = await saveCustomerSetupAndEnableOrdering(adminId, {
+      companyId,
+      paymentTerms: "30 DAYS",
+      creditLimitReviewed: true,
+      salesRepId: null,
+      contacts: [],
+      addresses: [],
+      enableOrdering: true,
+    });
+    expect(cleared.setup.company.salesperson).toBeNull();
+
+    await cleanupCompany(companyId);
+  });
+
+  it("does not falsely report completion when enable fails; draft still possible", async () => {
+    const local = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const created = await saveCustomerCreationDetails(adminId, {
+      name: `Fail Preserve ${local}`,
+      status: "PROSPECT",
+      taxStatus: "STANDARD",
+      primaryEmail: `fail-preserve-${local}@example.invalid`,
+    });
+    const companyId = created.companyId;
+
+    await expect(
+      saveCustomerSetupAndEnableOrdering(adminId, {
+        companyId,
+        paymentTerms: "60 DAYS",
+        creditLimitReviewed: true,
+        contacts: [],
+        addresses: [],
+        enableOrdering: true,
+      }),
+    ).rejects.toMatchObject({ code: "SETUP_INCOMPLETE" });
+
+    const afterFail = await getCustomerSetup(adminId, companyId);
+    expect(afterFail.company.paymentTerms).toBeNull();
+    expect(afterFail.salesReadiness.readyForSales).toBe(false);
+    expect(afterFail.salesReadiness.orderingApproved).toBe(false);
+
+    const draft = await saveCustomerSetupAndEnableOrdering(adminId, {
+      companyId,
+      paymentTerms: "60 DAYS",
+      creditLimitReviewed: false,
+      contacts: [],
+      addresses: [],
+      enableOrdering: false,
+    });
+    expect(draft.mode).toBe("draft");
+    expect(draft.message).toBe("Draft saved — ordering not enabled");
+    expect(draft.setup.company.paymentTerms).toBe("60 DAYS");
 
     await cleanupCompany(companyId);
   });
