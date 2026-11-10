@@ -319,9 +319,9 @@ export function CustomerSetupScreen({
     await reload(companyId);
   }
 
-  async function saveAndEnable() {
+  async function saveSetup(enableOrdering: boolean) {
     if (!companyId || !data) return;
-    if (!creditReviewed) {
+    if (enableOrdering && !creditReviewed) {
       toast.error("Confirm the credit limit review, including blank/unlimited if applicable.");
       return;
     }
@@ -340,7 +340,7 @@ export function CustomerSetupScreen({
         notes: notes || null,
         paymentTerms: paymentTerms.trim() || null,
         creditLimit: creditLimit.trim() === "" ? null : creditLimit.trim(),
-        creditLimitReviewed: true,
+        creditLimitReviewed: creditReviewed,
         priceListId: priceListId || null,
         salesRepId: salesRepId || null,
         taxStatus,
@@ -370,7 +370,7 @@ export function CustomerSetupScreen({
           contactName: address.contactName || null,
           contactPhone: address.contactPhone || null,
         })),
-        enableOrdering: true,
+        enableOrdering,
         expectedUpdatedAt: data.company.updatedAt,
       },
     });
@@ -383,9 +383,7 @@ export function CustomerSetupScreen({
     setDirty(false);
     setData(result.data.setup);
     hydrate(result.data.setup);
-    toast.success(
-      result.data.salesReadiness.readyForSales ? "Saved. Customer is READY FOR SALES." : "Saved.",
-    );
+    toast.success(result.data.message);
   }
 
   return (
@@ -526,13 +524,19 @@ export function CustomerSetupScreen({
               </ol>
               {!readiness?.canCreateStaffOrder ? (
                 <p className="mt-3 text-[13px] text-steel" data-ordering-blocked="">
-                  Staff ordering is disabled until setup is complete.
-                  {readiness?.blockReason ? ` ${readiness.blockReason}` : ""}
+                  Staff ordering stays disabled until setup requirements are complete and ordering
+                  is approved
+                  {readiness?.orderingApproved
+                    ? " (approval stamp is present but requirements changed)"
+                    : ""}
+                  .{readiness?.blockReason ? ` ${readiness.blockReason}` : ""}
                 </p>
               ) : (
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <p className="text-[13px]" data-ordering-ready="">
-                    Staff can create sales orders for this customer.
+                    {readiness?.readyForSales
+                      ? "Staff can create sales orders for this customer."
+                      : "Legacy-eligible customer — staff can create sales orders under the compatibility policy."}
                   </p>
                   <Link to="/sales/orders/new" search={{ companyId }} className={buttonClass(true)}>
                     Create sales order
@@ -1164,15 +1168,26 @@ export function CustomerSetupScreen({
               <p className="text-[13px] text-steel">
                 {dirty ? "Unsaved changes on this page." : "All local edits saved or unchanged."}
               </p>
-              <button
-                type="button"
-                className={buttonClass(true)}
-                disabled={busy || !data.permissions.canEditCompany}
-                onClick={() => void saveAndEnable()}
-                data-save-enable-ordering=""
-              >
-                {busy ? "Saving…" : "Save & enable ordering"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={buttonClass()}
+                  disabled={busy || !data.permissions.canEditCompany}
+                  onClick={() => void saveSetup(false)}
+                  data-save-draft=""
+                >
+                  {busy ? "Saving…" : "Save draft"}
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass(true)}
+                  disabled={busy || !data.permissions.canEditCompany}
+                  onClick={() => void saveSetup(true)}
+                  data-save-enable-ordering=""
+                >
+                  {busy ? "Saving…" : "Save & enable ordering"}
+                </button>
+              </div>
             </div>
           </>
         ) : null}

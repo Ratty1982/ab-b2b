@@ -1,6 +1,6 @@
 /**
  * READY_FOR_SALES is an assessment, not a second Company.status.
- * ACTIVE means the account may trade once setup is complete.
+ * ACTIVE means the account may trade once setup is complete and ordering is approved.
  * Staff order entry must call this assessment server-side.
  */
 
@@ -41,19 +41,30 @@ export type CustomerSalesReadinessInput = {
   orderingEnabledAt: string | null;
   /** Company createdAt ISO — used for rollout grandfathering only. */
   createdAt: string;
-  /** Existing placed/drafted AB orders — trading history grandfather. */
-  hasExistingOrders: boolean;
+  /**
+   * True when the company has at least one order created before the enforce-from
+   * cutoff. Post-rollout orders alone never create a legacy exemption.
+   */
+  hasPreRolloutOrders: boolean;
 };
 
 export type CustomerSalesReadiness = {
+  /** Live checklist complete (all requirements). Does not imply ordering is approved. */
+  setupRequirementsComplete: boolean;
+  /** Explicit Save & Enable Ordering stamp present. */
+  orderingApproved: boolean;
+  /**
+   * Post-rollout READY_FOR_SALES: checklist complete AND ordering approved.
+   * Re-evaluated live — an approval stamp alone is not enough if requirements lapse.
+   */
   readyForSales: boolean;
   label: "READY_FOR_SALES" | "SETUP_INCOMPLETE" | "BLOCKED" | "LEGACY_ELIGIBLE";
   summary: string;
   requirements: SalesReadinessRequirement[];
   incomplete: SalesReadinessRequirement[];
-  /** True when ordering is allowed under the compatibility policy without a new stamp. */
+  /** True when ordering is allowed under the pre-rollout compatibility policy. */
   legacyEligible: boolean;
-  /** True when staff order entry may proceed (ready or legacy). */
+  /** True when staff order entry may proceed (approved + complete, or legacy). */
   canCreateStaffOrder: boolean;
   blockReason: string | null;
 };
@@ -75,6 +86,31 @@ export function isPreEnforcementCompany(
   const from = Date.parse(enforceFrom);
   if (!Number.isFinite(created) || !Number.isFinite(from)) return false;
   return created < from;
+}
+
+/**
+ * Legacy exemption is only for genuine pre-rollout customers that already had
+ * trading evidence before enforcement. Post-rollout accounts never qualify merely
+ * because an order exists.
+ *
+ * Active accounts created before enforcement are treated as established customers.
+ * Pre-rollout orders, completed cutover, or verified Autopart also count.
+ */
+export function hasPreRolloutTradingEvidence(input: {
+  status: string;
+  createdAt: string;
+  hasPreRolloutOrders: boolean;
+  historyStatus: "NOT_STARTED" | "REVIEW" | "COMPLETE";
+  salesCodeVerified: boolean;
+  enforceFrom?: string;
+}): boolean {
+  if (!isPreEnforcementCompany(input.createdAt, input.enforceFrom)) return false;
+  return (
+    input.status === "ACTIVE" ||
+    input.hasPreRolloutOrders ||
+    input.historyStatus === "COMPLETE" ||
+    input.salesCodeVerified
+  );
 }
 
 /**
@@ -167,14 +203,22 @@ export function assessCustomerSalesReadiness(
   ];
 
   const incomplete = requirements.filter((item) => !item.complete);
-  const readyForSales = incomplete.length === 0;
+  const setupRequirementsComplete = incomplete.length === 0;
+  const orderingApproved = Boolean(input.orderingEnabledAt);
 
   const legacyEligible =
     active &&
     !held &&
-    !input.orderingEnabledAt &&
-    (input.hasExistingOrders || isPreEnforcementCompany(input.createdAt));
+    !orderingApproved &&
+    hasPreRolloutTradingEvidence({
+      status: input.status,
+      createdAt: input.createdAt,
+      hasPreRolloutOrders: input.hasPreRolloutOrders,
+      historyStatus: input.historyStatus,
+      salesCodeVerified: input.salesCodeVerified,
+    });
 
+  const readyForSales = setupRequirementsComplete && orderingApproved;
   const canCreateStaffOrder = readyForSales || legacyEligible;
 
   let label: CustomerSalesReadiness["label"];
@@ -187,19 +231,29 @@ export function assessCustomerSalesReadiness(
     blockReason = summary;
   } else if (readyForSales) {
     label = "READY_FOR_SALES";
-    summary = "Setup is complete. Staff can create sales orders.";
+    summary = "Setup is complete and ordering is approved. Staff can create sales orders.";
   } else if (legacyEligible) {
     label = "LEGACY_ELIGIBLE";
-    summary = input.hasExistingOrders
-      ? "Existing trading customer — ordering remains available under the compatibility policy."
-      : "Pre-rollout Active customer — ordering remains available under the compatibility policy. Complete setup when convenient.";
+    summary = input.hasPreRolloutOrders
+      ? "Pre-rollout trading customer — ordering remains available under the compatibility policy."
+      : "Pre-rollout Active customer with trading evidence — ordering remains available under the compatibility policy. Complete setup when convenient.";
+  } else if (setupRequirementsComplete && !orderingApproved) {
+    label = "SETUP_INCOMPLETE";
+    summary =
+      "Setup requirements are complete. Use Save & enable ordering to approve staff orders.";
+    blockReason =
+      "Ordering is not approved yet. Save & enable ordering to record the approval stamp.";
   } else {
     label = "SETUP_INCOMPLETE";
-    summary = "Complete the outstanding setup items before staff can create orders.";
+    summary = orderingApproved
+      ? "Ordering was previously approved, but live setup requirements are no longer complete. Correct the outstanding items before new staff orders."
+      : "Complete the outstanding setup items, then Save & enable ordering.";
     blockReason = `Not ready for sales: ${incomplete.map((item) => item.label).join(", ")}.`;
   }
 
   return {
+    setupRequirementsComplete,
+    orderingApproved,
     readyForSales,
     label,
     summary,
