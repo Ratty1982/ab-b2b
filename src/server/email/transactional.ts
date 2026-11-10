@@ -39,7 +39,7 @@ import {
 } from "@/server/email/settings";
 import {
   mergeOrderInternalNotificationRecipients,
-  orderReceivedInternalIdempotencyKey,
+  orderReceivedInternalRecipientIdempotencyKey,
 } from "@/domain/order-sales-rep-notification";
 import {
   recordOrderSalesRepNotificationSkip,
@@ -413,9 +413,12 @@ export async function sendOrderEmailsAfterCommit(orderId: string): Promise<{
   const salesRepResolve = await resolveOrderSalesRepNotificationEmail(orderId);
   let salesRepEmail: string | null = null;
   if (salesRepResolve.ok) {
+    // Prefer the outbox-pinned address when present so retries never follow a
+    // later SalesRep.businessEmail / User.email change.
     salesRepEmail = salesRepResolve.email;
   } else {
     detail = `sales_rep_notification_skipped:${salesRepResolve.reason}`;
+    // Skip audit must not block configured Admin/env internal recipients.
     await recordOrderSalesRepNotificationSkip({
       orderId,
       companyId: salesRepResolve.companyId,
@@ -441,7 +444,11 @@ export async function sendOrderEmailsAfterCommit(orderId: string): Promise<{
         htmlBody: internalBodies.html,
         entityType: "Order",
         entityId: orderId,
-        idempotencyKey: orderReceivedInternalIdempotencyKey(orderId, toEmail),
+        idempotencyKey: orderReceivedInternalRecipientIdempotencyKey({
+          orderId,
+          toEmail,
+          salesRepEmail,
+        }),
       });
       const ok = await safeAttempt(internalUpsert.id);
       if (ok) anyOk = true;

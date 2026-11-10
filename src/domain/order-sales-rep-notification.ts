@@ -52,6 +52,29 @@ export function orderReceivedInternalIdempotencyKey(orderId: string, email: stri
   return `ORDER_RECEIVED_INTERNAL:${orderId}:${normalised}`;
 }
 
+/**
+ * Stable outbox key for the assigned sales-rep internal notification.
+ * Pins the original recipient address once created so later business-email
+ * changes cannot open a second ORDER_RECEIVED_INTERNAL row for the same order.
+ */
+export function orderReceivedInternalSalesRepIdempotencyKey(orderId: string): string {
+  return `ORDER_RECEIVED_INTERNAL_SALES_REP:${orderId}`;
+}
+
+/** Choose the outbox idempotency key for one internal recipient on an order. */
+export function orderReceivedInternalRecipientIdempotencyKey(input: {
+  orderId: string;
+  toEmail: string;
+  salesRepEmail: string | null | undefined;
+}): string {
+  const to = normalizeOrderNotificationEmail(input.toEmail);
+  const rep = normalizeOrderNotificationEmail(input.salesRepEmail);
+  if (to && rep && to === rep) {
+    return orderReceivedInternalSalesRepIdempotencyKey(input.orderId);
+  }
+  return orderReceivedInternalIdempotencyKey(input.orderId, input.toEmail);
+}
+
 export function orderPlacedByLabel(input: {
   placedByStaffName: string | null | undefined;
   placedByStaffUserId?: string | null | undefined;

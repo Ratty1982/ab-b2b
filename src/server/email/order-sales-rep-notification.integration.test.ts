@@ -284,7 +284,7 @@ describe("order sales rep notification", () => {
     expect(repMail?.textBody).toContain("RECEIVED / SUBMITTED");
     expect(repMail?.textBody).toContain("Customer (B2B portal)");
     expect(repMail?.idempotencyKey).toBe(
-      `ORDER_RECEIVED_INTERNAL:${placed.order.id}:rep.${stamp}@example.invalid`,
+      `ORDER_RECEIVED_INTERNAL_SALES_REP:${placed.order.id}`,
     );
 
     await sendOrderEmailsAfterCommit(placed.order.id);
@@ -579,10 +579,11 @@ describe("order sales rep notification", () => {
 
     const repMail = await prisma.transactionalEmail.findUniqueOrThrow({
       where: {
-        idempotencyKey: `ORDER_RECEIVED_INTERNAL:${placed.order.id}:rep.retry.${stamp}@example.invalid`,
+        idempotencyKey: `ORDER_RECEIVED_INTERNAL_SALES_REP:${placed.order.id}`,
       },
     });
     expect(repMail.status).toBe("FAILED");
+    expect(repMail.toEmail).toBe(`rep.retry.${stamp}@example.invalid`);
 
     const customer = await prisma.transactionalEmail.findUniqueOrThrow({
       where: { idempotencyKey: `ORDER_RECEIVED:${placed.order.id}` },
@@ -605,5 +606,195 @@ describe("order sales rep notification", () => {
         where: { entityId: placed.order.id, purpose: "ORDER_RECEIVED" },
       }),
     ).toBe(1);
+  });
+
+  it("keeps the original sales-rep recipient after a business email change and repeated after-commit", async () => {
+    await enableTransactionalEmail(["ops@example.invalid"]);
+    setEmailAdapterForTests({
+      name: "test-ok",
+      async send() {
+        return { ok: true, id: "email-change-ok" };
+      },
+    });
+
+    const originalEmail = `rep.pin.${stamp}@example.invalid`;
+    const changedEmail = `rep.changed.${stamp}@example.invalid`;
+    const { user: repUser, rep: salesRep } = await ensureRep(
+      `osrn.pinuser.${stamp}@example.invalid`,
+      `PN${String(stamp).slice(-4)}`,
+      { businessEmail: originalEmail },
+    );
+
+    const variant = await seedVariant(`OSRN-P-${stamp}`, 7, 20);
+    const { company, address } = await seedCompany(`OSRN Pin ${stamp}`);
+    await prisma.companyAssignment.create({
+      data: { companyId: company.id, salesRepId: salesRep.id, isPrimary: true },
+    });
+    const buyerId = await ensureTradeBuyer(`osrn.pinbuyer.${stamp}@example.invalid`, company.id);
+    await addToBasket(buyerId, { variantId: variant.id, quantity: 1 });
+    const placed = await placeOrder(buyerId, {
+      idempotencyKey: `osrn-pin-${stamp}`,
+      addressId: address.id,
+      expectedLinePrices: [{ variantId: variant.id, customerUnitPrice: "7.00" }],
+    });
+    expect(placed.ok).toBe(true);
+    if (!placed.ok) return;
+
+    const firstInternal = await prisma.transactionalEmail.findMany({
+      where: { entityId: placed.order.id, purpose: "ORDER_RECEIVED_INTERNAL" },
+      orderBy: { toEmail: "asc" },
+    });
+    expect(firstInternal.map((r) => r.toEmail)).toEqual([
+      "ops@example.invalid",
+      originalEmail,
+    ]);
+    const pinned = firstInternal.find((r) => r.toEmail === originalEmail);
+    expect(pinned?.idempotencyKey).toBe(
+      `ORDER_RECEIVED_INTERNAL_SALES_REP:${placed.order.id}`,
+    );
+    expect(pinned?.status).toBe("SENT");
+
+    const customerBefore = await prisma.transactionalEmail.findUniqueOrThrow({
+      where: { idempotencyKey: `ORDER_RECEIVED:${placed.order.id}` },
+    });
+    expect(customerBefore.status).toBe("SENT");
+    expect(customerBefore.toEmail).toBe(`osrn.pinbuyer.${stamp}@example.invalid`);
+
+    await prisma.salesRep.update({
+      where: { id: salesRep.id },
+      data: { businessEmail: changedEmail },
+    });
+    await prisma.user.update({
+      where: { id: repUser.id },
+      data: { email: `osrn.pinuser.changed.${stamp}@example.invalid` },
+    });
+
+    await sendOrderEmailsAfterCommit(placed.order.id);
+    await sendOrderEmailsAfterCommit(placed.order.id);
+
+    const afterChange = await prisma.transactionalEmail.findMany({
+      where: { entityId: placed.order.id, purpose: "ORDER_RECEIVED_INTERNAL" },
+      orderBy: { toEmail: "asc" },
+    });
+    expect(afterChange.map((r) => r.toEmail)).toEqual([
+      "ops@example.invalid",
+      originalEmail,
+    ]);
+    expect(afterChange.some((r) => r.toEmail === changedEmail)).toBe(false);
+    expect(
+      afterChange.some((r) => r.toEmail === `osrn.pinuser.changed.${stamp}@example.invalid`),
+    ).toBe(false);
+    expect(
+      await prisma.transactionalEmail.count({
+        where: {
+          entityId: placed.order.id,
+          purpose: "ORDER_RECEIVED_INTERNAL",
+          idempotencyKey: `ORDER_RECEIVED_INTERNAL_SALES_REP:${placed.order.id}`,
+        },
+      }),
+    ).toBe(1);
+
+    const ops = afterChange.find((r) => r.toEmail === "ops@example.invalid");
+    expect(ops?.status).toBe("SENT");
+    expect(ops?.idempotencyKey).toBe(
+      `ORDER_RECEIVED_INTERNAL:${placed.order.id}:ops@example.invalid`,
+    );
+
+    const customerAfter = await prisma.transactionalEmail.findUniqueOrThrow({
+      where: { idempotencyKey: `ORDER_RECEIVED:${placed.order.id}` },
+    });
+    expect(customerAfter.id).toBe(customerBefore.id);
+    expect(customerAfter.toEmail).toBe(customerBefore.toEmail);
+    expect(customerAfter.status).toBe("SENT");
+  });
+
+  it("still sends configured internal recipients when skip audit persistence fails", async () => {
+    await enableTransactionalEmail(["ops@example.invalid", "desk@example.invalid"]);
+    setEmailAdapterForTests({
+      name: "test-ok",
+      async send() {
+        return { ok: true, id: "audit-fail-ok" };
+      },
+    });
+
+    const { rep: inactiveRep } = await ensureRep(
+      `osrn.auditfail.${stamp}@example.invalid`,
+      `AF${String(stamp).slice(-4)}`,
+      { active: false },
+    );
+    const { company } = await seedCompany(`OSRN AuditFail ${stamp}`);
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `AB-AUDFAIL-${stamp}`,
+        companyId: company.id,
+        status: "SUBMITTED",
+        currency: "GBP",
+        subtotal: 11,
+        vatTotal: 2.2,
+        deliveryTotal: 0,
+        grandTotal: 13.2,
+        placedAt: new Date(),
+        contactSnapshot: {
+          name: "Buyer",
+          email: `auditfail.buyer.${stamp}@example.invalid`,
+          phone: null,
+        },
+        deliveryAddress: {
+          line1: "1 High St",
+          town: "Leeds",
+          postcode: "LS1 1AA",
+          country: "GB",
+        },
+        paymentTermsSnapshot: "Net 30",
+        salesRepIdSnapshot: inactiveRep.id,
+        salesRepCodeSnapshot: inactiveRep.code,
+        salesRepNameSnapshot: "Inactive Rep",
+      },
+    });
+    await prisma.orderItem.create({
+      data: {
+        orderId: order.id,
+        sku: "SKU-AUDFAIL",
+        name: "Widget",
+        qty: 1,
+        unitPrice: 11,
+        customerUnitPrice: 11,
+        vatRate: 20,
+        lineTotal: 11,
+        lineVat: 2.2,
+        lineGross: 13.2,
+      },
+    });
+
+    const originalFindFirst = prisma.auditEvent.findFirst.bind(prisma.auditEvent);
+    prisma.auditEvent.findFirst = (async () => {
+      throw new Error("simulated skip-audit read failure");
+    }) as typeof prisma.auditEvent.findFirst;
+
+    try {
+      const result = await sendOrderEmailsAfterCommit(order.id);
+      expect(result.customerOk).toBe(true);
+      expect(result.internalOk).toBe(true);
+      expect(result.detail).toBe("sales_rep_notification_skipped:sales_rep_inactive");
+
+      const internal = await prisma.transactionalEmail.findMany({
+        where: { entityId: order.id, purpose: "ORDER_RECEIVED_INTERNAL" },
+        orderBy: { toEmail: "asc" },
+      });
+      expect(internal.map((r) => r.toEmail)).toEqual([
+        "desk@example.invalid",
+        "ops@example.invalid",
+      ]);
+      expect(internal.every((r) => r.status === "SENT")).toBe(true);
+      expect(internal.some((r) => r.toEmail.includes("auditfail"))).toBe(false);
+
+      const customer = await prisma.transactionalEmail.findUniqueOrThrow({
+        where: { idempotencyKey: `ORDER_RECEIVED:${order.id}` },
+      });
+      expect(customer.status).toBe("SENT");
+      expect(customer.toEmail).toBe(`auditfail.buyer.${stamp}@example.invalid`);
+    } finally {
+      prisma.auditEvent.findFirst = originalFindFirst;
+    }
   });
 });

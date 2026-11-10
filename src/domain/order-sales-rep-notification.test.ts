@@ -5,6 +5,8 @@ import {
   normalizeOrderNotificationEmail,
   orderPlacedByLabel,
   orderReceivedInternalIdempotencyKey,
+  orderReceivedInternalRecipientIdempotencyKey,
+  orderReceivedInternalSalesRepIdempotencyKey,
 } from "@/domain/order-sales-rep-notification";
 import { buildOrderReceivedInternalBodies, type OrderEmailSnapshot } from "@/server/orders/email";
 
@@ -85,6 +87,23 @@ describe("order sales rep notification helpers", () => {
     expect(orderReceivedInternalIdempotencyKey("ord-1", "Rep@Example.com")).toBe(
       "ORDER_RECEIVED_INTERNAL:ord-1:rep@example.com",
     );
+    expect(orderReceivedInternalSalesRepIdempotencyKey("ord-1")).toBe(
+      "ORDER_RECEIVED_INTERNAL_SALES_REP:ord-1",
+    );
+    expect(
+      orderReceivedInternalRecipientIdempotencyKey({
+        orderId: "ord-1",
+        toEmail: "Rep@Example.com",
+        salesRepEmail: "rep@example.com",
+      }),
+    ).toBe("ORDER_RECEIVED_INTERNAL_SALES_REP:ord-1");
+    expect(
+      orderReceivedInternalRecipientIdempotencyKey({
+        orderId: "ord-1",
+        toEmail: "ops@example.com",
+        salesRepEmail: "rep@example.com",
+      }),
+    ).toBe("ORDER_RECEIVED_INTERNAL:ord-1:ops@example.com");
   });
 
   it("labels customer vs internal staff placement", () => {
