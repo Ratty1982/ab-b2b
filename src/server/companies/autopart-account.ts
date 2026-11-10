@@ -149,14 +149,18 @@ export async function setCompanyAutopartCustomerCode(actorUserId: string, raw: u
       actorUserId,
       companyId: input.companyId,
       before: verificationAudit(before),
-      after: { autopartCustomerCode: null, verifiedAt: null, verifiedById: null, verification: "not_verified" },
+      after: {
+        autopartCustomerCode: null,
+        verifiedAt: null,
+        verifiedById: null,
+        verification: "not_verified",
+      },
     });
     return serializeAutopart(updated);
   }
 
   const normalised = await assertUnambiguousAutopartCode(next, input.companyId);
-  const sameKey =
-    normaliseAssignedAutopartCode(before.autopartCustomerCode).key === normalised.key;
+  const sameKey = normaliseAssignedAutopartCode(before.autopartCustomerCode).key === normalised.key;
   if (sameKey) {
     return serializeAutopart(before);
   }
@@ -215,7 +219,11 @@ export async function verifyCompanyAutopartCustomerCode(actorUserId: string, raw
   });
   if (!before) throw new AuthError("Company not found", "NOT_FOUND", 404);
   if (!before.autopartCustomerCode) {
-    throw new AuthError("Enter an Autopart customer code before verifying", "AUTOPART_CODE_MISSING", 400);
+    throw new AuthError(
+      "Enter an Autopart customer code before verifying",
+      "AUTOPART_CODE_MISSING",
+      400,
+    );
   }
   await assertUnambiguousAutopartCode(before.autopartCustomerCode, input.companyId);
 
@@ -248,10 +256,7 @@ export async function verifyCompanyAutopartCustomerCode(actorUserId: string, raw
  * Set Autopart customer code and mark verified in one staff action.
  * Used by approval verification and post-approval VERIFY / LINK.
  */
-export async function linkAndVerifyCompanyAutopartCustomerCode(
-  actorUserId: string,
-  raw: unknown,
-) {
+export async function linkAndVerifyCompanyAutopartCustomerCode(actorUserId: string, raw: unknown) {
   const input = z
     .object({
       companyId: z.string().cuid(),
@@ -267,28 +272,36 @@ export async function linkAndVerifyCompanyAutopartCustomerCode(
 
   const before = await prisma.company.findUnique({
     where: { id: input.companyId },
-    select: autopartSelect,
+    select: { ...autopartSelect, status: true },
   });
   if (!before) throw new AuthError("Company not found", "NOT_FOUND", 404);
 
-  const sameKey =
-    normaliseAssignedAutopartCode(before.autopartCustomerCode).key === normalised.key;
-  if (sameKey && before.autopartCustomerCodeVerifiedAt && before.autopartCustomerCodeVerifiedById) {
+  const sameKey = normaliseAssignedAutopartCode(before.autopartCustomerCode).key === normalised.key;
+  const activateFromProspect = before.status === "PROSPECT" || before.status === "PENDING_APPROVAL";
+
+  if (
+    sameKey &&
+    before.autopartCustomerCodeVerifiedAt &&
+    before.autopartCustomerCodeVerifiedById &&
+    !activateFromProspect
+  ) {
     return serializeAutopart(before);
   }
 
   try {
+    const verifiedAt =
+      sameKey && before.autopartCustomerCodeVerifiedAt
+        ? before.autopartCustomerCodeVerifiedAt
+        : new Date();
     const updated = await prisma.company.update({
       where: { id: input.companyId },
       data: {
         autopartCustomerCode: normalised.display,
-        autopartCustomerCodeVerifiedAt:
-          sameKey && before.autopartCustomerCodeVerifiedAt
-            ? before.autopartCustomerCodeVerifiedAt
-            : new Date(),
+        autopartCustomerCodeVerifiedAt: verifiedAt,
         autopartCustomerCodeVerifiedById: actorUserId,
+        ...(activateFromProspect ? { status: "ACTIVE" as const } : {}),
       },
-      select: autopartSelect,
+      select: { ...autopartSelect, status: true },
     });
 
     await recordAuditEvent({
@@ -300,13 +313,31 @@ export async function linkAndVerifyCompanyAutopartCustomerCode(
       before: {
         autopartCustomerCode: before.autopartCustomerCode,
         verifiedAt: before.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
+        status: before.status,
       },
       after: {
         autopartCustomerCode: updated.autopartCustomerCode,
         verifiedAt: updated.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
         verifiedById: actorUserId,
+        status: updated.status,
       },
     });
+
+    if (activateFromProspect && updated.status === "ACTIVE") {
+      await recordAuditEvent({
+        action: "company.status_changed",
+        entityType: "Company",
+        entityId: input.companyId,
+        actorUserId,
+        companyId: input.companyId,
+        before: { status: before.status },
+        after: {
+          status: "ACTIVE",
+          reason: "Automatic activation after unique Autopart sales-code verification",
+          source: "AUTOPART_VERIFY",
+        },
+      });
+    }
 
     return serializeAutopart(updated);
   } catch (error) {

@@ -763,6 +763,8 @@ model User {
   auditEventsAsTarget AuditEvent[]     @relation("AuditTarget")
   tradeAppsReviewed  TradeApplication[] @relation("ApplicationReviewer")
   autopartCodesVerified Company[]       @relation("AutopartCodeVerifier")
+  creditLimitsReviewed Company[]        @relation("CreditLimitReviewer")
+  orderingEnabledCompanies Company[]    @relation("OrderingEnabledBy")
   autopartOrdersExported Order[]        @relation("OrderAutopartExporter")
   ordersArchived         Order[]        @relation("OrderArchivedBy")
   ordersBackorderAcknowledged Order[]   @relation("OrderBackorderAcknowledgedBy")
@@ -989,6 +991,12 @@ model Company {
   paymentTerms   String?
   /// Informational GBP credit limit only — never blocks orders or changes terms/pricing.
   creditLimit    Decimal?      @db.Decimal(12, 2)
+  /// Staff confirmed the credit limit value (including authorised blank/unlimited).
+  creditLimitReviewedAt DateTime?
+  creditLimitReviewedById String?
+  /// Stamp when SAVE & ENABLE ORDERING succeeded. Not a second Company.status.
+  orderingEnabledAt DateTime?
+  orderingEnabledById String?
   currency       String        @default("GBP")
   priceListId    String?
   /// Optional AB Customer Group for consolidated reporting. Null = ungrouped.
@@ -1009,6 +1017,8 @@ model Company {
   customerGroup  CustomerGroup? @relation(fields: [customerGroupId], references: [id], onDelete: SetNull)
   priceList      PriceList?    @relation(fields: [priceListId], references: [id])
   autopartCustomerCodeVerifiedBy User? @relation("AutopartCodeVerifier", fields: [autopartCustomerCodeVerifiedById], references: [id], onDelete: SetNull)
+  creditLimitReviewedBy User? @relation("CreditLimitReviewer", fields: [creditLimitReviewedById], references: [id], onDelete: SetNull)
+  orderingEnabledBy User? @relation("OrderingEnabledBy", fields: [orderingEnabledById], references: [id], onDelete: SetNull)
   users          CompanyUser[]
   contacts       Contact[]
   addresses      Address[]

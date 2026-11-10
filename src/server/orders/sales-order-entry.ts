@@ -189,8 +189,9 @@ async function requireSalesOrderStaff(userId: string): Promise<LoadedAccessProfi
 
 /**
  * Order entry is not CRM account ownership.
- * Any internal user with orders.place_for_customer may order for any ACTIVE customer.
- * The caller's profile is accepted only after requireSalesOrderStaff.
+ * Any internal user with orders.place_for_customer may order for a READY_FOR_SALES
+ * customer (or a compatibility-grandfathered Active account). ACTIVE alone is not enough
+ * for post-rollout setup customers.
  */
 async function requireOrderableCompany(
   _profile: LoadedAccessProfile,
@@ -215,6 +216,10 @@ async function requireOrderableCompany(
       403,
     );
   }
+  const { assertCompanyReadyForStaffOrders } = await import(
+    "@/server/companies/customer-setup"
+  );
+  await assertCompanyReadyForStaffOrders(companyId);
   return company;
 }
 

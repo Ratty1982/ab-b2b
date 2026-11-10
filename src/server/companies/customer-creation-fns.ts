@@ -60,3 +60,34 @@ export const getCustomerCreationWizardFn = createServerFn({ method: "GET" })
       return toError(error);
     }
   });
+
+export const getCustomerSetupFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { getCustomerSetup } = await import("@/server/companies/customer-setup");
+      return {
+        ok: true as const,
+        data: await getCustomerSetup(userId, data.companyId),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const saveCustomerSetupAndEnableOrderingFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { saveCustomerSetupAndEnableOrdering } =
+        await import("@/server/companies/customer-setup");
+      return {
+        ok: true as const,
+        data: await saveCustomerSetupAndEnableOrdering(userId, data),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  });
