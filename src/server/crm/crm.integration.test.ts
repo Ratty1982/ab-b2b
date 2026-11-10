@@ -14,6 +14,7 @@ import {
   createCrmLead,
   listCrmLeads,
   markCrmLeadLost,
+  searchCompaniesForLeadConvert,
 } from "@/server/crm/leads";
 import {
   createCrmOpportunity,
@@ -458,5 +459,136 @@ describe("CRM + Sales Intelligence follow-up regression", () => {
     // Snapshot immutability: captured reason stays STOPPED
     expect(created.snapshot.sourceReason).toBe("STOPPED");
     expect(created.snapshot.metrics["Comparison qty"]).toBe(12);
+  });
+});
+
+describe("CRM lead convert company search priority", () => {
+  const codeToken = `LC${String(stamp).slice(-4)}`;
+
+  it("prioritises exact Autopart code over alphabetical name clutter within the 15-result window", async () => {
+    const clutterIds: string[] = [];
+    for (let i = 0; i < 18; i += 1) {
+      const row = await prisma.company.create({
+        data: {
+          name: `${codeToken} & B AUTOPARTS LTD ${String(i).padStart(2, "0")}`,
+          status: "ACTIVE",
+          paymentTerms: "30 days",
+          primaryEmail: `lc.clutter.${i}.${stamp}@example.invalid`,
+        },
+      });
+      clutterIds.push(row.id);
+      await prisma.companyAssignment.create({
+        data: { companyId: row.id, salesRepId },
+      });
+    }
+
+    const exact = await prisma.company.create({
+      data: {
+        name: `Zulu Convert Target ${stamp}`,
+        status: "ACTIVE",
+        paymentTerms: "30 days",
+        accountNumber: `ACC-${codeToken}`,
+        primaryEmail: `lc.exact.${stamp}@example.invalid`,
+      },
+    });
+    await prisma.companyAssignment.create({
+      data: { companyId: exact.id, salesRepId },
+    });
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, {
+      companyId: exact.id,
+      code: codeToken,
+    });
+
+    const search = await searchCompaniesForLeadConvert(salesRepUserId, { q: codeToken });
+    expect(search.items[0]?.id).toBe(exact.id);
+    expect(search.items[0]?.matchKind).toBe("exact_autopart_code");
+    expect(search.items[0]?.exactCodeMatch).toBe(true);
+    expect(search.items[0]?.autopartVerified).toBe(true);
+    expect(search.items[0]?.accountNumber).toBe(`ACC-${codeToken}`);
+    expect(search.items.length).toBeLessThanOrEqual(15);
+    expect(search.items.some((i) => i.id === exact.id)).toBe(true);
+
+    const caseSearch = await searchCompaniesForLeadConvert(salesRepUserId, {
+      q: codeToken.toLowerCase(),
+    });
+    expect(caseSearch.items[0]?.id).toBe(exact.id);
+
+    const none = await searchCompaniesForLeadConvert(salesRepUserId, {
+      q: `NOMATCH${stamp}`,
+    });
+    expect(none.items).toEqual([]);
+
+    void clutterIds;
+  });
+
+  it("enforces CRM scope on search and link-existing conversion, preserves owner/notes/lifecycle", async () => {
+    const lead = await createCrmLead(salesRepUserId, {
+      companyName: `Link Existing Prospect ${stamp}`,
+      contactName: "Casey Contact",
+      email: `casey.${stamp}@example.invalid`,
+      source: "PHONE",
+      notes: `Keep these notes ${stamp}`,
+    });
+    const before = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(before.ownerId).toBe(salesRepUserId);
+    expect(before.notes).toContain("Keep these notes");
+
+    await logCrmActivity(salesRepUserId, {
+      type: "NOTE",
+      leadId: lead.id,
+      body: `Pre-convert note ${stamp}`,
+    });
+
+    const scopedSearch = await searchCompaniesForLeadConvert(salesRepUserId, { q: yorkCode });
+    expect(scopedSearch.items.some((i) => i.id === yorkId)).toBe(true);
+    expect(scopedSearch.items.some((i) => i.id === outOfScopeId)).toBe(false);
+
+    await expect(
+      convertCrmLead(salesRepUserId, {
+        leadId: lead.id,
+        mode: "LINK_EXISTING",
+        companyId: outOfScopeId,
+        createOpportunity: false,
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+
+    const yorkBefore = await prisma.company.findUniqueOrThrow({
+      where: { id: yorkId },
+      select: { status: true },
+    });
+    expect(yorkBefore.status).toBe("ACTIVE");
+
+    const converted = await convertCrmLead(salesRepUserId, {
+      leadId: lead.id,
+      mode: "LINK_EXISTING",
+      companyId: yorkId,
+      createOpportunity: true,
+      opportunityTitle: `From lead ${stamp}`,
+    });
+    expect(converted.companyId).toBe(yorkId);
+    expect(converted.opportunityId).toBeTruthy();
+
+    const afterLead = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(afterLead.status).toBe("CONVERTED");
+    expect(afterLead.ownerId).toBe(salesRepUserId);
+    expect(afterLead.notes).toBe(before.notes);
+    expect(afterLead.companyId).toBe(yorkId);
+
+    const yorkAfter = await prisma.company.findUniqueOrThrow({
+      where: { id: yorkId },
+      select: { status: true },
+    });
+    expect(yorkAfter.status).toBe("ACTIVE");
+
+    const activityCount = await prisma.activity.count({
+      where: { leadId: lead.id, body: `Pre-convert note ${stamp}` },
+    });
+    expect(activityCount).toBe(1);
+
+    const opp = await prisma.opportunity.findUniqueOrThrow({
+      where: { id: converted.opportunityId! },
+    });
+    expect(opp.ownerId).toBe(salesRepUserId);
+    expect(opp.companyId).toBe(yorkId);
   });
 });

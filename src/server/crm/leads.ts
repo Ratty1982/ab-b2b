@@ -6,12 +6,18 @@ import { AuthError } from "@/server/rbac/guards";
 import { grants, hasPermission } from "@/server/rbac/access";
 import { dueAtFromDateOnly } from "@/domain/sales-followup";
 import {
+  assertCrmCompanyAccess,
   assertLeadAccess,
   canLogCrmActivity,
   requireCrmMutator,
   requireCrmViewer,
   resolveCrmCompanyScope,
 } from "@/server/crm/scope";
+import {
+  normalizeLeadConvertSearchQuery,
+  rankLeadConvertCompanies,
+  type LeadConvertCompanyCandidate,
+} from "@/domain/lead-convert-company-search";
 
 const listSchema = z.object({
   q: z.string().max(200).optional().nullable(),
@@ -312,39 +318,99 @@ export async function markCrmLeadLost(actorUserId: string, raw: unknown) {
   return { id: lead.id, status: lead.status };
 }
 
+const leadConvertCompanySelect = {
+  id: true,
+  name: true,
+  tradingName: true,
+  status: true,
+  autopartCustomerCode: true,
+  autopartCustomerCodeVerifiedAt: true,
+  accountNumber: true,
+  primaryEmail: true,
+} as const;
+
 export async function searchCompaniesForLeadConvert(actorUserId: string, raw: unknown) {
   const profile = await requireCrmViewer(actorUserId, "crm.leads.view");
   requireCrmMutator(profile);
   const { q } = z.object({ q: z.string().min(1).max(200) }).parse(raw ?? {});
   const scope = await resolveCrmCompanyScope(profile);
-  const qq = q.trim();
-  const companies = await prisma.company.findMany({
-    where: {
-      AND: [
-        scope === "all" ? {} : { id: { in: scope.length ? scope : ["__none__"] } },
-        {
-          OR: [
-            { name: { contains: qq, mode: "insensitive" } },
-            { tradingName: { contains: qq, mode: "insensitive" } },
-            { primaryEmail: { contains: qq, mode: "insensitive" } },
-            { autopartCustomerCode: { contains: qq, mode: "insensitive" } },
-            { accountNumber: { contains: qq, mode: "insensitive" } },
-          ],
-        },
-      ],
-    },
-    take: 15,
-    select: {
-      id: true,
-      name: true,
-      tradingName: true,
-      status: true,
-      autopartCustomerCode: true,
-      primaryEmail: true,
-    },
-    orderBy: { name: "asc" },
-  });
-  return { items: companies };
+  const qq = normalizeLeadConvertSearchQuery(q);
+  if (qq.length < 1) return { items: [] };
+
+  const scopeWhere: Prisma.CompanyWhereInput =
+    scope === "all" ? {} : { id: { in: scope.length ? scope : ["__none__"] } };
+
+  // Exact / prefix buckets are fetched separately so alphabetical name matches
+  // cannot push Autopart or account-number hits out of a small result window.
+  const [exactCode, exactAccount, codePrefix, accountPrefix, broader] = await Promise.all([
+    prisma.company.findMany({
+      where: {
+        AND: [
+          scopeWhere,
+          { autopartCustomerCode: { equals: qq, mode: "insensitive" } },
+        ],
+      },
+      take: 10,
+      select: leadConvertCompanySelect,
+    }),
+    prisma.company.findMany({
+      where: {
+        AND: [
+          scopeWhere,
+          { accountNumber: { equals: qq, mode: "insensitive" } },
+        ],
+      },
+      take: 10,
+      select: leadConvertCompanySelect,
+    }),
+    prisma.company.findMany({
+      where: {
+        AND: [
+          scopeWhere,
+          { autopartCustomerCode: { startsWith: qq, mode: "insensitive" } },
+        ],
+      },
+      take: 25,
+      select: leadConvertCompanySelect,
+    }),
+    prisma.company.findMany({
+      where: {
+        AND: [
+          scopeWhere,
+          { accountNumber: { startsWith: qq, mode: "insensitive" } },
+        ],
+      },
+      take: 25,
+      select: leadConvertCompanySelect,
+    }),
+    prisma.company.findMany({
+      where: {
+        AND: [
+          scopeWhere,
+          {
+            OR: [
+              { name: { contains: qq, mode: "insensitive" } },
+              { tradingName: { contains: qq, mode: "insensitive" } },
+              { primaryEmail: { contains: qq, mode: "insensitive" } },
+              { autopartCustomerCode: { contains: qq, mode: "insensitive" } },
+              { accountNumber: { contains: qq, mode: "insensitive" } },
+            ],
+          },
+        ],
+      },
+      take: 60,
+      select: leadConvertCompanySelect,
+    }),
+  ]);
+
+  const byId = new Map<string, LeadConvertCompanyCandidate>();
+  for (const row of [...exactCode, ...exactAccount, ...codePrefix, ...accountPrefix, ...broader]) {
+    byId.set(row.id, row);
+  }
+
+  return {
+    items: rankLeadConvertCompanies([...byId.values()], qq, 15),
+  };
 }
 
 export async function convertCrmLead(actorUserId: string, raw: unknown) {
@@ -370,8 +436,12 @@ export async function convertCrmLead(actorUserId: string, raw: unknown) {
   let companyId = lead.companyId;
   if (input.mode === "LINK_EXISTING") {
     if (!input.companyId) throw new AuthError("companyId required", "BAD_REQUEST", 400);
-    const co = await prisma.company.findUnique({ where: { id: input.companyId } });
+    const co = await prisma.company.findUnique({
+      where: { id: input.companyId },
+      select: { id: true, status: true },
+    });
     if (!co) throw new AuthError("Company not found", "NOT_FOUND", 404);
+    await assertCrmCompanyAccess(profile, co.id);
     companyId = co.id;
   } else {
     const created = await prisma.company.create({

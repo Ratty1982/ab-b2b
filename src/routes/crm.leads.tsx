@@ -1,16 +1,22 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { guardStaffPage } from "@/lib/guard-staff-page";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { LogActivityDrawer } from "@/components/crm/LogActivityDrawer";
+import { companyStatusLabel } from "@/domain/company-status-actions";
 import {
   LEAD_LOST_REASONS,
   LEAD_SOURCES,
   leadSourceLabel,
   leadStatusLabel,
 } from "@/domain/crm";
+import {
+  leadConvertMatchLabel,
+  shouldClearLeadConvertSelection,
+  type RankedLeadConvertCompany,
+} from "@/domain/lead-convert-company-search";
 import {
   convertCrmLeadFn,
   createCrmLeadFn,
@@ -427,6 +433,8 @@ function CreateLeadDrawer({
   );
 }
 
+type LeadConvertMatch = RankedLeadConvertCompany;
+
 function ConvertLeadDrawer({
   lead,
   onClose,
@@ -438,21 +446,57 @@ function ConvertLeadDrawer({
 }) {
   const [mode, setMode] = useState<"LINK_EXISTING" | "CREATE_NEW">("CREATE_NEW");
   const [q, setQ] = useState(lead.companyName);
-  const [matches, setMatches] = useState<Array<{ id: string; name: string; autopartCustomerCode: string | null }>>([]);
+  const [matches, setMatches] = useState<LeadConvertMatch[]>([]);
   const [companyId, setCompanyId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<LeadConvertMatch | null>(null);
+  const [searching, setSearching] = useState(false);
   const [createOpp, setCreateOpp] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const searchSeq = useRef(0);
 
   useEffect(() => {
-    if (mode !== "LINK_EXISTING" || q.trim().length < 2) {
+    if (mode !== "LINK_EXISTING") {
       setMatches([]);
+      setSearching(false);
       return;
     }
-    void searchCompaniesForLeadConvertFn({ data: { q } }).then((r) => {
-      if (r.ok) setMatches(r.data.items);
-    });
+    const trimmed = q.trim();
+    if (trimmed.length < 1) {
+      setMatches([]);
+      setSearching(false);
+      return;
+    }
+
+    const seq = ++searchSeq.current;
+    setSearching(true);
+    const handle = window.setTimeout(() => {
+      void searchCompaniesForLeadConvertFn({ data: { q: trimmed } }).then((r) => {
+        if (seq !== searchSeq.current) return;
+        setSearching(false);
+        if (r.ok) setMatches(r.data.items as LeadConvertMatch[]);
+        else setMatches([]);
+      });
+    }, 250);
+    return () => {
+      window.clearTimeout(handle);
+      // Invalidate in-flight responses from this effect instance.
+      if (searchSeq.current === seq) searchSeq.current += 1;
+    };
   }, [q, mode]);
+
+  function onSearchChange(next: string) {
+    if (shouldClearLeadConvertSelection(q, next)) {
+      setCompanyId(null);
+      setSelected(null);
+    }
+    setQ(next);
+  }
+
+  function selectCompany(row: LeadConvertMatch) {
+    setCompanyId(row.id);
+    setSelected(row);
+  }
 
   async function submit() {
     setSaving(true);
@@ -493,11 +537,23 @@ function ConvertLeadDrawer({
       {error ? <p className="mb-2 text-sm text-destructive" role="alert">{error}</p> : null}
       <div className="space-y-3 text-sm">
         <label className="flex items-center gap-2">
-          <input type="radio" checked={mode === "CREATE_NEW"} onChange={() => setMode("CREATE_NEW")} />
+          <input
+            type="radio"
+            checked={mode === "CREATE_NEW"}
+            onChange={() => {
+              setMode("CREATE_NEW");
+              setCompanyId(null);
+              setSelected(null);
+            }}
+          />
           Create new company
         </label>
         <label className="flex items-center gap-2">
-          <input type="radio" checked={mode === "LINK_EXISTING"} onChange={() => setMode("LINK_EXISTING")} />
+          <input
+            type="radio"
+            checked={mode === "LINK_EXISTING"}
+            onChange={() => setMode("LINK_EXISTING")}
+          />
           Link existing company
         </label>
         {mode === "LINK_EXISTING" ? (
@@ -505,28 +561,65 @@ function ConvertLeadDrawer({
             <input
               className={inputClass}
               value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search company name, email, Autopart account"
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search Autopart code, account number, or company name"
+              aria-label="Search existing customers"
             />
-            <ul className="max-h-48 space-y-1 overflow-y-auto">
-              {matches.map((m) => (
-                <li key={m.id}>
-                  <button
-                    type="button"
-                    className={`w-full rounded border px-3 py-2 text-left ${
-                      companyId === m.id ? "border-primary bg-primary/5" : "border-border"
-                    }`}
-                    onClick={() => setCompanyId(m.id)}
-                  >
-                    {m.name}
-                    {m.autopartCustomerCode ? (
-                      <span className="ml-2 font-mono text-[11px] text-steel">
-                        {m.autopartCustomerCode}
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              ))}
+            {selected ? (
+              <div className="rounded border border-primary bg-primary/5 px-3 py-2 text-[13px]">
+                <p className="font-semibold text-ink">{selected.name}</p>
+                <p className="mt-0.5 font-mono text-[11px] text-steel">
+                  {selected.autopartCustomerCode
+                    ? `Autopart ${selected.autopartCustomerCode}`
+                    : "No Autopart code"}
+                  {selected.accountNumber ? ` · Account ${selected.accountNumber}` : ""}
+                </p>
+              </div>
+            ) : null}
+            {searching ? (
+              <p className="text-[12px] text-steel" role="status">
+                Searching…
+              </p>
+            ) : null}
+            {!searching && q.trim().length >= 1 && matches.length === 0 ? (
+              <p className="text-[12px] text-steel">No matching customers</p>
+            ) : null}
+            <ul className="max-h-56 space-y-1 overflow-y-auto">
+              {matches.map((m) => {
+                const exactLabel = leadConvertMatchLabel(m.matchKind);
+                const isSelected = companyId === m.id;
+                return (
+                  <li key={m.id}>
+                    <button
+                      type="button"
+                      className={`w-full rounded border px-3 py-2 text-left ${
+                        isSelected ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border"
+                      }`}
+                      onClick={() => selectCompany(m)}
+                      aria-pressed={isSelected}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-ink">{m.name}</span>
+                        {exactLabel ? (
+                          <StatusBadge tone="good">{exactLabel}</StatusBadge>
+                        ) : null}
+                        <StatusBadge tone="neutral">{companyStatusLabel(m.status)}</StatusBadge>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] text-steel">
+                        <span>
+                          Autopart {m.autopartCustomerCode || "—"}
+                          {m.autopartCustomerCode
+                            ? m.autopartVerified
+                              ? " · verified"
+                              : " · not verified"
+                            : ""}
+                        </span>
+                        <span>Account {m.accountNumber || "—"}</span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </>
         ) : null}
