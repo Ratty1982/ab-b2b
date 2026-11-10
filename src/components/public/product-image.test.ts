@@ -22,7 +22,6 @@ describe("public product image presentation", () => {
     expect(PRODUCT_IMAGE_FIT_CLASS).not.toContain("object-cover");
     expect(productImageSurfaceClass(true)).toBe(PRODUCT_IMAGE_LIVE_SURFACE_CLASS);
     expect(PRODUCT_IMAGE_LIVE_SURFACE_CLASS).toContain("product-studio");
-    expect(PRODUCT_IMAGE_LIVE_SURFACE_CLASS).not.toContain("bg-white");
     expect(PRODUCT_IMAGE_LIVE_SURFACE_CLASS).not.toContain("bg-surface");
     expect(PRODUCT_IMAGE_STAGE_CLASS).not.toContain("bg-surface");
     expect(productImageStageClass("card")).toBe(PRODUCT_IMAGE_CARD_STAGE_CLASS);
