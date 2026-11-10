@@ -131,6 +131,8 @@ export function previewOrderSnapshot(opts?: {
     salesRepNameSnapshot: withAm ? PREVIEW_ACCOUNT_MANAGER.name : null,
     salesRepCodeSnapshot: withAm ? "LA01" : null,
     sourceQuoteNumber: null,
+    placedByStaffName: null,
+    placedByStaffUserId: null,
     portalOrderUrl: `${appBaseUrl()}/portal/orders/preview-order-ab-001234`,
     adminOrderUrl: `${appBaseUrl()}/admin/orders/preview-order-ab-001234`,
   };

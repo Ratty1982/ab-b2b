@@ -308,11 +308,11 @@ const registry: RegistryEntry[] = [
   },
   {
     id: "order-received-internal",
-    name: "New B2B order",
+    name: "New customer order",
     purpose: "ORDER_RECEIVED_INTERNAL",
     audience: "internal",
     group: "internal",
-    description: "Internal new-order alert with operational stock and Autopart detail.",
+    description: "Internal new-order alert for ops and the assigned sales representative.",
     scenarios: [
       { id: "normal", label: "Normal order" },
       { id: "backorder", label: "Order with backorder" },

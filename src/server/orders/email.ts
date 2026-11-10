@@ -5,8 +5,9 @@
  */
 
 import { moneyToString, parseMoney } from "@/domain/money";
+import { orderPlacedByLabel } from "@/domain/order-sales-rep-notification";
 import type { EmailMessage } from "@/infra/email";
-import { formatDate } from "@/lib/datetime";
+import { formatDate, formatOperationalDateTime } from "@/lib/datetime";
 import { publicSiteUrl, renderTransactionalEmailShell } from "@/server/email/shell";
 import {
   emailAccountManagerCard,
@@ -68,6 +69,9 @@ export type OrderEmailSnapshot = {
   /** Present when the order was created from an accepted quotation. */
   sourceQuoteNumber: string | null;
   fulfilmentChoice?: "DELIVERY" | "COLLECTION";
+  /** Set when internal staff placed the order on behalf of the customer. */
+  placedByStaffName?: string | null;
+  placedByStaffUserId?: string | null;
   portalOrderUrl: string;
   adminOrderUrl: string;
 };
@@ -348,7 +352,7 @@ export function buildOrderReceivedInternalBodies(
   text: string;
   html: string;
 } {
-  const subject = `New B2B order ${order.orderNumber} — ${order.companyName}`;
+  const subject = `New Customer Order - ${order.companyName} - ${order.orderNumber}`;
   const salesRep =
     order.salesRepNameSnapshot || order.salesRepCodeSnapshot
       ? `${order.salesRepNameSnapshot ?? "—"}${order.salesRepCodeSnapshot ? ` (${order.salesRepCodeSnapshot})` : ""}`
@@ -357,20 +361,39 @@ export function buildOrderReceivedInternalBodies(
   const quoteOrigin = order.sourceQuoteNumber
     ? `Created from quotation ${order.sourceQuoteNumber}`
     : null;
+  const placedAtLabel =
+    formatOperationalDateTime(order.placedAt) ?? formatDate(order.placedAt) ?? "—";
+  const placedBy = orderPlacedByLabel({
+    placedByStaffName: order.placedByStaffName,
+    placedByStaffUserId: order.placedByStaffUserId,
+  });
+  const fulfilmentHeading =
+    order.fulfilmentChoice === "COLLECTION" ? "Customer collection" : "Delivery";
+  const fulfilmentLines = formatDeliveryLines(order);
+  const backorderNote = hasBackorder(order)
+    ? "Backorder: one or more lines include backordered quantity — see line detail."
+    : "Backorder: none";
 
   const text = [
-    "NEW B2B ORDER",
+    "NEW CUSTOMER ORDER — RECEIVED / SUBMITTED",
     "",
-    order.orderNumber,
-    order.companyName,
-    `£${formatGbp(order.grandTotal)}`,
+    `Customer: ${order.companyName}`,
+    `Autopart account: ${codeSnap}`,
+    `AB order: ${order.orderNumber}`,
+    `Placed: ${placedAtLabel}`,
+    `Placed by: ${placedBy}`,
+    `Contact: ${order.contact.name} <${order.contact.email}>${
+      order.contact.phone ? ` · ${order.contact.phone}` : ""
+    }`,
     `PO: ${order.poNumber ?? "—"}`,
-    `Sales Rep: ${salesRep}`,
-    ...(quoteOrigin ? [quoteOrigin] : []),
-    `Contact: ${order.contact.name} <${order.contact.email}>`,
+    `Assigned sales representative: ${salesRep}`,
     `Payment terms: ${order.paymentTerms ?? "—"}`,
     `Autopart linked: ${order.autopartAccountLinked ? "Yes" : "No"}`,
-    `Autopart code snapshot: ${codeSnap}`,
+    ...(quoteOrigin ? [quoteOrigin] : []),
+    "",
+    fulfilmentHeading.toUpperCase(),
+    ...fulfilmentLines,
+    backorderNote,
     "",
     "Items:",
     itemsPlain(order, "internal"),
@@ -378,36 +401,54 @@ export function buildOrderReceivedInternalBodies(
     `Goods ex VAT: £${formatGbp(order.subtotal)}`,
     `Delivery: ${deliveryChargeLabel(order)}`,
     `VAT: £${formatGbp(order.vatTotal)}`,
-    `ORDER TOTAL: £${formatGbp(order.grandTotal)} ${order.currency}`,
+    `ORDER TOTAL (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
-    "Status: SUBMITTED (received / pending Autopart handoff — not despatched).",
-    `REVIEW ORDER: ${order.adminOrderUrl}`,
+    "Status: RECEIVED / SUBMITTED (pending Autopart handoff — not despatched).",
+    `VIEW ORDER: ${order.adminOrderUrl}`,
     "",
     "Automotive Brands",
   ].join("\n");
 
   const bodyHtml = `
-${emailHero("New B2B order", order.orderNumber)}
+${emailHero("New customer order", order.orderNumber)}
+${emailStatusCallout(
+  "RECEIVED / SUBMITTED",
+  "Order placed successfully. Pending Autopart handoff — not despatched.",
+  "neutral",
+)}
 ${emailReferencePanel([
-  { label: "Company", value: order.companyName },
-  { label: "Total", value: `£${formatGbp(order.grandTotal)}` },
+  { label: "Customer", value: order.companyName },
+  { label: "Autopart account", value: codeSnap },
+  { label: "AB order", value: order.orderNumber },
+  { label: "Placed", value: placedAtLabel },
+  { label: "Placed by", value: placedBy },
+  { label: "Contact", value: `${order.contact.name} <${order.contact.email}>` },
   { label: "PO", value: order.poNumber ?? "—" },
   { label: "Sales rep", value: salesRep },
-  { label: "Contact", value: `${order.contact.name} <${order.contact.email}>` },
   { label: "Payment terms", value: order.paymentTerms ?? "—" },
   { label: "Autopart linked", value: order.autopartAccountLinked ? "Yes" : "No" },
-  { label: "Autopart code", value: codeSnap },
+  { label: "Total inc VAT", value: `£${formatGbp(order.grandTotal)}` },
   ...(quoteOrigin ? [{ label: "Quotation", value: order.sourceQuoteNumber! }] : []),
 ])}
+${emailInfoPanel(fulfilmentHeading, fulfilmentLines)}
+${
+  hasBackorder(order)
+    ? emailStatusCallout(
+        "Backorder lines present",
+        "See ordered / available / backorder quantities on each line below.",
+        "warning",
+      )
+    : ""
+}
 ${emailProductTable(toProductLines(order))}
 ${emailTotalsBlock(totalsFrom(order))}
-${emailParagraph("Status: SUBMITTED (received / pending Autopart handoff — not despatched).", true)}`;
+${emailParagraph("Status: RECEIVED / SUBMITTED — not despatched.", true)}`;
 
   const html = renderTransactionalEmailShell({
     variant: "internal",
-    preheader: `New B2B order ${order.orderNumber}`,
+    preheader: `New customer order ${order.orderNumber} — ${order.companyName}`,
     bodyHtml,
-    cta: { label: "Review order", href: order.adminOrderUrl },
+    cta: { label: "View order", href: order.adminOrderUrl },
     footer: footer ?? { fromName: "Automotive Brands" },
   });
 

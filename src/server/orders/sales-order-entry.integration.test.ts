@@ -712,7 +712,16 @@ describe("sales order entry on behalf of a customer", () => {
     expect(emails).toHaveLength(1);
     expect(emails[0]?.toEmail).toBe(contact.email);
     expect(emails[0]?.textBody ?? emails[0]?.htmlBody).not.toContain("INTERNAL phone note");
-    expect(await prisma.transactionalEmail.count({ where: { entityId: order.id, toEmail: rep.email } })).toBe(0);
+    // Assigned sales rep receives the internal order notification (not the customer confirmation).
+    const repInternal = await prisma.transactionalEmail.findMany({
+      where: {
+        entityId: order.id,
+        purpose: "ORDER_RECEIVED_INTERNAL",
+        toEmail: rep.email.toLowerCase(),
+      },
+    });
+    expect(repInternal).toHaveLength(1);
+    expect(repInternal[0]?.toEmail).toBe(rep.email.toLowerCase());
 
     const activities = await prisma.activity.findMany({
       where: { companyId: company.id, metadata: { path: ["salesOrderId"], equals: order.id } },
