@@ -6,12 +6,17 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { BrandLogoPicker } from "@/components/cms/SectionSettings";
 import { slugifyCatalogue } from "@/domain/catalogue";
-import { listCatalogueCategoriesFn, saveCatalogueCategoryFn, deleteCatalogueCategoryFn } from "@/server/phase2/fns";
+import {
+  listCatalogueCategoriesFn,
+  saveCatalogueCategoryFn,
+  deleteCatalogueCategoryFn,
+} from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/categories")({
-  beforeLoad: ({ location }) => guardStaffPage("catalogue.categories.view", location.href, "/admin"),
+  beforeLoad: ({ location }) =>
+    guardStaffPage("catalogue.categories.view", location.href, "/admin"),
   head: () => ({ meta: [{ title: "Categories — Automotive Brands Admin" }] }),
   component: AdminCategories,
 });
@@ -45,7 +50,9 @@ function AdminCategories() {
       setRows(r.data);
     }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   return (
     <div>
@@ -53,7 +60,13 @@ function AdminCategories() {
         title="Categories"
         sub="Hierarchical catalogue structure. Deleting a category unassigns its products and moves child categories up one level."
         actions={
-          <button type="button" className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase text-primary-foreground" onClick={() => setEdit({ name: "", slug: "", parentId: null, isActive: true, sortOrder: 0 })}>
+          <button
+            type="button"
+            className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase text-primary-foreground"
+            onClick={() =>
+              setEdit({ name: "", slug: "", parentId: null, isActive: true, sortOrder: 0 })
+            }
+          >
             Add category
           </button>
         }
@@ -73,20 +86,39 @@ function AdminCategories() {
             </thead>
             <tbody>
               {rows.map((c, i) => (
-                <tr key={c.id} className={cn("border-b border-border/60", i % 2 && "bg-surface/30")}>
-                  <td className="px-3 py-2 font-medium" style={{ paddingLeft: 12 + c.depth * 16 }}>{c.name}</td>
+                <tr
+                  key={c.id}
+                  className={cn("border-b border-border/60", i % 2 && "bg-surface/30")}
+                >
+                  <td className="px-3 py-2 font-medium" style={{ paddingLeft: 12 + c.depth * 16 }}>
+                    {c.name}
+                  </td>
                   <td className="px-3 py-2 text-steel">{c.parentName ?? "—"}</td>
                   <td className="num px-3 py-2 text-right">{c.productCount}</td>
-                  <td className="px-3 py-2"><StatusBadge tone={c.isActive ? "good" : "warn"}>{c.isActive ? "Active" : "Hidden"}</StatusBadge></td>
+                  <td className="px-3 py-2">
+                    <StatusBadge tone={c.isActive ? "good" : "warn"}>
+                      {c.isActive ? "Active" : "Hidden"}
+                    </StatusBadge>
+                  </td>
                   <td className="px-3 py-2 text-right">
-                    <button type="button" className="text-[12px] font-semibold text-primary" onClick={() => setEdit(c)}>Manage</button>
+                    <button
+                      type="button"
+                      className="text-[12px] font-semibold text-primary"
+                      onClick={() => setEdit(c)}
+                    >
+                      Manage
+                    </button>
                     <button
                       type="button"
                       className="ml-3 text-[12px] font-semibold text-bad"
                       onClick={() => {
                         void (async () => {
-                          const products = c.productCount === 1 ? "1 product" : `${c.productCount} products`;
-                          const children = c.childCount === 1 ? "1 child category" : `${c.childCount} child categories`;
+                          const products =
+                            c.productCount === 1 ? "1 product" : `${c.productCount} products`;
+                          const children =
+                            c.childCount === 1
+                              ? "1 child category"
+                              : `${c.childCount} child categories`;
                           if (
                             !window.confirm(
                               `Delete ${c.name}? ${products} will become uncategorised. ${children} will move up one level.`,
@@ -114,63 +146,155 @@ function AdminCategories() {
         </div>
       </div>
       {edit ? (
-        <Drawer open title={edit.id ? "Manage category" : "Add category"} onClose={() => setEdit(null)}>
-          <form className="grid gap-4" onSubmit={(e) => {
-            e.preventDefault();
-            void (async () => {
-              const r = await saveCatalogueCategoryFn({
-                data: {
-                  id: edit.id,
-                  name: edit.name,
-                  slug: edit.slug || slugifyCatalogue(edit.name ?? ""),
-                  description: edit.description ?? "",
-                  parentId: edit.parentId || null,
-                  isActive: edit.isActive ?? true,
-                  sortOrder: edit.sortOrder ?? 0,
-                  imageMediaId: edit.imageMediaId ?? "",
-                  imageAlt: edit.imageAlt ?? "",
-                },
-              });
-              if (!r.ok) {
-                toast.error(r.error);
-                return;
-              }
-              toast.success("Category saved");
-              setEdit(null);
-              await load();
-            })();
-          }}>
-            <Field label="Name"><input required value={edit.name ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, name: e.target.value } : prev))} className={inputClass} /></Field>
-            <Field label="Slug"><input value={edit.slug ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, slug: e.target.value } : prev))} className={inputClass} /></Field>
+        <Drawer
+          open
+          title={edit.id ? "Manage category" : "Add category"}
+          onClose={() => setEdit(null)}
+        >
+          <form
+            className="grid gap-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void (async () => {
+                const r = await saveCatalogueCategoryFn({
+                  data: {
+                    id: edit.id,
+                    name: edit.name,
+                    slug: edit.slug || slugifyCatalogue(edit.name ?? ""),
+                    description: edit.description ?? "",
+                    parentId: edit.parentId || null,
+                    isActive: edit.isActive ?? true,
+                    sortOrder: edit.sortOrder ?? 0,
+                    imageMediaId: edit.imageMediaId ?? "",
+                    imageAlt: edit.imageAlt ?? "",
+                  },
+                });
+                if (!r.ok) {
+                  toast.error(r.error);
+                  return;
+                }
+                toast.success("Category saved");
+                setEdit(null);
+                await load();
+              })();
+            }}
+          >
+            <Field label="Name">
+              <input
+                required
+                value={edit.name ?? ""}
+                onChange={(e) =>
+                  setEdit((prev) => (prev ? { ...prev, name: e.target.value } : prev))
+                }
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Slug">
+              <input
+                value={edit.slug ?? ""}
+                onChange={(e) =>
+                  setEdit((prev) => (prev ? { ...prev, slug: e.target.value } : prev))
+                }
+                className={inputClass}
+              />
+            </Field>
             <Field label="Parent">
-              <select value={edit.parentId ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, parentId: e.target.value || null } : prev))} className={inputClass}>
+              <select
+                value={edit.parentId ?? ""}
+                onChange={(e) =>
+                  setEdit((prev) => (prev ? { ...prev, parentId: e.target.value || null } : prev))
+                }
+                className={inputClass}
+              >
                 <option value="">Top level</option>
-                {rows.filter((c) => c.id !== edit.id).map((c) => (
-                  <option key={c.id} value={c.id}>{"— ".repeat(c.depth)}{c.name}</option>
-                ))}
+                {rows
+                  .filter((c) => c.id !== edit.id)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {"— ".repeat(c.depth)}
+                      {c.name}
+                    </option>
+                  ))}
               </select>
             </Field>
-            <Field label="Description"><textarea value={edit.description ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, description: e.target.value } : prev))} className={`${inputClass} min-h-20`} /></Field>
-            <Field label="Display order"><input type="number" value={edit.sortOrder ?? 0} onChange={(e) => setEdit((prev) => (prev ? { ...prev, sortOrder: Number(e.target.value) } : prev))} className={inputClass} /></Field>
+            <Field
+              label="Description"
+              hint="Short introduction shown beneath the category heading and used for search engine descriptions."
+            >
+              <textarea
+                value={edit.description ?? ""}
+                onChange={(e) =>
+                  setEdit((prev) => (prev ? { ...prev, description: e.target.value } : prev))
+                }
+                className={`${inputClass} min-h-20`}
+                placeholder="Short customer-facing introduction for this category"
+              />
+            </Field>
+            <Field label="Display order">
+              <input
+                type="number"
+                value={edit.sortOrder ?? 0}
+                onChange={(e) =>
+                  setEdit((prev) => (prev ? { ...prev, sortOrder: Number(e.target.value) } : prev))
+                }
+                className={inputClass}
+              />
+            </Field>
             <label className="flex items-center gap-2 text-[13px]">
-              <input type="checkbox" checked={edit.isActive ?? true} onChange={(e) => setEdit((prev) => (prev ? { ...prev, isActive: e.target.checked } : prev))} />
+              <input
+                type="checkbox"
+                checked={edit.isActive ?? true}
+                onChange={(e) =>
+                  setEdit((prev) => (prev ? { ...prev, isActive: e.target.checked } : prev))
+                }
+              />
               Active
             </label>
             <BrandLogoPicker
               label="Category image"
               usage="CATEGORY_IMAGE"
-              logo={edit.imageMediaId ? { mediaId: edit.imageMediaId, src: edit.imageSrc ?? undefined, alt: edit.imageAlt ?? undefined } : undefined}
-              onChange={(next) => setEdit((prev) => (prev ? { ...prev, imageMediaId: next?.mediaId ?? null, imageSrc: next?.src ?? null, imageAlt: next?.alt ?? null } : prev))}
+              logo={
+                edit.imageMediaId
+                  ? {
+                      mediaId: edit.imageMediaId,
+                      src: edit.imageSrc ?? undefined,
+                      alt: edit.imageAlt ?? undefined,
+                    }
+                  : undefined
+              }
+              onChange={(next) =>
+                setEdit((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        imageMediaId: next?.mediaId ?? null,
+                        imageSrc: next?.src ?? null,
+                        imageAlt: next?.alt ?? null,
+                      }
+                    : prev,
+                )
+              }
             />
-            <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">Save category</button>
+            <button
+              type="submit"
+              className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground"
+            >
+              Save category
+            </button>
             {edit.id ? (
               <button
                 type="button"
                 className="h-11 rounded-md border border-bad/40 text-[13px] font-bold uppercase text-bad"
                 onClick={() => {
                   void (async () => {
-                    const products = (edit.productCount ?? 0) === 1 ? "1 product" : `${edit.productCount ?? 0} products`;
-                    const children = (edit.childCount ?? 0) === 1 ? "1 child category" : `${edit.childCount ?? 0} child categories`;
+                    const products =
+                      (edit.productCount ?? 0) === 1
+                        ? "1 product"
+                        : `${edit.productCount ?? 0} products`;
+                    const children =
+                      (edit.childCount ?? 0) === 1
+                        ? "1 child category"
+                        : `${edit.childCount ?? 0} child categories`;
                     if (
                       !window.confirm(
                         `Delete ${edit.name}? ${products} will become uncategorised. ${children} will move up one level.`,

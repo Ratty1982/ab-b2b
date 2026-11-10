@@ -1214,7 +1214,7 @@ export async function listPublicProducts(input: {
     input.categorySlug
       ? prisma.category.findUnique({
           where: { slug: input.categorySlug },
-          select: { id: true, slug: true, name: true, isActive: true },
+          select: { id: true, slug: true, name: true, description: true, isActive: true },
         })
       : Promise.resolve(null),
     loadPublicCatalogueNav({ brandSlug: input.brandSlug }),
@@ -1326,7 +1326,13 @@ export async function listPublicProducts(input: {
     categories: nav.categories,
     categorySlugsByBrand: nav.categorySlugsByBrand,
     categoryInBrandScope,
-    category: activeCategory ? { slug: activeCategory.slug, name: activeCategory.name } : null,
+    category: activeCategory
+      ? {
+          slug: activeCategory.slug,
+          name: activeCategory.name,
+          description: activeCategory.description?.trim() || null,
+        }
+      : null,
   };
 }
 

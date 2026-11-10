@@ -6,15 +6,22 @@ import {
   productsCategoryFnInput,
   productsIndexLoaderDeps,
 } from "@/domain/public-catalogue-nav";
+import {
+  publicCategoryMetaDescription,
+  publicCategorySubtitle,
+} from "@/domain/public-category-heading";
 import { getClientSession } from "@/server/auth/session";
 import { listPublicCatalogueFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/products/category/$slug")({
-  validateSearch: (search: Record<string, unknown>): { brand?: string; q?: string; page?: number } => {
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { brand?: string; q?: string; page?: number } => {
     const out: { brand?: string; q?: string; page?: number } = {};
     if (typeof search["brand"] === "string") out.brand = search["brand"];
     if (typeof search["q"] === "string") out.q = search["q"];
-    if (typeof search["page"] === "string" || typeof search["page"] === "number") out.page = Number(search["page"]);
+    if (typeof search["page"] === "string" || typeof search["page"] === "number")
+      out.page = Number(search["page"]);
     return out;
   },
   loaderDeps: ({ search }) => productsIndexLoaderDeps(search),
@@ -45,9 +52,21 @@ export const Route = createFileRoute("/products/category/$slug")({
   headers: () => ({
     "Cache-Control": "private, no-store",
   }),
-  head: ({ loaderData }) => ({
-    meta: [{ title: `${loaderData?.category?.name ?? "Category"} — Automotive Brands` }],
-  }),
+  head: ({ loaderData }) => {
+    const name = loaderData?.category?.name ?? "Category";
+    const description = publicCategoryMetaDescription({
+      name,
+      description: loaderData?.category?.description,
+    });
+    return {
+      meta: [
+        { title: `${name} — Automotive Brands` },
+        { name: "description", content: description },
+        { property: "og:title", content: `${name} — Automotive Brands` },
+        { property: "og:description", content: description },
+      ],
+    };
+  },
   component: CategoryPage,
 });
 
@@ -67,6 +86,7 @@ function CategoryPage() {
     <PublicCatalogueShell
       data={data}
       heading={category.name}
+      intro={publicCategorySubtitle(category.description) ?? undefined}
       breadcrumbs={[
         { label: "Home", to: "/" },
         { label: "Products", to: "/products" },

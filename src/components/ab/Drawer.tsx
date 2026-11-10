@@ -91,10 +91,12 @@ export function Field({
   label,
   children,
   htmlFor,
+  hint,
 }: {
   label: string;
   children: React.ReactNode;
   htmlFor?: string;
+  hint?: string;
 }) {
   return (
     <div className="grid gap-1.5">
@@ -105,6 +107,7 @@ export function Field({
         {label}
       </label>
       {children}
+      {hint ? <p className="text-[12px] leading-snug text-steel">{hint}</p> : null}
     </div>
   );
 }
