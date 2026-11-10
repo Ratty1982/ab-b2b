@@ -383,7 +383,9 @@ export function AppShell({
           </div>
         ) : null}
 
-        <main className="min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto">{children}</main>
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip overflow-y-auto">
+          {children}
+        </main>
       </div>
     </div>
   );

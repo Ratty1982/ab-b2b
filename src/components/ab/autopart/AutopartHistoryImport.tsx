@@ -49,18 +49,24 @@ function FileSlot({
     <div className="rounded-md border border-dashed border-border p-3">
       <div className="text-[13px] font-semibold">{label}</div>
       <p className="mt-1 text-[12px] text-steel">{help}</p>
-      <label className="mt-3 flex cursor-pointer flex-col gap-1 rounded-md bg-surface/40 px-3 py-4 text-[13px]">
+      {/*
+        Keep the file input inside a relative drop target (not page-level sr-only).
+        Absolute sr-only inputs can scroll the page to a blank region when focused
+        after choosing a file inside AppShell's overflow container.
+      */}
+      <label className="relative mt-3 flex cursor-pointer flex-col gap-1 overflow-hidden rounded-md bg-surface/40 px-3 py-4 text-[13px]">
         <span className="font-semibold">Drop a file here, or choose a file</span>
         <span className="text-[12px] text-steel">CSV or text export</span>
         <input
           type="file"
           accept=".csv,.txt,.tsv,text/plain,text/csv"
           disabled={disabled}
-          className="sr-only"
+          className="absolute inset-0 cursor-pointer opacity-0"
           onChange={(event) => {
             const next = event.target.files?.[0];
             event.target.value = "";
             if (next) onChoose(next);
+            if (event.target instanceof HTMLElement) event.target.blur();
           }}
         />
       </label>
@@ -205,7 +211,23 @@ export function AutopartHistoryImport({
     toast.message("Import resumed. History stays unchanged until the job finishes.");
   }
 
+  function setupScroller(): HTMLElement | null {
+    return (
+      document.querySelector<HTMLElement>("[data-customer-setup-scroll]") ??
+      document.querySelector<HTMLElement>("main")
+    );
+  }
+
+  function restoreScrollTop(scroller: HTMLElement | null, top: number) {
+    if (!scroller) return;
+    requestAnimationFrame(() => {
+      scroller.scrollTop = top;
+    });
+  }
+
   async function choose(which: "product" | "ledger", file: File) {
+    const scroller = setupScroller();
+    const scrollTop = scroller?.scrollTop ?? 0;
     setPreview(null);
     setSaved(null);
     setProgress(`Uploading ${file.name}…`);
@@ -225,6 +247,8 @@ export function AutopartHistoryImport({
       toast.error(error instanceof Error ? error.message : "The file could not be uploaded");
     } finally {
       setProgress(null);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      restoreScrollTop(scroller, scrollTop);
     }
   }
 
@@ -241,6 +265,8 @@ export function AutopartHistoryImport({
 
   async function previewImport(samplePage = 1, rejectedPage = preview?.rejectedPage ?? 1) {
     if (!productFile && !ledgerFile) return;
+    const scroller = setupScroller();
+    const scrollTop = scroller?.scrollTop ?? 0;
     setBusy(true);
     setSaved(null);
     const result = await previewCustomerSalesHistoryUploadFn({
@@ -257,11 +283,13 @@ export function AutopartHistoryImport({
     setBusy(false);
     if (!result.ok) {
       toast.error(result.error);
+      restoreScrollTop(scroller, scrollTop);
       return;
     }
     setPreview(result.data);
     setFilter("ALL");
     setPage(1);
+    restoreScrollTop(scroller, scrollTop);
   }
 
   async function confirmImport() {
