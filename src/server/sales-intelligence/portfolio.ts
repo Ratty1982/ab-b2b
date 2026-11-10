@@ -46,6 +46,13 @@ import {
   type PortfolioKpis,
   type PortfolioOpportunity,
 } from "@/domain/sales-portfolio";
+import {
+  parsePortfolioAccountClass,
+  PORTFOLIO_ACCOUNT_CLASS_OPTIONS,
+  PORTFOLIO_ELIGIBILITY_METHODOLOGY,
+  PORTFOLIO_RETAIL_INTERNAL_CLASSIFICATIONS,
+  type PortfolioAccountClass,
+} from "@/domain/sales-portfolio-eligibility";
 
 async function requirePortfolioActor(actorUserId: string): Promise<LoadedAccessProfile> {
   const profile = await requireSystemPermission(actorUserId, "sales_intelligence.portfolio.view");
@@ -70,6 +77,8 @@ const querySchema = z.object({
   customerGroupId: z.string().optional().nullable(),
   brandId: z.string().optional().nullable(),
   filter: z.string().optional().nullable(),
+  /** Trade vs retail/internal via AutopartAccount.classification — default TRADE. */
+  accountClass: z.string().optional().nullable(),
   q: z.string().max(200).optional().nullable(),
   page: z.number().int().min(1).optional().nullable(),
   pageSize: z.number().int().min(1).max(200).optional().nullable(),
@@ -79,13 +88,69 @@ const querySchema = z.object({
 
 type PortfolioQuery = z.infer<typeof querySchema>;
 
+/**
+ * Server-side ACTIVE (+ optional Autopart trade/retail) gate applied to every portfolio path.
+ * Does not require sales in the selected period.
+ */
+async function selectEligiblePortfolioCompanyIds(input: {
+  candidateIds: string[] | null;
+  accountClass: PortfolioAccountClass;
+}): Promise<string[]> {
+  if (input.candidateIds && input.candidateIds.length === 0) return [];
+
+  const accountClassWhere =
+    input.accountClass === "RETAIL_INTERNAL"
+      ? {
+          autopartAccounts: {
+            some: {
+              classification: { in: [...PORTFOLIO_RETAIL_INTERNAL_CLASSIFICATIONS] },
+            },
+          },
+        }
+      : input.accountClass === "TRADE"
+        ? {
+            NOT: {
+              autopartAccounts: {
+                some: {
+                  classification: { in: [...PORTFOLIO_RETAIL_INTERNAL_CLASSIFICATIONS] },
+                },
+              },
+            },
+          }
+        : {};
+
+  if (input.candidateIds == null) {
+    const rows = await prisma.company.findMany({
+      where: { status: "ACTIVE", ...accountClassWhere },
+      select: { id: true },
+      take: 50_000,
+    });
+    return rows.map((r) => r.id);
+  }
+
+  const out: string[] = [];
+  for (const chunk of chunkArray(input.candidateIds, SAFE_IN_LIST_CHUNK)) {
+    const rows = await prisma.company.findMany({
+      where: { id: { in: chunk }, status: "ACTIVE", ...accountClassWhere },
+      select: { id: true },
+    });
+    for (const r of rows) out.push(r.id);
+  }
+  return out;
+}
+
 async function resolvePortfolioCompanyIds(
   profile: LoadedAccessProfile,
   input: PortfolioQuery,
-): Promise<{ companyIds: string[]; salesRepFilterLabel: string | null }> {
+): Promise<{
+  companyIds: string[];
+  salesRepFilterLabel: string | null;
+  accountClass: PortfolioAccountClass;
+}> {
+  const accountClass = parsePortfolioAccountClass(input.accountClass);
   const scope = await resolveSalesIntelligenceCompanyScope(profile);
   if (scope !== "all" && scope.length === 0) {
-    return { companyIds: [], salesRepFilterLabel: null };
+    return { companyIds: [], salesRepFilterLabel: null, accountClass };
   }
 
   let companyIds = scope === "all" ? null : [...scope];
@@ -96,18 +161,38 @@ async function resolvePortfolioCompanyIds(
     select: { id: true, user: { select: { name: true } } },
   });
 
+  async function applyCustomerGroup(ids: string[]): Promise<string[]> {
+    if (!input.customerGroupId || ids.length === 0) return ids;
+    const members = await prisma.company.findMany({
+      where: {
+        customerGroupId: input.customerGroupId,
+        status: "ACTIVE",
+        id: { in: ids },
+      },
+      select: { id: true },
+    });
+    return members.map((m) => m.id);
+  }
+
   if (!canSelectSalesRep(profile)) {
-    if (!actorRep) return { companyIds: [], salesRepFilterLabel: null };
+    if (!actorRep) return { companyIds: [], salesRepFilterLabel: null, accountClass };
     const assigned = await prisma.companyAssignment.findMany({
       where: { salesRepId: actorRep.id },
       select: { companyId: true },
     });
     const assignedIds = assigned.map((a) => a.companyId);
-    const filtered =
+    const scoped =
       companyIds == null ? assignedIds : assignedIds.filter((id) => companyIds!.includes(id));
+    const eligible = await applyCustomerGroup(
+      await selectEligiblePortfolioCompanyIds({
+        candidateIds: scoped,
+        accountClass,
+      }),
+    );
     return {
-      companyIds: filtered,
+      companyIds: eligible,
       salesRepFilterLabel: actorRep.user.name ?? "My portfolio",
+      accountClass,
     };
   }
 
@@ -117,17 +202,15 @@ async function resolvePortfolioCompanyIds(
       distinct: ["companyId"],
     });
     const assignedSet = new Set(assigned.map((a) => a.companyId));
-    if (companyIds == null) {
-      const all = await prisma.company.findMany({
-        where: { status: { in: ["ACTIVE", "ON_HOLD", "PENDING_APPROVAL", "PROSPECT"] } },
-        select: { id: true },
-        take: 50_000,
-      });
-      companyIds = all.map((c) => c.id).filter((id) => !assignedSet.has(id));
-    } else {
-      companyIds = companyIds.filter((id) => !assignedSet.has(id));
-    }
-    return { companyIds, salesRepFilterLabel: "Unassigned" };
+    const eligiblePool = await selectEligiblePortfolioCompanyIds({
+      candidateIds: companyIds,
+      accountClass,
+    });
+    return {
+      companyIds: await applyCustomerGroup(eligiblePool.filter((id) => !assignedSet.has(id))),
+      salesRepFilterLabel: "Unassigned",
+      accountClass,
+    };
   }
 
   if (input.salesRepId) {
@@ -140,40 +223,30 @@ async function resolvePortfolioCompanyIds(
       where: { id: input.salesRepId },
       select: { user: { select: { name: true } }, code: true },
     });
-    const filtered =
+    const scoped =
       companyIds == null ? assignedIds : assignedIds.filter((id) => companyIds!.includes(id));
+    const eligible = await applyCustomerGroup(
+      await selectEligiblePortfolioCompanyIds({
+        candidateIds: scoped,
+        accountClass,
+      }),
+    );
     return {
-      companyIds: filtered,
+      companyIds: eligible,
       salesRepFilterLabel: rep?.user.name ?? rep?.code ?? "Sales rep",
+      accountClass,
     };
   }
 
-  if (companyIds == null) {
-    // Management "all" — still bound to companies that have sales or assignments for practicality.
-    // Pull active companies with Autopart history or assignment in chunks via sales presence later.
-    const companies = await prisma.company.findMany({
-      where: {
-        OR: [
-          { autopartCustomerCode: { not: null } },
-          { assignments: { some: {} } },
-          { autopartSalesLines: { some: {} } },
-        ],
-      },
-      select: { id: true },
-      take: 20_000,
-    });
-    companyIds = companies.map((c) => c.id);
-  }
+  // Management "all" / scoped list — ACTIVE (+ account class). Sales history not required.
+  const eligible = await applyCustomerGroup(
+    await selectEligiblePortfolioCompanyIds({
+      candidateIds: companyIds,
+      accountClass,
+    }),
+  );
 
-  if (input.customerGroupId) {
-    const members = await prisma.company.findMany({
-      where: { customerGroupId: input.customerGroupId, id: { in: companyIds } },
-      select: { id: true },
-    });
-    companyIds = members.map((m) => m.id);
-  }
-
-  return { companyIds, salesRepFilterLabel: null };
+  return { companyIds: eligible, salesRepFilterLabel: null, accountClass };
 }
 
 async function netSalesByCompany(
@@ -429,7 +502,10 @@ export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
       : previousComparableBusinessPeriod(current.range, current.period);
   const currentPeriodDays = daysInclusive(current.range);
 
-  const { companyIds, salesRepFilterLabel } = await resolvePortfolioCompanyIds(profile, input);
+  const { companyIds, salesRepFilterLabel, accountClass } = await resolvePortfolioCompanyIds(
+    profile,
+    input,
+  );
   const asOf = todayLondonDateOnly();
   const cadenceFrom = addDaysIso(asOf, -729);
   const actorSalesRepId = await resolveActorSalesRepId(profile.userId);
@@ -631,10 +707,11 @@ export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
       opportunities: opportunities.slice(0, 8),
     };
 
-    // KPIs over full filtered-by-q set before attention filters
+    // KPIs over the same eligible ACTIVE population (after q), before attention filters.
+    // Active Customers = eligible portfolio customers, including zero-sales accounts.
     kpiCurrent += cur;
     kpiPrevious += prev;
-    if (cur !== 0n || (productCounts.get(c.id) ?? 0) > 0) activeCustomers += 1;
+    activeCustomers += 1;
     if (attention) needingAttention += 1;
     if (dormant) dormantCustomers += 1;
     if (movement.growing) growingCustomers += 1;
@@ -714,6 +791,8 @@ export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
     salesRepFilterLabel,
     canSelectSalesRep: canSelectSalesRep(profile),
     actorSalesRepId,
+    accountClass,
+    accountClassOptions: PORTFOLIO_ACCOUNT_CLASS_OPTIONS,
     kpis,
     topOpportunities,
     rows: pageRows,
@@ -741,6 +820,7 @@ async function resolveActorSalesRepId(userId: string): Promise<string | null> {
 }
 
 export const PORTFOLIO_METHODOLOGY = {
+  eligibility: PORTFOLIO_ELIGIBILITY_METHODOLOGY,
   salesSource:
     "Autopart realised sales (AutopartSalesLine / AutopartSalesDocument). AB Order lines are not used (avoids double counting).",
   comparison:
@@ -752,7 +832,7 @@ export const PORTFOLIO_METHODOLOGY = {
   purchaseGap:
     "Needs attention when days since last invoice purchase ≥ max(14, ceil(typicalInterval × 1.5)).",
   dormant:
-    "Dormant when days since last invoice purchase ≥ max(45, ceil(typicalInterval × 2)). Insufficient history is never labelled dormant.",
+    "Dormant when days since last invoice purchase ≥ max(45, ceil(typicalInterval × 2)). Insufficient history is never labelled dormant (newly activated customers with no invoice cadence stay visible under No sales / Insufficient history).",
   materialDecline:
     "Needs Attention decline requires both ≥ 20% fall and ≥ £100 absolute fall vs the comparable period. Smaller %/£ movements are not attention cases (they may still show as movement in the table).",
   stoppedProducts:
@@ -762,6 +842,8 @@ export const PORTFOLIO_METHODOLOGY = {
   brandGap:
     `Within a Customer Group, brand Y is suggested when ≥ ${PORTFOLIO_CROSS_SELL_CONFIG.minBrandGapPeers} other members buy Y and this company has no invoice history for Y.`,
   credits: "Credits remain signed negative financial activity and never create invoice purchase presence or cadence events.",
+  activeCustomersKpi:
+    "Active Customers counts every eligible ACTIVE company in the current portfolio scope (including zero-sales accounts). It matches My Customers / CSV / attention populations after the same status and account-class filters.",
 } as const;
 
 export async function exportSalesRepPortfolioCsv(actorUserId: string, raw: unknown): Promise<string> {
@@ -846,11 +928,20 @@ export async function getPortfolioCustomerDetail(actorUserId: string, raw: unkno
     throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);
   }
 
+  const company = await prisma.company.findUnique({
+    where: { id: input.companyId },
+    select: { status: true },
+  });
+  if (!company || company.status !== "ACTIVE") {
+    throw new AuthError("Customer not found in portfolio scope", "NOT_FOUND", 404);
+  }
+
   const portfolio = await getSalesRepPortfolio(actorUserId, {
     period: input.period,
     from: input.from,
     to: input.to,
     filter: "ALL",
+    accountClass: "ALL",
     page: 1,
     allRows: true,
   });

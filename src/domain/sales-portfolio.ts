@@ -5,6 +5,11 @@ import type { BusinessPeriodPreset } from "@/domain/sales-history-period";
 import type { AttentionReason, AttentionReasonCode } from "@/domain/sales-attention";
 import type { PurchaseCadence } from "@/domain/sales-cadence";
 import { RANGE_OPPORTUNITY_CONFIG } from "@/domain/sales-opportunity";
+import {
+  parsePortfolioAccountClass,
+  PORTFOLIO_ACCOUNT_CLASS_DEFAULT,
+  type PortfolioAccountClass,
+} from "@/domain/sales-portfolio-eligibility";
 
 /** Max customers shown in the Top Opportunities strip. */
 export const PORTFOLIO_TOP_OPPORTUNITIES_LIMIT = 8;
@@ -147,6 +152,8 @@ export type PortfolioUrlSearch = {
   customerGroupId?: string;
   brandId?: string;
   filter?: PortfolioFilter;
+  /** Trade / retail-internal / all ACTIVE — default TRADE. */
+  accountClass?: PortfolioAccountClass;
   q?: string;
   page?: number;
   companyId?: string;
@@ -187,6 +194,8 @@ export function parsePortfolioUrlSearch(
   if (typeof search["filter"] === "string" && FILTERS.has(search["filter"])) {
     out.filter = search["filter"] as PortfolioFilter;
   }
+  const accountClass = parsePortfolioAccountClass(search["accountClass"]);
+  if (accountClass !== PORTFOLIO_ACCOUNT_CLASS_DEFAULT) out.accountClass = accountClass;
   if (typeof search["q"] === "string" && search["q"].trim()) out.q = search["q"].trim().slice(0, 200);
   const page =
     typeof search["page"] === "number"
@@ -213,6 +222,9 @@ export function compactPortfolioUrlSearch(search: PortfolioUrlSearch): Portfolio
   if (search.customerGroupId) out.customerGroupId = search.customerGroupId;
   if (search.brandId) out.brandId = search.brandId;
   if (search.filter && search.filter !== "ALL") out.filter = search.filter;
+  if (search.accountClass && search.accountClass !== PORTFOLIO_ACCOUNT_CLASS_DEFAULT) {
+    out.accountClass = search.accountClass;
+  }
   if (search.q) out.q = search.q;
   if (search.page && search.page > 1) out.page = search.page;
   if (search.companyId) out.companyId = search.companyId;
