@@ -47,10 +47,12 @@ import {
   type PortfolioOpportunity,
 } from "@/domain/sales-portfolio";
 import {
+  companyMatchesPortfolioAccountClass,
   parsePortfolioAccountClass,
   PORTFOLIO_ACCOUNT_CLASS_OPTIONS,
   PORTFOLIO_ELIGIBILITY_METHODOLOGY,
   PORTFOLIO_RETAIL_INTERNAL_CLASSIFICATIONS,
+  PORTFOLIO_TRADE_EXCLUDED_CLASSIFICATIONS,
   type PortfolioAccountClass,
 } from "@/domain/sales-portfolio-eligibility";
 
@@ -98,6 +100,7 @@ async function selectEligiblePortfolioCompanyIds(input: {
 }): Promise<string[]> {
   if (input.candidateIds && input.candidateIds.length === 0) return [];
 
+  // Keep in lockstep with companyMatchesPortfolioAccountClass.
   const accountClassWhere =
     input.accountClass === "RETAIL_INTERNAL"
       ? {
@@ -112,7 +115,7 @@ async function selectEligiblePortfolioCompanyIds(input: {
             NOT: {
               autopartAccounts: {
                 some: {
-                  classification: { in: [...PORTFOLIO_RETAIL_INTERNAL_CLASSIFICATIONS] },
+                  classification: { in: [...PORTFOLIO_TRADE_EXCLUDED_CLASSIFICATIONS] },
                 },
               },
             },
@@ -920,8 +923,14 @@ export async function getPortfolioCustomerDetail(actorUserId: string, raw: unkno
       period: z.string().optional().nullable(),
       from: z.string().optional().nullable(),
       to: z.string().optional().nullable(),
+      /** Must match the portfolio account-type filter (default TRADE). */
+      accountClass: z.string().optional().nullable(),
+      salesRepId: z.string().optional().nullable(),
+      unassigned: z.boolean().optional().nullable(),
     })
     .parse(raw);
+
+  const accountClass = parsePortfolioAccountClass(input.accountClass);
 
   const scope = await resolveSalesIntelligenceCompanyScope(profile);
   if (scope !== "all" && !scope.includes(input.companyId)) {
@@ -930,9 +939,28 @@ export async function getPortfolioCustomerDetail(actorUserId: string, raw: unkno
 
   const company = await prisma.company.findUnique({
     where: { id: input.companyId },
-    select: { status: true },
+    select: {
+      status: true,
+      autopartAccounts: { select: { classification: true } },
+    },
   });
-  if (!company || company.status !== "ACTIVE") {
+  if (
+    !company ||
+    !companyMatchesPortfolioAccountClass({
+      companyStatus: company.status,
+      accountClass,
+      linkedClassifications: company.autopartAccounts.map((a) => a.classification),
+    })
+  ) {
+    throw new AuthError("Customer not found in portfolio scope", "NOT_FOUND", 404);
+  }
+
+  const { companyIds } = await resolvePortfolioCompanyIds(profile, {
+    accountClass,
+    salesRepId: input.salesRepId,
+    unassigned: input.unassigned,
+  });
+  if (!companyIds.includes(input.companyId)) {
     throw new AuthError("Customer not found in portfolio scope", "NOT_FOUND", 404);
   }
 
@@ -941,9 +969,12 @@ export async function getPortfolioCustomerDetail(actorUserId: string, raw: unkno
     from: input.from,
     to: input.to,
     filter: "ALL",
-    accountClass: "ALL",
+    accountClass,
+    salesRepId: input.salesRepId,
+    unassigned: input.unassigned,
     page: 1,
     allRows: true,
+    skipWorkspaceOpen: true,
   });
   const row = portfolio.rows.find((r) => r.companyId === input.companyId);
   if (!row) {
@@ -953,6 +984,7 @@ export async function getPortfolioCustomerDetail(actorUserId: string, raw: unkno
     period: portfolio.period,
     comparison: portfolio.comparison,
     customer: row,
+    accountClass,
     methodology: PORTFOLIO_METHODOLOGY,
   };
 }

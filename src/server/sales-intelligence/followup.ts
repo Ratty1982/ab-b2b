@@ -88,6 +88,10 @@ const previewSchema = z.object({
     .optional(),
   companyId: z.string().min(1),
   sku: z.string().max(120).optional().nullable(),
+  /** Portfolio account-type filter — forwarded to detail eligibility (default TRADE). */
+  accountClass: z.string().optional().nullable(),
+  salesRepId: z.string().optional().nullable(),
+  unassigned: z.boolean().optional().nullable(),
   ...periodBits,
   opportunityPeriod: z.string().optional().nullable(),
   historySource: z.enum(["dated", "global", "unified"]).optional(),
@@ -291,6 +295,9 @@ async function buildSnapshot(
       period: input.period ?? "THIS_MONTH",
       from: input.from ?? null,
       to: input.to ?? null,
+      accountClass: input.accountClass ?? null,
+      salesRepId: input.salesRepId ?? null,
+      unassigned: input.unassigned ?? null,
     });
     const reason = (input.sourceReason ?? "CUSTOMER") as SiFollowupReason;
     const allowed = [
@@ -351,6 +358,9 @@ async function buildSnapshot(
         period: input.period ?? "THIS_MONTH",
         from: input.from ?? undefined,
         to: input.to ?? undefined,
+        accountClass: input.accountClass ?? undefined,
+        salesRepId: input.salesRepId ?? undefined,
+        unassigned: input.unassigned ? "1" : undefined,
       })}`,
       capturedAt,
     };

@@ -130,6 +130,14 @@ function SalesRepPortfolioPage() {
     };
   }, [query]);
 
+  function portfolioFollowUpScope() {
+    return {
+      accountClass: query.accountClass,
+      salesRepId: query.salesRepId,
+      unassigned: query.unassigned || null,
+    };
+  }
+
   function patchSearch(patch: Record<string, unknown>) {
     const next: PortfolioUrlSearch = { ...search, page: 1 };
     for (const [k, v] of Object.entries(patch)) {
@@ -465,6 +473,7 @@ function SalesRepPortfolioPage() {
                                 period: query.period,
                                 from: query.from,
                                 to: query.to,
+                                ...portfolioFollowUpScope(),
                               })
                             }
                           />
@@ -570,6 +579,7 @@ function SalesRepPortfolioPage() {
                               period: query.period,
                               from: query.from,
                               to: query.to,
+                              ...portfolioFollowUpScope(),
                             })
                           }
                         />
@@ -742,6 +752,7 @@ function SalesRepPortfolioPage() {
                                         period: query.period,
                                         from: query.from,
                                         to: query.to,
+                                        ...portfolioFollowUpScope(),
                                       })
                                     }
                                   />

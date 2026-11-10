@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   companyMatchesPortfolioAccountClass,
   isRetailInternalAutopartClassification,
+  isTradeExcludedAutopartClassification,
   parsePortfolioAccountClass,
   PORTFOLIO_ACCOUNT_CLASS_DEFAULT,
   PORTFOLIO_RETAIL_INTERNAL_CLASSIFICATIONS,
+  PORTFOLIO_TRADE_EXCLUDED_CLASSIFICATIONS,
 } from "@/domain/sales-portfolio-eligibility";
 import { parsePortfolioUrlSearch, compactPortfolioUrlSearch } from "@/domain/sales-portfolio";
 
@@ -21,6 +23,22 @@ describe("portfolio account eligibility", () => {
     expect(isRetailInternalAutopartClassification("INTERNAL")).toBe(true);
     expect(isRetailInternalAutopartClassification("TRADE_CANDIDATE")).toBe(false);
     expect(isRetailInternalAutopartClassification("OBSOLETE")).toBe(false);
+    expect(isRetailInternalAutopartClassification("DO_NOT_USE")).toBe(false);
+  });
+
+  it("excludes retail/internal and obsolete/do-not-use from TRADE", () => {
+    expect([...PORTFOLIO_TRADE_EXCLUDED_CLASSIFICATIONS]).toEqual([
+      "INTERNAL",
+      "CASH",
+      "STAFF",
+      "OBSOLETE",
+      "DO_NOT_USE",
+    ]);
+    expect(isTradeExcludedAutopartClassification("OBSOLETE")).toBe(true);
+    expect(isTradeExcludedAutopartClassification("DO_NOT_USE")).toBe(true);
+    expect(isTradeExcludedAutopartClassification("TRADE_CANDIDATE")).toBe(false);
+    expect(isTradeExcludedAutopartClassification("UNIDENTIFIED")).toBe(false);
+    expect(isTradeExcludedAutopartClassification("REQUIRES_REVIEW")).toBe(false);
   });
 
   it("requires ACTIVE status for every account class", () => {
@@ -54,7 +72,7 @@ describe("portfolio account eligibility", () => {
     ).toBe(false);
   });
 
-  it("keeps ACTIVE trade and unlinked ACTIVE; excludes retail/internal from TRADE", () => {
+  it("keeps ACTIVE trade and unlinked ACTIVE; excludes retail/internal and obsolete from TRADE", () => {
     expect(
       companyMatchesPortfolioAccountClass({
         companyStatus: "ACTIVE",
@@ -79,6 +97,20 @@ describe("portfolio account eligibility", () => {
     expect(
       companyMatchesPortfolioAccountClass({
         companyStatus: "ACTIVE",
+        accountClass: "TRADE",
+        linkedClassifications: ["OBSOLETE"],
+      }),
+    ).toBe(false);
+    expect(
+      companyMatchesPortfolioAccountClass({
+        companyStatus: "ACTIVE",
+        accountClass: "TRADE",
+        linkedClassifications: ["DO_NOT_USE"],
+      }),
+    ).toBe(false);
+    expect(
+      companyMatchesPortfolioAccountClass({
+        companyStatus: "ACTIVE",
         accountClass: "RETAIL_INTERNAL",
         linkedClassifications: ["INTERNAL"],
       }),
@@ -87,9 +119,47 @@ describe("portfolio account eligibility", () => {
       companyMatchesPortfolioAccountClass({
         companyStatus: "ACTIVE",
         accountClass: "RETAIL_INTERNAL",
+        linkedClassifications: ["OBSOLETE"],
+      }),
+    ).toBe(false);
+    expect(
+      companyMatchesPortfolioAccountClass({
+        companyStatus: "ACTIVE",
+        accountClass: "RETAIL_INTERNAL",
         linkedClassifications: ["TRADE_CANDIDATE"],
       }),
     ).toBe(false);
+  });
+
+  it("handles mixed linked Autopart classifications", () => {
+    expect(
+      companyMatchesPortfolioAccountClass({
+        companyStatus: "ACTIVE",
+        accountClass: "TRADE",
+        linkedClassifications: ["TRADE_CANDIDATE", "INTERNAL"],
+      }),
+    ).toBe(false);
+    expect(
+      companyMatchesPortfolioAccountClass({
+        companyStatus: "ACTIVE",
+        accountClass: "RETAIL_INTERNAL",
+        linkedClassifications: ["TRADE_CANDIDATE", "INTERNAL"],
+      }),
+    ).toBe(true);
+    expect(
+      companyMatchesPortfolioAccountClass({
+        companyStatus: "ACTIVE",
+        accountClass: "TRADE",
+        linkedClassifications: ["TRADE_CANDIDATE", "OBSOLETE"],
+      }),
+    ).toBe(false);
+    expect(
+      companyMatchesPortfolioAccountClass({
+        companyStatus: "ACTIVE",
+        accountClass: "ALL",
+        linkedClassifications: ["OBSOLETE", "DO_NOT_USE"],
+      }),
+    ).toBe(true);
   });
 
   it("parses and compacts accountClass in portfolio URL search", () => {

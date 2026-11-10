@@ -8,6 +8,7 @@ import { AuthError } from "@/server/rbac/guards";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "@/server/companies/autopart-account";
 import {
   exportSalesRepPortfolioCsv,
+  getPortfolioCustomerDetail,
   getSalesRepPortfolio,
 } from "@/server/sales-intelligence/portfolio";
 
@@ -20,6 +21,9 @@ let companyId = "";
 let zeroSalesActiveId = "";
 let retailActiveId = "";
 let unassignedActiveId = "";
+let obsoleteActiveId = "";
+let doNotUseActiveId = "";
+let mixedTradeInternalId = "";
 let prospectAssignedId = "";
 let prospectHistoryId = "";
 let pendingId = "";
@@ -89,6 +93,9 @@ beforeAll(async () => {
   zeroSalesActiveId = await makeCompany(`PF Zero Sales ${stamp}`, "ACTIVE");
   retailActiveId = await makeCompany(`PF Retail Amazon ${stamp}`, "ACTIVE");
   unassignedActiveId = await makeCompany(`PF Unassigned Active ${stamp}`, "ACTIVE");
+  obsoleteActiveId = await makeCompany(`PF Obsolete Active ${stamp}`, "ACTIVE");
+  doNotUseActiveId = await makeCompany(`PF Do Not Use Active ${stamp}`, "ACTIVE");
+  mixedTradeInternalId = await makeCompany(`PF Mixed Trade Internal ${stamp}`, "ACTIVE");
   prospectAssignedId = await makeCompany(`PF Prospect Assigned ${stamp}`, "PROSPECT");
   prospectHistoryId = await makeCompany(`PF Prospect History ${stamp}`, "PROSPECT");
   pendingId = await makeCompany(`PF Pending ${stamp}`, "PENDING_APPROVAL");
@@ -107,6 +114,39 @@ beforeAll(async () => {
   await prisma.company.update({
     where: { id: retailActiveId },
     data: { autopartCustomerCode: retailCode },
+  });
+
+  await prisma.autopartAccount.create({
+    data: {
+      accountCode: `PFO${String(stamp).slice(-7)}`,
+      originalName: `Obsolete ${stamp}`,
+      classification: "OBSOLETE",
+      companyId: obsoleteActiveId,
+    },
+  });
+  await prisma.autopartAccount.create({
+    data: {
+      accountCode: `PFD${String(stamp).slice(-7)}`,
+      originalName: `Do Not Use ${stamp}`,
+      classification: "DO_NOT_USE",
+      companyId: doNotUseActiveId,
+    },
+  });
+  await prisma.autopartAccount.create({
+    data: {
+      accountCode: `PFM${String(stamp).slice(-7)}A`,
+      originalName: `Mixed trade ${stamp}`,
+      classification: "TRADE_CANDIDATE",
+      companyId: mixedTradeInternalId,
+    },
+  });
+  await prisma.autopartAccount.create({
+    data: {
+      accountCode: `PFM${String(stamp).slice(-7)}B`,
+      originalName: `Mixed internal ${stamp}`,
+      classification: "INTERNAL",
+      companyId: mixedTradeInternalId,
+    },
   });
 
   const brand = await prisma.brand.create({
@@ -143,6 +183,9 @@ beforeAll(async () => {
     companyId,
     zeroSalesActiveId,
     retailActiveId,
+    obsoleteActiveId,
+    doNotUseActiveId,
+    mixedTradeInternalId,
     prospectAssignedId,
     prospectHistoryId,
     pendingId,
@@ -247,7 +290,7 @@ describe("sales rep portfolio", () => {
     expect(ids.has(closedId)).toBe(false);
   });
 
-  it("defaults to trade and excludes Autopart INTERNAL retail/internal accounts", async () => {
+  it("defaults to trade and excludes retail/internal, OBSOLETE, DO_NOT_USE, and mixed links", async () => {
     const trade = await getSalesRepPortfolio(adminId, {
       period: "LAST_365",
       salesRepId,
@@ -260,6 +303,9 @@ describe("sales rep portfolio", () => {
     expect(tradeIds.has(companyId)).toBe(true);
     expect(tradeIds.has(zeroSalesActiveId)).toBe(true);
     expect(tradeIds.has(retailActiveId)).toBe(false);
+    expect(tradeIds.has(obsoleteActiveId)).toBe(false);
+    expect(tradeIds.has(doNotUseActiveId)).toBe(false);
+    expect(tradeIds.has(mixedTradeInternalId)).toBe(false);
 
     const retail = await getSalesRepPortfolio(adminId, {
       period: "LAST_365",
@@ -272,7 +318,75 @@ describe("sales rep portfolio", () => {
     expect(retail.accountClass).toBe("RETAIL_INTERNAL");
     const retailIds = rowIds(retail);
     expect(retailIds.has(retailActiveId)).toBe(true);
+    expect(retailIds.has(mixedTradeInternalId)).toBe(true);
     expect(retailIds.has(companyId)).toBe(false);
+    expect(retailIds.has(obsoleteActiveId)).toBe(false);
+    expect(retailIds.has(doNotUseActiveId)).toBe(false);
+
+    const allActive = await getSalesRepPortfolio(adminId, {
+      period: "LAST_365",
+      salesRepId,
+      accountClass: "ALL",
+      page: 1,
+      pageSize: 200,
+      allRows: true,
+    });
+    const allIds = rowIds(allActive);
+    expect(allIds.has(obsoleteActiveId)).toBe(true);
+    expect(allIds.has(doNotUseActiveId)).toBe(true);
+    expect(allIds.has(mixedTradeInternalId)).toBe(true);
+  });
+
+  it("honours account class and sales-rep scope for customer detail", async () => {
+    const tradeDetail = await getPortfolioCustomerDetail(adminId, {
+      companyId,
+      period: "LAST_365",
+      accountClass: "TRADE",
+      salesRepId,
+    });
+    expect(tradeDetail.accountClass).toBe("TRADE");
+    expect(tradeDetail.customer.companyId).toBe(companyId);
+
+    await expect(
+      getPortfolioCustomerDetail(adminId, {
+        companyId: retailActiveId,
+        period: "LAST_365",
+        accountClass: "TRADE",
+        salesRepId,
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    await expect(
+      getPortfolioCustomerDetail(adminId, {
+        companyId: obsoleteActiveId,
+        period: "LAST_365",
+        accountClass: "TRADE",
+        salesRepId,
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const retailDetail = await getPortfolioCustomerDetail(adminId, {
+      companyId: retailActiveId,
+      period: "LAST_365",
+      accountClass: "RETAIL_INTERNAL",
+      salesRepId,
+    });
+    expect(retailDetail.customer.companyId).toBe(retailActiveId);
+
+    await expect(
+      getPortfolioCustomerDetail(repUserId, {
+        companyId: unassignedActiveId,
+        period: "LAST_365",
+        accountClass: "ALL",
+      }),
+    ).rejects.toMatchObject({ code: "COMPANY_FORBIDDEN" });
+
+    const repDetail = await getPortfolioCustomerDetail(repUserId, {
+      companyId,
+      period: "LAST_365",
+      accountClass: "TRADE",
+    });
+    expect(repDetail.customer.companyId).toBe(companyId);
   });
 
   it("lists unassigned ACTIVE customers only", async () => {
