@@ -7,6 +7,7 @@ import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { prisma } from "@/infra/database/client";
 import { updateCompany, updateContact, createContact, updateCompanyMembership } from "@/server/companies/service";
 import {
+  getInvoiceRecord,
   listCompanyDocuments,
   listCompanyInvoices,
   listCompanyOrders,
@@ -308,5 +309,82 @@ describe("customer workspace", () => {
       data: { companyId: company.id, userId: plainBuyer.id, role: "TRADE_BUYER", status: "ACTIVE" },
     });
     await expect(listPortalInvoices(plainBuyer.id, {})).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("shows stored invoice facts and does not invent lines, payment state, or a file", async () => {
+    const adminId = await ensureUser(`workspace.invoice.${stamp}@example.invalid`, ["SUPER_ADMIN"]);
+    const company = await prisma.company.create({
+      data: { name: `Invoice record ${stamp}`, status: "ACTIVE" },
+    });
+    const other = await prisma.company.create({ data: { name: `Invoice other ${stamp}`, status: "ACTIVE" } });
+    const otherAdmin = await ensureUser(`workspace.invoice.other.${stamp}@example.invalid`, []);
+    await prisma.companyUser.create({
+      data: { companyId: other.id, userId: otherAdmin, role: "TRADE_ACCOUNTS", status: "ACTIVE", isDefault: true },
+    });
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `INV-REC-${stamp}`,
+        companyId: company.id,
+        status: "ISSUED",
+        subtotal: 10,
+        vatTotal: 2,
+        grandTotal: 12,
+        issuedAt: new Date("2026-03-01T12:00:00Z"),
+      },
+    });
+    const document = await prisma.autopartSalesDocument.create({
+      data: {
+        companyId: company.id,
+        autopartCustomerCode: `INV${stamp}`,
+        documentType: "INVOICE",
+        documentReference: `AP-${stamp}`,
+        documentDate: new Date("2026-03-02T12:00:00Z"),
+        goodsNet: 8,
+        vat: 1.6,
+        grossTotal: 9.6,
+        source: "ONGOING_504",
+        lines: {
+          create: [
+            {
+              companyId: company.id,
+              autopartCustomerCode: `INV${stamp}`,
+              documentType: "INVOICE",
+              documentReference: `AP-${stamp}`,
+              lineNumber: 1,
+              sku: "PMECAVK",
+              descriptionSnapshot: "Brake kit",
+              units: 2,
+              salesNet: 8,
+            },
+          ],
+        },
+      },
+    });
+
+    const listed = await listCompanyInvoices(adminId, { companyId: company.id });
+    expect(listed.items.find((row) => row.id === invoice.id)?.recordOrigin).toBe("B2B");
+    expect(listed.items.find((row) => row.id === document.id)?.recordOrigin).toBe("AUTOPART");
+
+    const b2b = await getInvoiceRecord(adminId, { id: invoice.id, origin: "B2B" });
+    expect(b2b.number).toBe(`INV-REC-${stamp}`);
+    expect(b2b.companyName).toBe(`Invoice record ${stamp}`);
+    expect(b2b.status).toBe("ISSUED");
+    expect(b2b.lines).toEqual([]);
+    expect(b2b.documentFileUrl).toBeNull();
+    expect(b2b.missing.join(" ")).toMatch(/Line items are not stored/);
+    expect(b2b.missing.join(" ")).toMatch(/No invoice document file/);
+
+    const autopart = await getInvoiceRecord(adminId, { id: document.id, origin: "AUTOPART" });
+    expect(autopart.number).toBe(`AP-${stamp}`);
+    expect(autopart.lines).toEqual([
+      expect.objectContaining({ sku: "PMECAVK", description: "Brake kit", units: "2" }),
+    ]);
+    expect(autopart.subtotal).toBe("8");
+    expect(autopart.documentFileUrl).toBeNull();
+    expect(autopart.missing.join(" ")).toMatch(/Payment status is not stored/);
+
+    await expect(
+      getInvoiceRecord(otherAdmin, { id: invoice.id, origin: "B2B" }),
+    ).rejects.toBeInstanceOf(AuthError);
   });
 });

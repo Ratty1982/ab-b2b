@@ -310,8 +310,137 @@ async function queryInvoices(input: PageInput) {
       orderNumber: row.orderNumber,
       source: row.source,
       status: row.status,
+      recordOrigin: row.origin === "B2B" ? ("B2B" as const) : ("AUTOPART" as const),
       downloadable: false,
     })),
+  };
+}
+
+const invoiceRecordSchema = z.object({
+  id: z.string().cuid(),
+  origin: z.enum(["B2B", "AUTOPART"]),
+});
+
+function missingInvoiceFacts(facts: Array<string | null>): string[] {
+  return facts.filter((fact): fact is string => Boolean(fact));
+}
+
+export async function getInvoiceRecord(actorUserId: string, raw: unknown) {
+  const input = invoiceRecordSchema.parse(raw);
+  if (input.origin === "B2B") {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: input.id },
+      include: {
+        company: { select: { id: true, name: true } },
+        order: { select: { id: true, orderNumber: true } },
+      },
+    });
+    if (!invoice) throw new AuthError("Invoice not found", "NOT_FOUND", 404);
+    await requireCompanyPermission(actorUserId, invoice.companyId, "invoices.view");
+    const linked = invoice.externalRef
+      ? await prisma.autopartSalesDocument.findFirst({
+          where: {
+            companyId: invoice.companyId,
+            documentReference: { equals: invoice.externalRef, mode: "insensitive" },
+          },
+          include: { lines: { orderBy: { lineNumber: "asc" } } },
+        })
+      : null;
+    return {
+      origin: "B2B" as const,
+      id: invoice.id,
+      number: invoice.invoiceNumber,
+      companyId: invoice.companyId,
+      companyName: invoice.company.name,
+      status: invoice.status,
+      statusLabel: "Stored invoice status",
+      issuedAt: invoice.issuedAt?.toISOString() ?? null,
+      dueAt: invoice.dueAt?.toISOString() ?? null,
+      currency: invoice.currency,
+      subtotal: String(invoice.subtotal),
+      vatTotal: String(invoice.vatTotal),
+      grandTotal: String(invoice.grandTotal),
+      orderId: invoice.order?.id ?? null,
+      orderNumber: invoice.order?.orderNumber ?? null,
+      externalRef: invoice.externalRef,
+      documentKind: invoice.autopartDocumentKind,
+      documentFileUrl: null,
+      lines: (linked?.lines ?? []).map((line) => ({
+        lineNumber: line.lineNumber,
+        sku: line.sku,
+        description: line.descriptionSnapshot,
+        units: String(line.units),
+        salesNet: String(line.salesNet),
+      })),
+      lineSource: linked ? "Autopart sales lines matched on the invoice reference" : null,
+      missing: missingInvoiceFacts([
+        invoice.issuedAt ? null : "Issue date is not stored.",
+        invoice.dueAt ? null : "Due date is not stored.",
+        linked ? null : "Line items are not stored on this invoice.",
+        "No invoice document file is stored.",
+      ]),
+    };
+  }
+
+  const document = await prisma.autopartSalesDocument.findUnique({
+    where: { id: input.id },
+    include: {
+      company: { select: { id: true, name: true } },
+      lines: { orderBy: { lineNumber: "asc" } },
+    },
+  });
+  if (!document?.companyId || !document.company) {
+    throw new AuthError("Invoice not found", "NOT_FOUND", 404);
+  }
+  await requireCompanyPermission(actorUserId, document.companyId, "invoices.view");
+  const order = document.abOrderId
+    ? await prisma.order.findFirst({
+        where: { id: document.abOrderId, companyId: document.companyId },
+        select: { id: true, orderNumber: true },
+      })
+    : null;
+  return {
+    origin: "AUTOPART" as const,
+    id: document.id,
+    number: document.documentReference,
+    companyId: document.companyId,
+    companyName: document.company.name,
+    status: document.reconciliationStatus,
+    statusLabel: "Reconciliation status",
+    documentType: document.documentType,
+    issuedAt: document.documentDate?.toISOString() ?? null,
+    dueAt: null,
+    currency: "GBP",
+    subtotal: document.goodsNet == null ? null : String(document.goodsNet),
+    vatTotal: document.vat == null ? null : String(document.vat),
+    grandTotal:
+      document.grossTotal == null
+        ? document.goodsNet == null
+          ? null
+          : String(document.goodsNet)
+        : String(document.grossTotal),
+    orderId: order?.id ?? null,
+    orderNumber: order?.orderNumber ?? document.abOrderNumber,
+    externalRef: document.documentReference,
+    source: document.source,
+    documentFileUrl: null,
+    lines: document.lines.map((line) => ({
+      lineNumber: line.lineNumber,
+      sku: line.sku,
+      description: line.descriptionSnapshot,
+      units: String(line.units),
+      salesNet: String(line.salesNet),
+    })),
+    lineSource: document.lines.length ? "Autopart sales lines stored for this document" : null,
+    missing: missingInvoiceFacts([
+      document.documentDate ? null : "Document date is not stored.",
+      document.goodsNet == null ? "Goods net is not stored." : null,
+      document.vat == null ? "VAT is not stored." : null,
+      document.grossTotal == null ? "Gross total is not stored." : null,
+      document.lines.length ? null : "No product lines are stored for this document.",
+      "Payment status is not stored on the Autopart document.",
+      "No invoice document file is stored.",
+    ]),
   };
 }
 

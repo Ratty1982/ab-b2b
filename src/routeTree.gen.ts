@@ -92,6 +92,7 @@ import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$
 import { Route as AdminCustomersAutopartAccountsRouteImport } from './routes/admin.customers.autopart-accounts'
 import { Route as AdminCustomersAutopartImportsRouteImport } from './routes/admin.customers.autopart-imports'
 import { Route as AdminCustomersSetupRouteImport } from './routes/admin.customers.setup'
+import { Route as AdminInvoicesInvoiceIdRouteImport } from './routes/admin.invoices.$invoiceId'
 import { Route as AdminOrdersIndexRouteImport } from './routes/admin.orders.index'
 import { Route as AdminOrdersOrderIdRouteImport } from './routes/admin.orders.$orderId'
 import { Route as AdminPricingIndexRouteImport } from './routes/admin.pricing.index'
@@ -113,6 +114,7 @@ import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
 import { Route as ApiInternalStockSyncRouteImport } from './routes/api.internal.stock-sync'
 import { Route as ApiMicrosoft365CallbackRouteImport } from './routes/api/microsoft-365/callback'
 import { Route as ApiProductDocumentsIdRouteImport } from './routes/api/product-documents/$id'
+import { Route as PortalInvoicesInvoiceIdRouteImport } from './routes/portal.invoices.$invoiceId'
 import { Route as PortalOrdersIndexRouteImport } from './routes/portal.orders.index'
 import { Route as PortalOrdersOrderIdRouteImport } from './routes/portal.orders.$orderId'
 import { Route as PortalQuotesIndexRouteImport } from './routes/portal.quotes.index'
@@ -572,6 +574,11 @@ const AdminCustomersSetupRoute = AdminCustomersSetupRouteImport.update({
   path: '/customers/setup',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminInvoicesInvoiceIdRoute = AdminInvoicesInvoiceIdRouteImport.update({
+  id: '/invoices/$invoiceId',
+  path: '/invoices/$invoiceId',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminOrdersIndexRoute = AdminOrdersIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -680,6 +687,11 @@ const ApiProductDocumentsIdRoute = ApiProductDocumentsIdRouteImport.update({
   id: '/api/product-documents/$id',
   path: '/api/product-documents/$id',
   getParentRoute: () => rootRouteImport,
+} as any)
+const PortalInvoicesInvoiceIdRoute = PortalInvoicesInvoiceIdRouteImport.update({
+  id: '/$invoiceId',
+  path: '/$invoiceId',
+  getParentRoute: () => PortalInvoicesRoute,
 } as any)
 const PortalOrdersIndexRoute = PortalOrdersIndexRouteImport.update({
   id: '/',
@@ -940,7 +952,7 @@ export interface FileRoutesByFullPath {
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
-  '/portal/invoices': typeof PortalInvoicesRoute
+  '/portal/invoices': typeof PortalInvoicesRouteWithChildren
   '/portal/orders': typeof PortalOrdersRouteWithChildren
   '/portal/promotions': typeof PortalPromotionsRoute
   '/portal/purchases': typeof PortalPurchasesRoute
@@ -972,6 +984,7 @@ export interface FileRoutesByFullPath {
   '/admin/customers/autopart-accounts': typeof AdminCustomersAutopartAccountsRoute
   '/admin/customers/autopart-imports': typeof AdminCustomersAutopartImportsRoute
   '/admin/customers/setup': typeof AdminCustomersSetupRoute
+  '/admin/invoices/$invoiceId': typeof AdminInvoicesInvoiceIdRoute
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -989,6 +1002,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/api/microsoft-365/callback': typeof ApiMicrosoft365CallbackRoute
   '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
+  '/portal/invoices/$invoiceId': typeof PortalInvoicesInvoiceIdRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdRouteWithChildren
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
@@ -1074,7 +1088,7 @@ export interface FileRoutesByTo {
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
-  '/portal/invoices': typeof PortalInvoicesRoute
+  '/portal/invoices': typeof PortalInvoicesRouteWithChildren
   '/portal/promotions': typeof PortalPromotionsRoute
   '/portal/purchases': typeof PortalPurchasesRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
@@ -1101,6 +1115,7 @@ export interface FileRoutesByTo {
   '/admin/customers/autopart-accounts': typeof AdminCustomersAutopartAccountsRoute
   '/admin/customers/autopart-imports': typeof AdminCustomersAutopartImportsRoute
   '/admin/customers/setup': typeof AdminCustomersSetupRoute
+  '/admin/invoices/$invoiceId': typeof AdminInvoicesInvoiceIdRoute
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -1117,6 +1132,7 @@ export interface FileRoutesByTo {
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/api/microsoft-365/callback': typeof ApiMicrosoft365CallbackRoute
   '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
+  '/portal/invoices/$invoiceId': typeof PortalInvoicesInvoiceIdRoute
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/purchasing/forecast/$sku': typeof PurchasingForecastSkuRoute
@@ -1212,7 +1228,7 @@ export interface FileRoutesById {
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
-  '/portal/invoices': typeof PortalInvoicesRoute
+  '/portal/invoices': typeof PortalInvoicesRouteWithChildren
   '/portal/orders': typeof PortalOrdersRouteWithChildren
   '/portal/promotions': typeof PortalPromotionsRoute
   '/portal/purchases': typeof PortalPurchasesRoute
@@ -1244,6 +1260,7 @@ export interface FileRoutesById {
   '/admin/customers/autopart-accounts': typeof AdminCustomersAutopartAccountsRoute
   '/admin/customers/autopart-imports': typeof AdminCustomersAutopartImportsRoute
   '/admin/customers/setup': typeof AdminCustomersSetupRoute
+  '/admin/invoices/$invoiceId': typeof AdminInvoicesInvoiceIdRoute
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -1261,6 +1278,7 @@ export interface FileRoutesById {
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/api/microsoft-365/callback': typeof ApiMicrosoft365CallbackRoute
   '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
+  '/portal/invoices/$invoiceId': typeof PortalInvoicesInvoiceIdRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdRouteWithChildren
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
@@ -1390,6 +1408,7 @@ export interface FileRouteTypes {
     | '/admin/customers/autopart-accounts'
     | '/admin/customers/autopart-imports'
     | '/admin/customers/setup'
+    | '/admin/invoices/$invoiceId'
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -1407,6 +1426,7 @@ export interface FileRouteTypes {
     | '/api/internal/stock-sync'
     | '/api/microsoft-365/callback'
     | '/api/product-documents/$id'
+    | '/portal/invoices/$invoiceId'
     | '/portal/orders/$orderId'
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
@@ -1519,6 +1539,7 @@ export interface FileRouteTypes {
     | '/admin/customers/autopart-accounts'
     | '/admin/customers/autopart-imports'
     | '/admin/customers/setup'
+    | '/admin/invoices/$invoiceId'
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -1535,6 +1556,7 @@ export interface FileRouteTypes {
     | '/api/internal/stock-sync'
     | '/api/microsoft-365/callback'
     | '/api/product-documents/$id'
+    | '/portal/invoices/$invoiceId'
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/purchasing/forecast/$sku'
@@ -1661,6 +1683,7 @@ export interface FileRouteTypes {
     | '/admin/customers/autopart-accounts'
     | '/admin/customers/autopart-imports'
     | '/admin/customers/setup'
+    | '/admin/invoices/$invoiceId'
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -1678,6 +1701,7 @@ export interface FileRouteTypes {
     | '/api/internal/stock-sync'
     | '/api/microsoft-365/callback'
     | '/api/product-documents/$id'
+    | '/portal/invoices/$invoiceId'
     | '/portal/orders/$orderId'
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
@@ -2350,6 +2374,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustomersSetupRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/invoices/$invoiceId': {
+      id: '/admin/invoices/$invoiceId'
+      path: '/invoices/$invoiceId'
+      fullPath: '/admin/invoices/$invoiceId'
+      preLoaderRoute: typeof AdminInvoicesInvoiceIdRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/orders/': {
       id: '/admin/orders/'
       path: '/'
@@ -2496,6 +2527,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/product-documents/$id'
       preLoaderRoute: typeof ApiProductDocumentsIdRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/portal/invoices/$invoiceId': {
+      id: '/portal/invoices/$invoiceId'
+      path: '/$invoiceId'
+      fullPath: '/portal/invoices/$invoiceId'
+      preLoaderRoute: typeof PortalInvoicesInvoiceIdRouteImport
+      parentRoute: typeof PortalInvoicesRoute
     }
     '/portal/orders/': {
       id: '/portal/orders/'
@@ -2905,6 +2943,7 @@ interface AdminRouteChildren {
   AdminCustomersAutopartAccountsRoute: typeof AdminCustomersAutopartAccountsRoute
   AdminCustomersAutopartImportsRoute: typeof AdminCustomersAutopartImportsRoute
   AdminCustomersSetupRoute: typeof AdminCustomersSetupRoute
+  AdminInvoicesInvoiceIdRoute: typeof AdminInvoicesInvoiceIdRoute
   AdminSecurityMfaRoute: typeof AdminSecurityMfaRoute
   AdminApplicationsIndexRoute: typeof AdminApplicationsIndexRoute
   AdminCustomersIndexRoute: typeof AdminCustomersIndexRoute
@@ -2930,6 +2969,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminCustomersAutopartAccountsRoute: AdminCustomersAutopartAccountsRoute,
   AdminCustomersAutopartImportsRoute: AdminCustomersAutopartImportsRoute,
   AdminCustomersSetupRoute: AdminCustomersSetupRoute,
+  AdminInvoicesInvoiceIdRoute: AdminInvoicesInvoiceIdRoute,
   AdminSecurityMfaRoute: AdminSecurityMfaRoute,
   AdminApplicationsIndexRoute: AdminApplicationsIndexRoute,
   AdminCustomersIndexRoute: AdminCustomersIndexRoute,
@@ -2965,6 +3005,18 @@ const CrmRouteChildren: CrmRouteChildren = {
 }
 
 const CrmRouteWithChildren = CrmRoute._addFileChildren(CrmRouteChildren)
+
+interface PortalInvoicesRouteChildren {
+  PortalInvoicesInvoiceIdRoute: typeof PortalInvoicesInvoiceIdRoute
+}
+
+const PortalInvoicesRouteChildren: PortalInvoicesRouteChildren = {
+  PortalInvoicesInvoiceIdRoute: PortalInvoicesInvoiceIdRoute,
+}
+
+const PortalInvoicesRouteWithChildren = PortalInvoicesRoute._addFileChildren(
+  PortalInvoicesRouteChildren,
+)
 
 interface PortalOrdersOrderIdRouteChildren {
   PortalOrdersOrderIdConfirmationRoute: typeof PortalOrdersOrderIdConfirmationRoute
@@ -3012,7 +3064,7 @@ interface PortalRouteChildren {
   PortalBasketRoute: typeof PortalBasketRoute
   PortalCheckoutRoute: typeof PortalCheckoutRoute
   PortalFavouritesRoute: typeof PortalFavouritesRoute
-  PortalInvoicesRoute: typeof PortalInvoicesRoute
+  PortalInvoicesRoute: typeof PortalInvoicesRouteWithChildren
   PortalOrdersRoute: typeof PortalOrdersRouteWithChildren
   PortalPromotionsRoute: typeof PortalPromotionsRoute
   PortalPurchasesRoute: typeof PortalPurchasesRoute
@@ -3028,7 +3080,7 @@ const PortalRouteChildren: PortalRouteChildren = {
   PortalBasketRoute: PortalBasketRoute,
   PortalCheckoutRoute: PortalCheckoutRoute,
   PortalFavouritesRoute: PortalFavouritesRoute,
-  PortalInvoicesRoute: PortalInvoicesRoute,
+  PortalInvoicesRoute: PortalInvoicesRouteWithChildren,
   PortalOrdersRoute: PortalOrdersRouteWithChildren,
   PortalPromotionsRoute: PortalPromotionsRoute,
   PortalPurchasesRoute: PortalPurchasesRoute,
