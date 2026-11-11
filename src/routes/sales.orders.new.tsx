@@ -95,7 +95,13 @@ function orderFingerprint(input: {
   poNumber: string;
   instructions: string;
   quoteId: string;
-  lines: Array<{ variantId: string; qty: number | null; unitPriceOverride?: string | null }>;
+  lines: Array<{
+    variantId: string;
+    qty: number | null;
+    unitPriceOverride?: string | null;
+    zeroValueReasonCode?: string | null;
+    zeroValueReasonDetail?: string | null;
+  }>;
 }) {
   return JSON.stringify({
     companyId: input.companyId,
@@ -111,6 +117,8 @@ function orderFingerprint(input: {
       variantId: line.variantId,
       qty: line.qty,
       unitPriceOverride: line.unitPriceOverride ?? null,
+      zeroValueReasonCode: line.zeroValueReasonCode ?? null,
+      zeroValueReasonDetail: line.zeroValueReasonDetail ?? null,
     })),
   });
 }
@@ -219,6 +227,8 @@ function NewSalesOrder() {
       sku: line.sku,
       name: line.name,
       unitPriceOverride: line.unitPriceOverride,
+      zeroValueReasonCode: line.zeroValueReasonCode,
+      zeroValueReasonDetail: line.zeroValueReasonDetail,
     }));
     setWorkspace(data);
     setSource(nextSource);
@@ -344,6 +354,8 @@ function NewSalesOrder() {
         variantId: line.variantId,
         qty: line.qty,
         unitPriceOverride: line.unitPriceOverride,
+        zeroValueReasonCode: line.zeroValueReasonCode ?? null,
+        zeroValueReasonDetail: line.zeroValueReasonDetail ?? null,
       })),
     };
   }
@@ -504,6 +516,8 @@ function NewSalesOrder() {
           variantId: line.variantId,
           qty: line.qty,
           unitPriceOverride: line.unitPriceOverride,
+          zeroValueReasonCode: line.zeroValueReasonCode ?? null,
+          zeroValueReasonDetail: line.zeroValueReasonDetail ?? null,
         })),
         expectedReview: quoteId ? null : reviewed?.expectedReview,
         quoteId: quoteId || null,
@@ -862,6 +876,13 @@ function NewSalesOrder() {
                       })
                     }
                     onPriceOverride={(variantId, override) => updateLine(variantId, { unitPriceOverride: override }, true)}
+                    onZeroValueReason={(variantId, code, detail) =>
+                      updateLine(
+                        variantId,
+                        { zeroValueReasonCode: code || null, zeroValueReasonDetail: detail || null },
+                        true,
+                      )
+                    }
                     onRemove={(variantId) => {
                       const next = linesRef.current.filter((item) => item.variantId !== variantId);
                       commitLines(next);

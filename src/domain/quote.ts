@@ -70,6 +70,8 @@ export const quoteLineInputSchema = z.object({
   qty: z.number().int().min(1).max(999_999),
   /** Optional quote-specific override (ex VAT). Requires quotes.override_price. */
   quotedUnitPrice: moneyString.optional().nullable(),
+  zeroValueReasonCode: z.string().trim().max(40).optional().nullable(),
+  zeroValueReasonDetail: z.string().trim().max(500).optional().nullable(),
 });
 
 export const quoteUpdateDraftSchema = z.object({

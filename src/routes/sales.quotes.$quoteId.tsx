@@ -6,6 +6,7 @@ import { Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
+import { ZERO_VALUE_REASONS, isZeroSellingPrice, zeroValueReasonLabel } from "@/domain/zero-value-reason";
 import {
   acceptQuoteOnBehalfFn,
   deleteStaffQuoteFn,
@@ -46,6 +47,8 @@ type DraftLine = {
   normalUnitPrice: string;
   quotedUnitPrice: string;
   priceOverride: boolean;
+  zeroValueReasonCode: string;
+  zeroValueReasonDetail: string;
 };
 
 function quoteTone(status: string) {
@@ -100,6 +103,8 @@ function QuoteWorkspace() {
         normalUnitPrice: it.normalUnitPrice,
         quotedUnitPrice: it.unitPrice,
         priceOverride: Boolean(it.priceOverride),
+        zeroValueReasonCode: it.zeroValueReasonCode ?? "",
+        zeroValueReasonDetail: it.zeroValueReasonDetail ?? "",
       })),
     );
 
@@ -156,6 +161,8 @@ function QuoteWorkspace() {
           normalUnitPrice: hit.unitPrice ?? "0.0000",
           quotedUnitPrice: hit.unitPrice ?? "0.0000",
           priceOverride: false,
+          zeroValueReasonCode: "",
+          zeroValueReasonDetail: "",
         },
       ];
     });
@@ -183,6 +190,8 @@ function QuoteWorkspace() {
           variantId: l.variantId,
           qty: l.qty,
           quotedUnitPrice: l.priceOverride ? l.quotedUnitPrice : null,
+          zeroValueReasonCode: l.zeroValueReasonCode || null,
+          zeroValueReasonDetail: l.zeroValueReasonDetail || null,
         })),
       },
     });
@@ -202,6 +211,8 @@ function QuoteWorkspace() {
         normalUnitPrice: it.normalUnitPrice,
         quotedUnitPrice: it.unitPrice,
         priceOverride: Boolean(it.priceOverride),
+        zeroValueReasonCode: it.zeroValueReasonCode ?? "",
+        zeroValueReasonDetail: it.zeroValueReasonDetail ?? "",
       })),
     );
     toast.success("Draft saved");
@@ -601,8 +612,52 @@ function QuoteWorkspace() {
                               }}
                             />
                           ) : (
-                            <>£{item?.customerUnitPrice}</>
+                            <>
+                              £{item?.customerUnitPrice}
+                              {item?.zeroValueReasonCode ? (
+                                <div className="text-[11px] text-steel">
+                                  {zeroValueReasonLabel(item.zeroValueReasonCode) ?? item.zeroValueReasonCode}
+                                  {item.zeroValueReasonDetail ? ` — ${item.zeroValueReasonDetail}` : ""}
+                                </div>
+                              ) : null}
+                            </>
                           )}
+                          {draft && isZeroSellingPrice(draft.quotedUnitPrice) ? (
+                            <div className="mt-2 space-y-1 text-left">
+                              <select
+                                className={inputClass}
+                                aria-label={`Zero value reason for ${draft.sku}`}
+                                value={draft.zeroValueReasonCode}
+                                onChange={(e) => {
+                                  const code = e.target.value;
+                                  setLines((prev) =>
+                                    prev.map((l, i) =>
+                                      i === idx ? { ...l, zeroValueReasonCode: code, priceOverride: true } : l,
+                                    ),
+                                  );
+                                }}
+                              >
+                                <option value="">Reason for £0.00…</option>
+                                {ZERO_VALUE_REASONS.map((reason) => (
+                                  <option key={reason.code} value={reason.code}>
+                                    {reason.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                className={inputClass}
+                                aria-label={`Zero value details for ${draft.sku}`}
+                                placeholder={draft.zeroValueReasonCode === "OTHER" ? "Specific details" : "Additional explanation"}
+                                value={draft.zeroValueReasonDetail}
+                                onChange={(e) => {
+                                  const detail = e.target.value;
+                                  setLines((prev) =>
+                                    prev.map((l, i) => (i === idx ? { ...l, zeroValueReasonDetail: detail } : l)),
+                                  );
+                                }}
+                              />
+                            </div>
+                          ) : null}
                         </td>
                         <td className="py-2 text-right font-medium">
                           {item ? `£${item.lineTotal}` : ""}

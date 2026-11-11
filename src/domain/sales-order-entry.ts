@@ -66,6 +66,8 @@ export type SalesOrderDraftLineInput = {
   sku: string;
   name: string;
   unitPriceOverride: string | null;
+  zeroValueReasonCode?: string | null;
+  zeroValueReasonDetail?: string | null;
 };
 
 export type SalesOrderProductSelection = {
@@ -93,6 +95,8 @@ export function selectSalesOrderProduct(
         sku: hit.sku,
         name: hit.name,
         unitPriceOverride: null,
+        zeroValueReasonCode: null,
+        zeroValueReasonDetail: null,
       },
       ...lines,
     ];
@@ -191,6 +195,8 @@ function salesOrderLineObject<TQty extends number | null>(qty: z.ZodType<TQty>) 
       variantId: z.string().cuid(),
       qty,
       unitPriceOverride: z.union([z.string(), z.null()]).optional(),
+      zeroValueReasonCode: z.string().trim().max(40).optional().nullable(),
+      zeroValueReasonDetail: z.string().trim().max(500).optional().nullable(),
     })
     .superRefine((line, ctx) => {
       if (line.unitPriceOverride == null || line.unitPriceOverride.trim() === "") return;
@@ -209,6 +215,8 @@ function salesOrderLineObject<TQty extends number | null>(qty: z.ZodType<TQty>) 
         line.unitPriceOverride == null || line.unitPriceOverride.trim() === ""
           ? null
           : parseStaffOrderUnitPrice(line.unitPriceOverride),
+      zeroValueReasonCode: line.zeroValueReasonCode?.trim() || null,
+      zeroValueReasonDetail: line.zeroValueReasonDetail?.trim() || null,
     }));
 }
 

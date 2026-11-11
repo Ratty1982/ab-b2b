@@ -22,6 +22,7 @@ import {
 import { reconcileActiveReservations } from "@/server/orders/reservations";
 import { toConfirmation, type ResolvedLine } from "@/server/orders/service";
 import type { SalesPlaceResult } from "@/server/orders/sales-order-entry";
+import { zeroValueReasonForPrice } from "@/domain/zero-value-reason";
 import { AuthError } from "@/server/rbac/guards";
 
 type AmendCompany = {
@@ -59,6 +60,17 @@ export async function amendSubmittedSalesOrder(args: {
     );
   }
 
+  for (const line of args.lines) {
+    if (line.issue !== "VALID") continue;
+    const reason = zeroValueReasonForPrice({
+      customerUnitPrice: line.customerUnit2dp,
+      code: line.zeroValueReasonCode,
+      detail: line.zeroValueReasonDetail,
+    });
+    if (!reason.ok) {
+      throw new AuthError(`${line.sku}: ${reason.message}`, "ZERO_VALUE_REASON_REQUIRED", 400);
+    }
+  }
   const fulfilmentChoice = args.input.fulfilmentChoice;
   const totals = totalsFor(args.lines, args.company.taxStatus, fulfilmentChoice);
   const requestedKey = lineKey(args.requestedLines);
@@ -179,6 +191,8 @@ export async function amendSubmittedSalesOrder(args: {
             promotionBaselineUnitPrice: line.promotionBaselineUnit4dp,
             availableQtyAtOrder: line.availableQtyAtOrder,
             backorderQtyAtOrder: line.backorderQtyAtOrder,
+            zeroValueReasonCode: line.zeroValueReasonCode ?? null,
+            zeroValueReasonDetail: line.zeroValueReasonDetail ?? null,
           },
         }),
       );
@@ -510,6 +524,8 @@ function commercialSnapshot(order: {
     lineTotal: { toString(): string };
     availableQtyAtOrder: number | null;
     backorderQtyAtOrder: number;
+    zeroValueReasonCode?: string | null;
+    zeroValueReasonDetail?: string | null;
   }>;
 }) {
   return {
@@ -532,6 +548,8 @@ function commercialSnapshot(order: {
       lineTotal: item.lineTotal.toString(),
       availableQty: item.availableQtyAtOrder,
       backorderQty: item.backorderQtyAtOrder,
+      zeroValueReasonCode: item.zeroValueReasonCode ?? null,
+      zeroValueReasonDetail: item.zeroValueReasonDetail ?? null,
     })),
   };
 }

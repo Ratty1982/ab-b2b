@@ -17,6 +17,7 @@ import {
 } from "@/domain/checkout";
 import { assessSalesOrderEditEligibility } from "@/domain/order-edit";
 import { moneyToString, parseMoney } from "@/domain/money";
+import { zeroValueReasonForPrice } from "@/domain/zero-value-reason";
 import {
   openSalesOrderDraftSchema,
   placeSalesOrderSchema,
@@ -97,6 +98,8 @@ export type SalesOrderDraftDto = {
     sku: string;
     name: string;
     unitPriceOverride: string | null;
+    zeroValueReasonCode: string | null;
+    zeroValueReasonDetail: string | null;
   }>;
 };
 
@@ -296,6 +299,8 @@ function toDraftDto(row: DraftRow): SalesOrderDraftDto {
       sku: line.variant.sku,
       name: line.variant.product.name,
       unitPriceOverride: money2(line.unitPriceOverride?.toString() ?? null),
+      zeroValueReasonCode: line.zeroValueReasonCode,
+      zeroValueReasonDetail: line.zeroValueReasonDetail,
     })),
   };
 }
@@ -906,6 +911,8 @@ export async function startSalesOrderEdit(actorUserId: string, raw: unknown) {
                   variantId: item.variantId,
                   qty: item.qty,
                   unitPriceOverride: item.priceSource === "STAFF_OVERRIDE" ? item.customerUnitPrice : null,
+                  zeroValueReasonCode: item.zeroValueReasonCode,
+                  zeroValueReasonDetail: item.zeroValueReasonDetail,
                   sortOrder,
                 }]
               : [],
@@ -978,9 +985,22 @@ export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
   await prisma.$transaction(async (tx) => {
     const locked = await lockOpenDraft(tx, actorUserId, draft.id);
     if (input.lines) {
-      const unique = new Map<string, { qty: number | null; unitPriceOverride: string | null }>();
+      const unique = new Map<
+        string,
+        {
+          qty: number | null;
+          unitPriceOverride: string | null;
+          zeroValueReasonCode: string | null;
+          zeroValueReasonDetail: string | null;
+        }
+      >();
       for (const line of input.lines) {
-        unique.set(line.variantId, { qty: line.qty, unitPriceOverride: line.unitPriceOverride });
+        unique.set(line.variantId, {
+          qty: line.qty,
+          unitPriceOverride: line.unitPriceOverride,
+          zeroValueReasonCode: line.zeroValueReasonCode,
+          zeroValueReasonDetail: line.zeroValueReasonDetail,
+        });
       }
       await tx.salesOrderDraftLine.deleteMany({ where: { draftId: locked.id } });
       if (unique.size > 0) {
@@ -990,6 +1010,8 @@ export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
             variantId,
             qty: line.qty,
             unitPriceOverride: line.unitPriceOverride,
+            zeroValueReasonCode: line.zeroValueReasonCode,
+            zeroValueReasonDetail: line.zeroValueReasonDetail,
             sortOrder,
           })),
         });
@@ -1514,7 +1536,7 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
   }
 
   const ownActiveReservedByVariant = await loadOwnActiveReservedByVariant(draft.editingOrderId);
-  const lines = await resolveOrderLinesFromItems(
+  const resolvedLines = await resolveOrderLinesFromItems(
     company.id,
     requestedLines,
     expected.lines.map((line) => ({ variantId: line.variantId, customerUnitPrice: line.customerUnitPrice })),
@@ -1524,6 +1546,19 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       ...(ownActiveReservedByVariant ? { ownActiveReservedByVariant } : {}),
     },
   );
+  const lines = resolvedLines.map((line) => {
+    if (line.issue !== "VALID") return line;
+    const saved = draft.lines.find((item) => item.variantId === line.variantId);
+    const reason = zeroValueReasonForPrice({
+      customerUnitPrice: line.customerUnit2dp,
+      code: saved?.zeroValueReasonCode,
+      detail: saved?.zeroValueReasonDetail,
+    });
+    if (!reason.ok) {
+      throw new AuthError(`${line.sku}: ${reason.message}`, "ZERO_VALUE_REASON_REQUIRED", 400);
+    }
+    return { ...line, zeroValueReasonCode: reason.code, zeroValueReasonDetail: reason.detail };
+  });
   const review = buildCheckoutReview({
     company,
     lines,
