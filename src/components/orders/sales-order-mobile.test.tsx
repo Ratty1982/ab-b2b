@@ -433,7 +433,6 @@ describe("staff sales order stock display", () => {
         totalsChanged: false,
         previousGrandTotal: null,
         acceptedPrices: true,
-        authorised: false,
         placing: false,
         placeDisabled: true,
         placeLabel: "Place order",
@@ -454,7 +453,6 @@ describe("staff sales order stock display", () => {
         backorderAcknowledged: false,
         holdUntilComplete: false,
         onAcceptPrices: () => undefined,
-        onAuthorised: () => undefined,
         onBackorderAcknowledged: () => undefined,
         onHoldUntilComplete: () => undefined,
         onPlace: () => undefined,
@@ -483,7 +481,6 @@ describe("staff sales order stock display", () => {
         totalsChanged: false,
         previousGrandTotal: null,
         acceptedPrices: true,
-        authorised: false,
         placing: false,
         placeDisabled: true,
         placeLabel: "Confirm order changes",
@@ -506,7 +503,6 @@ describe("staff sales order stock display", () => {
         holdLocked: true,
         holdOnExistingOrder: true,
         onAcceptPrices: () => undefined,
-        onAuthorised: () => undefined,
         onBackorderAcknowledged: () => undefined,
         onHoldUntilComplete: () => undefined,
         onPlace: () => undefined,
@@ -578,7 +574,6 @@ function OrderHarness() {
       totalsChanged: false,
       previousGrandTotal: null,
       acceptedPrices: true,
-      authorised: false,
       placing: false,
       placeDisabled: true,
       placeLabel: "Place order",
@@ -587,7 +582,6 @@ function OrderHarness() {
       backorderAcknowledged: false,
       holdUntilComplete: false,
       onAcceptPrices: () => undefined,
-      onAuthorised: () => undefined,
       onBackorderAcknowledged: () => undefined,
       onHoldUntilComplete: () => undefined,
       onPlace: () => undefined,
@@ -641,7 +635,7 @@ describe("sales order mobile review keeps unsaved edits", () => {
     expect(review).not.toBeNull();
     expect(review?.textContent).toContain("VAT");
     expect(review?.textContent).toContain("Delivery");
-    expect(review?.textContent).toContain("authorised");
+    expect(review?.textContent).not.toContain("I am authorised to submit this order");
     expect(review?.textContent).toContain("PO-PHONE");
     expect((container.querySelector('[aria-label="Quantity for CASE12"]') as HTMLInputElement).value).toBe("15");
 
@@ -655,11 +649,8 @@ describe("sales order mobile review keeps unsaved edits", () => {
     });
     expect(hasClass(footer?.className ?? "", "hidden")).toBe(true);
 
-    const authorisation = [...container.querySelectorAll("input")].find(
-      (input) => input instanceof HTMLInputElement && input.type === "checkbox",
-    ) as HTMLInputElement;
     await act(async () => {
-      authorisation.focus();
+      review?.focus();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(hasClass(footer?.className ?? "", "hidden")).toBe(false);

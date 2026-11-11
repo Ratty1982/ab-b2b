@@ -1163,7 +1163,7 @@ export const salesOrderCrmDependencies = {
         subject: `Order ${input.orderNumber} placed for the customer`,
         body: [
           `Source: ${SOURCE_LABEL[input.source]}.`,
-          "Staff confirmed they are authorised to submit this order on the customer's behalf.",
+          "Placed by the signed-in salesperson.",
           input.internalNote ? `Internal note: ${input.internalNote}` : null,
         ]
           .filter(Boolean)
@@ -1287,7 +1287,7 @@ async function placeFromQuote(
     {
       id: quote.id,
       idempotencyKey: input.idempotencyKey,
-      note: `Sales order entry (${SOURCE_LABEL[input.source]}). Staff confirmed customer authorisation.`,
+      note: `Sales order entry (${SOURCE_LABEL[input.source]}).`,
     },
     {
       entrySource: input.source,
@@ -1309,7 +1309,6 @@ async function placeFromQuote(
         orderNumber: result.orderNumber,
         entrySource: input.source,
         placedByStaffUserId: actorUserId,
-        customerAuthorised: true,
         sourceQuoteNumber: quote.quoteNumber,
         salesOrderDraftId: draft.id,
       },
@@ -1669,7 +1668,6 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       lineCount: confirmation.lineCount,
       entrySource: input.source,
       placedByStaffUserId: actorUserId,
-      customerAuthorised: true,
       contactEmail: contact.email,
       salesOrderDraftId: draft.id,
       autopartSideEffects: false,

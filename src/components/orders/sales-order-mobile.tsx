@@ -630,7 +630,6 @@ export function SalesOrderReviewPanel({
   totalsChanged,
   previousGrandTotal,
   acceptedPrices,
-  authorised,
   placing,
   placeDisabled,
   placeLabel,
@@ -659,7 +658,6 @@ export function SalesOrderReviewPanel({
   totalsChanged: boolean;
   previousGrandTotal: string | null;
   acceptedPrices: boolean;
-  authorised: boolean;
   placing: boolean;
   placeDisabled: boolean;
   placeLabel: string;
@@ -673,7 +671,6 @@ export function SalesOrderReviewPanel({
   /** This review saves an existing order rather than creating one. */
   holdOnExistingOrder?: boolean;
   onAcceptPrices: (checked: boolean) => void;
-  onAuthorised: (checked: boolean) => void;
   onBackorderAcknowledged: (checked: boolean) => void;
   onHoldUntilComplete: (checked: boolean) => void;
   onPlace: () => void;
@@ -763,15 +760,6 @@ export function SalesOrderReviewPanel({
           </label>
         </div>
       ) : null}
-      <label className="flex min-h-11 items-center gap-3">
-        <input
-          type="checkbox"
-          checked={authorised}
-          onChange={(event) => onAuthorised(event.target.checked)}
-          className="size-5"
-        />
-        <span>I am authorised to submit this order on the customer’s behalf.</span>
-      </label>
       <button
         type="button"
         disabled={placeDisabled}

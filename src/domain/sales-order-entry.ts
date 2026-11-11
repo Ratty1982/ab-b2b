@@ -299,9 +299,6 @@ export type SalesOrderExpectedReview = z.infer<typeof salesOrderExpectedReviewSc
 export const placeSalesOrderSchema = z
   .object({
     draftId: z.string().cuid(),
-    confirmAuthorised: z.boolean().refine((value) => value === true, {
-      message: "Confirm you are authorised to place this order for the customer",
-    }),
     idempotencyKey: z.string().trim().min(8).max(128),
     source: z.enum(SALES_ORDER_ENTRY_SOURCES),
     contactId: z.string().cuid().optional().nullable(),
