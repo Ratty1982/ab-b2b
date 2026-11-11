@@ -198,6 +198,28 @@ export type AdminDashboardPayload = {
     statusLabel: "Healthy" | "Attention required" | "No sync yet";
     href: string;
   } | null;
+  /** Recent Autopart Avail 0→positive transitions (canSeeStock). Null when gated off. */
+  backInStock: {
+    items: Array<{
+      id: string;
+      productId: string;
+      sku: string;
+      productName: string;
+      previousQty: number;
+      transitionQty: number;
+      currentSellableQty: number;
+      currentAvailQty: number;
+      reservedQty: number;
+      manualOverrideQty: number | null;
+      imageSrc: string | null;
+      observedAt: string;
+      observedAtLabel: string;
+      href: string;
+      stockHref: string;
+    }>;
+    viewAllHref: string;
+    empty: boolean;
+  } | null;
   email: {
     configured: boolean;
     enabled: boolean;
@@ -1016,6 +1038,16 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       newlyApproved7d,
     },
     stock,
+    backInStock: canSeeStock
+      ? await (async () => {
+          try {
+            const { getDashboardBackInStock } = await import("@/server/stock/back-in-stock");
+            return await getDashboardBackInStock(actorUserId);
+          } catch {
+            return { items: [], viewAllHref: ROUTES.adminBackInStock, empty: true };
+          }
+        })()
+      : null,
     email,
     systemHealth,
     needsAttention,

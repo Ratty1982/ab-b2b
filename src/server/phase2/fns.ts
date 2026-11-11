@@ -2382,6 +2382,21 @@ export const listStockSyncChangesFn = createServerFn({ method: "GET" })
     }
   });
 
+export const listBackInStockEventsFn = createServerFn({ method: "GET" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { page?: number; pageSize?: number; forDashboard?: boolean; limit?: number } | undefined,
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { listBackInStockEvents } = await import("@/server/stock/back-in-stock");
+      return { ok: true as const, data: await listBackInStockEvents(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listUnmatchedStockSkusFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { q?: string; page?: number; pageSize?: number; lastRunId?: string } | undefined)
   .handler(async ({ data }) => {
