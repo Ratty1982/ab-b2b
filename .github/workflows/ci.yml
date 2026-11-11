@@ -56,11 +56,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # setup-node puts a real Node on PATH (not Bun-as-node). Prefer `node` over a hard-coded
+      # /usr/bin/node path — ubuntu-latest runners do not always provide /usr/bin/node.
       - name: Prisma generate
-        run: /usr/bin/node ./node_modules/prisma/build/index.js generate
+        run: node ./node_modules/prisma/build/index.js generate
 
       - name: Prisma migrate deploy
-        run: /usr/bin/node ./node_modules/prisma/build/index.js migrate deploy
+        run: node ./node_modules/prisma/build/index.js migrate deploy
 
       - name: Typecheck
         run: bun run typecheck
