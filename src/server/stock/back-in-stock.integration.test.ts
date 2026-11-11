@@ -269,6 +269,38 @@ describe("StockBackInStockEvent recording + listing", () => {
   );
 
   it(
+    "does not record back-in-stock events on dry-run",
+    async () => {
+      const stamp = Date.now();
+      const sku = `BIS-DRY-${stamp}`;
+      await makeActiveProduct(sku, `BIS Dry ${stamp}`);
+      await applyStockFeed({
+        text: csv([`${sku},seed,0`]),
+        dryRun: false,
+        trigger: "manual",
+        actorUserId: adminId,
+        observedAt: new Date("2026-11-09T08:00:00.000Z"),
+      });
+      const before = await prisma.stockBackInStockEvent.count();
+      const dry = await applyStockFeed({
+        text: csv([`${sku},back,12`]),
+        dryRun: true,
+        trigger: "manual",
+        actorUserId: adminId,
+        observedAt: new Date("2026-11-09T09:00:00.000Z"),
+      });
+      expect(dry.dryRun).toBe(true);
+      expect(await prisma.stockBackInStockEvent.count()).toBe(before);
+      const inv = await prisma.inventory.findFirst({
+        where: { variant: { sku } },
+        select: { qtyOnHand: true },
+      });
+      expect(inv?.qtyOnHand).toBe(0);
+    },
+    60_000,
+  );
+
+  it(
     "hides events when current Avail is no longer positive",
     async () => {
       const stamp = Date.now();

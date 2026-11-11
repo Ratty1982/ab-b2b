@@ -426,6 +426,8 @@ export async function applyStockFeed(input: {
         const bisChunk = chunk
           .map((row) => bisByVariant.get(row.variantId))
           .filter(Boolean) as BackInStockDraft[];
+        // Inventory + StockSyncChange commit first. Back-in-stock events are durable
+        // history only — never roll back Avail writes if BIS insert fails.
         await prisma.$transaction([
           ...chunk.map((row) => {
             const sellable = sellableQuantityFromAvail(row.avail);
@@ -487,24 +489,29 @@ export async function applyStockFeed(input: {
                 }),
               ]
             : []),
-          ...(bisChunk.length
-            ? [
-                prisma.stockBackInStockEvent.createMany({
-                  data: bisChunk.map((row) => ({
-                    runId: run.id,
-                    variantId: row.variantId,
-                    productId: row.productId,
-                    skuSnapshot: row.sku,
-                    productNameSnapshot: row.productName,
-                    previousQty: row.previousQty,
-                    newQty: row.newQty,
-                    observedAt: now,
-                  })),
-                  skipDuplicates: true,
-                }),
-              ]
-            : []),
         ]);
+        if (bisChunk.length) {
+          try {
+            await prisma.stockBackInStockEvent.createMany({
+              data: bisChunk.map((row) => ({
+                runId: run.id,
+                variantId: row.variantId,
+                productId: row.productId,
+                skuSnapshot: row.sku,
+                productNameSnapshot: row.productName,
+                previousQty: row.previousQty,
+                newQty: row.newQty,
+                observedAt: now,
+              })),
+              skipDuplicates: true,
+            });
+          } catch (bisError) {
+            console.warn(
+              "[stock] Back-in-stock event write failed after Inventory commit; Avail kept.",
+              bisError instanceof Error ? bisError.message : bisError,
+            );
+          }
+        }
       }
 
       await persistAutopartProducts({
