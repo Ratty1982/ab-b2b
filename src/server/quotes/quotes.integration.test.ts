@@ -759,3 +759,99 @@ describe("Quote delete", () => {
     expect(await prisma.quote.findUnique({ where: { id: draft.id } })).toBeTruthy();
   });
 });
+
+describe("Quote quantities are not forced to case size", () => {
+  it("saves below-case, non-multiple, full-case and no-case quantities exactly", async () => {
+    const stamp = Date.now().toString(36);
+    const cased = await seedVariant(`QT-CASE-${stamp}`, 4, 12);
+    const open = await seedVariant(`QT-OPEN-${stamp}`, 4, 1);
+    await prisma.productVariant.update({ where: { id: open.id }, data: { caseQty: null } });
+    const { company } = await seedCompany(`Quote Qty ${stamp}`);
+    const draft = await createQuote(adminId, { companyId: company.id });
+
+    const saved = await updateQuoteDraft(adminId, {
+      id: draft.id,
+      lines: [
+        { variantId: cased.id, qty: 5 },
+        { variantId: cased.id, qty: 18 },
+        { variantId: cased.id, qty: 24 },
+        { variantId: open.id, qty: 7 },
+      ],
+    });
+    expect(saved.items.map((item) => item.qty)).toEqual([5, 18, 24, 7]);
+
+    const reopened = await getQuoteForStaff(adminId, draft.id);
+    expect(reopened.items.map((item) => item.qty)).toEqual([5, 18, 24, 7]);
+
+    await expect(
+      updateQuoteDraft(adminId, {
+        id: draft.id,
+        lines: [{ variantId: cased.id, qty: 0 }],
+      }),
+    ).rejects.toThrow(/whole quantity/);
+  });
+
+  it("keeps the quoted quantity and asks before a customer order uses a full case", async () => {
+    const stamp = Date.now().toString(36);
+    const variant = await seedVariant(`QT-CONV-${stamp}`, 2, 12);
+    const { company, contact } = await seedCompany(`Quote Conv ${stamp}`);
+    const buyerId = await ensureTradeBuyer(`qty-buyer-${stamp}@example.invalid`, company.id);
+    const draft = await createQuote(adminId, {
+      companyId: company.id,
+      contactId: contact.id,
+      validUntil: "2099-12-31",
+    });
+    await updateQuoteDraft(adminId, {
+      id: draft.id,
+      lines: [{ variantId: variant.id, qty: 5, quotedUnitPrice: "2.0000" }],
+      validUntil: "2099-12-31",
+    });
+    await sendQuote(adminId, { id: draft.id });
+
+    await expect(
+      acceptQuoteAsCustomer(buyerId, { id: draft.id, idempotencyKey: `qty-no-${stamp}` }),
+    ).rejects.toMatchObject({ code: "QUOTE_QUANTITY_CONFIRMATION" });
+
+    const stillQuoted = await prisma.quoteItem.findFirstOrThrow({ where: { quoteId: draft.id } });
+    expect(stillQuoted.qty).toBe(5);
+
+    const accepted = await acceptQuoteAsCustomer(buyerId, {
+      id: draft.id,
+      idempotencyKey: `qty-yes-${stamp}`,
+      confirmOrderQuantityChanges: true,
+    });
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: accepted.orderId },
+      include: { items: true },
+    });
+    expect(order.items[0]?.qty).toBe(12);
+    expect(Number(order.items[0]?.lineTotal)).toBe(24);
+    const quotedAfter = await prisma.quoteItem.findFirstOrThrow({ where: { quoteId: draft.id } });
+    expect(quotedAfter.qty).toBe(5);
+  });
+
+  it("lets staff convert the quoted unit quantity without rounding it up", async () => {
+    const stamp = Date.now().toString(36);
+    const variant = await seedVariant(`QT-STAFF-${stamp}`, 2, 12);
+    const { company } = await seedCompany(`Quote Staff Qty ${stamp}`);
+    const draft = await createQuote(adminId, { companyId: company.id, validUntil: "2099-12-31" });
+    await updateQuoteDraft(adminId, {
+      id: draft.id,
+      lines: [{ variantId: variant.id, qty: 5, quotedUnitPrice: "2.0000" }],
+      validUntil: "2099-12-31",
+    });
+    await sendQuote(adminId, { id: draft.id });
+    const accepted = await acceptQuoteOnBehalf(adminId, {
+      id: draft.id,
+      idempotencyKey: `qty-staff-${stamp}`,
+      note: "Customer asked for five units",
+    });
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: accepted.orderId },
+      include: { items: true },
+    });
+    expect(order.items[0]?.qty).toBe(5);
+    const quoted = await prisma.quoteItem.findFirstOrThrow({ where: { quoteId: draft.id } });
+    expect(quoted.qty).toBe(5);
+  });
+});

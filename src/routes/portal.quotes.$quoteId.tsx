@@ -59,13 +59,19 @@ function PortalQuoteDetail() {
 
   async function onAccept() {
     if (!window.confirm("Accept this quotation and place the order?")) return;
+    const idempotencyKey = `portal-accept-${quoteId}-${crypto.randomUUID()}`;
     setBusy(true);
-    const result = await acceptPortalQuoteFn({
-      data: {
-        id: quoteId,
-        idempotencyKey: `portal-accept-${quoteId}-${crypto.randomUUID()}`,
-      },
+    let result = await acceptPortalQuoteFn({
+      data: { id: quoteId, idempotencyKey },
     });
+    if (!result.ok && result.code === "QUOTE_QUANTITY_CONFIRMATION") {
+      setBusy(false);
+      if (!window.confirm(result.error)) return;
+      setBusy(true);
+      result = await acceptPortalQuoteFn({
+        data: { id: quoteId, idempotencyKey, confirmOrderQuantityChanges: true },
+      });
+    }
     setBusy(false);
     if (!result.ok) {
       toast.error(result.error);
