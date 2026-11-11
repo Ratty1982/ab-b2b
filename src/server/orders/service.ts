@@ -28,6 +28,7 @@ import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price"
 import { loadStockByVariantIds } from "@/server/stock/service";
 import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
 import { staffOrderStockAvailability } from "@/domain/staff-order-stock";
+import { staffStockHoldLabel } from "@/domain/order-stock-hold";
 import {
   allocateOrderLineQuantities,
   isEffectiveBackorderAllowed,
@@ -298,6 +299,8 @@ export type AdminOrderListItem = OrderListItemBase & {
   autopartExportFilter: "READY" | "EXPORTED" | "BLOCKED";
   containsBackorder: boolean;
   fullyBackordered: boolean;
+  stockHoldState: string;
+  stockHoldLabel: string | null;
   archivedAt: string | null;
   archiveReason: string | null;
   archivedByName: string | null;
@@ -328,6 +331,18 @@ export type AdminOrderDetail = PortalOrderDetail & {
   archivedByName: string | null;
   autopartFulfilment: AutopartOrderFulfilmentView | null;
   salesOrderEdit: { allowed: boolean; reason: string | null };
+  stockHoldState: string;
+  stockReleasePolicy: string;
+  stockHoldLabel: string | null;
+  stockHeldAt: string | null;
+  stockReleasedAt: string | null;
+  stockReleaseReason: string | null;
+  stockHoldCancelReason: string | null;
+  stockHoldLastCheckResult: {
+    fullyCoverable?: boolean;
+    reason?: string;
+    checkedAt?: string;
+  } | null;
   manualResolutionKind: string;
   manualResolutionReason: string | null;
   manualResolvedAt: string | null;
@@ -1248,6 +1263,12 @@ export type SubmittedOrderCommit = {
   /** When set, the company OPEN basket is marked CONVERTED inside the same transaction. */
   convertBasketId?: string | null;
   salesOrderDraftId?: string | null;
+  /**
+   * Sales staff only. When true and any line has backorder qty, the order is held
+   * until complete stock (status stays SUBMITTED). Customer checkout must omit this.
+   */
+  holdUntilComplete?: boolean;
+  holdUntilCompleteByUserId?: string | null;
   /** Runs inside the order transaction, before the order row is created. */
   beforeCreate?: (tx: Prisma.TransactionClient) => Promise<void>;
   withinTransaction?: (
@@ -1299,6 +1320,14 @@ export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
 
     const orderNumber = await allocateOrderNumber(tx);
     const placedAt = new Date();
+    const backorderUnitsPreview = input.lines.reduce(
+      (sum, line) => sum + (line.issue === "VALID" ? line.backorderQtyAtOrder : 0),
+      0,
+    );
+    const placeOnStockHold =
+      Boolean(input.holdUntilComplete) &&
+      backorderUnitsPreview > 0 &&
+      Boolean(input.placedByStaffUserId);
 
     const order = await tx.order.create({
       data: {
@@ -1331,6 +1360,14 @@ export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
           ? {
               backorderAcknowledgedAt: placedAt,
               backorderAcknowledgedByUserId: input.backorderAcknowledgedByUserId,
+            }
+          : {}),
+        ...(placeOnStockHold
+          ? {
+              stockReleasePolicy: "HOLD_UNTIL_COMPLETE" as const,
+              stockHoldState: "WAITING_STOCK" as const,
+              stockHeldAt: placedAt,
+              stockHeldByUserId: input.holdUntilCompleteByUserId ?? input.placedByStaffUserId ?? null,
             }
           : {}),
         basketId: input.convertBasketId ?? null,
@@ -1389,11 +1426,28 @@ export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
       kind: "ORDER_RECEIVED",
       summary:
         backorderUnits > 0
-          ? `Order received · ${backorderUnits} item${backorderUnits === 1 ? "" : "s"} on backorder`
+          ? placeOnStockHold
+            ? `Order received · held awaiting complete stock · ${backorderUnits} item${backorderUnits === 1 ? "" : "s"} on backorder`
+            : `Order received · ${backorderUnits} item${backorderUnits === 1 ? "" : "s"} on backorder`
           : "Order received",
       source: "ORDER_PLACE",
       lineQuantitiesKnown: true,
     });
+
+    if (placeOnStockHold) {
+      await recordFulfilmentEvent(tx, {
+        orderId: order.id,
+        kind: "NOTE",
+        summary: "HELD — AWAITING STOCK until every line can be fulfilled",
+        source: "ORDER_PLACE",
+        lineQuantitiesKnown: true,
+        metadata: {
+          stockHold: true,
+          stockHoldState: "WAITING_STOCK",
+          stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
+        },
+      });
+    }
 
     if (input.convertBasketId) {
       await tx.basket.update({
@@ -1854,6 +1908,7 @@ export async function listAdminOrders(
         ? {
             autopartExportStatus: "NOT_EXPORTED",
             status: { notIn: ["DRAFT", "CANCELLED"] },
+            stockHoldState: { not: "WAITING_STOCK" },
             autopartAccountLinked: true,
             autopartCustomerCodeSnapshot: { not: null },
             items: { some: {} },
@@ -1862,6 +1917,7 @@ export async function listAdminOrders(
           ? {
               OR: [
                 { status: "CANCELLED" },
+                { stockHoldState: "WAITING_STOCK" },
                 { autopartAccountLinked: false },
                 { autopartCustomerCodeSnapshot: null },
                 { items: { none: {} } },
@@ -1916,10 +1972,12 @@ export async function listAdminOrders(
     pageSize,
     items: rows.map((row) => {
       const linked = row.autopartAccountLinked && Boolean(row.autopartCustomerCodeSnapshot?.trim());
+      const waitingStock = row.stockHoldState === "WAITING_STOCK";
       const blocked =
         row.status === "CANCELLED" ||
         row._count.items === 0 ||
-        !linked;
+        !linked ||
+        waitingStock;
       const autopartExportFilter: AdminOrderListItem["autopartExportFilter"] =
         row.autopartExportStatus === "EXPORTED"
           ? "EXPORTED"
@@ -1948,6 +2006,8 @@ export async function listAdminOrders(
         autopartExportFilter,
         containsBackorder: orderContainsBackorder(row.items),
         fullyBackordered: orderIsFullyBackordered(row.items),
+        stockHoldState: row.stockHoldState,
+        stockHoldLabel: staffStockHoldLabel(row.stockHoldState),
         archivedAt: row.archivedAt?.toISOString() ?? null,
         archiveReason: row.archiveReason,
         archivedByName: row.archivedBy?.name ?? row.archivedBy?.email ?? null,
@@ -2033,6 +2093,28 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
             consumedReservationCount: order.reservations.length,
           })
         : { allowed: false, reason: null },
+    stockHoldState: order.stockHoldState,
+    stockReleasePolicy: order.stockReleasePolicy,
+    stockHoldLabel: staffStockHoldLabel(order.stockHoldState),
+    stockHeldAt: order.stockHeldAt?.toISOString() ?? null,
+    stockReleasedAt: order.stockReleasedAt?.toISOString() ?? null,
+    stockReleaseReason: order.stockReleaseReason,
+    stockHoldCancelReason: order.stockHoldCancelReason,
+    stockHoldLastCheckResult: (() => {
+      const raw = order.stockHoldLastCheckResult;
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+      const row = raw as Record<string, unknown>;
+      const mapped: {
+        fullyCoverable?: boolean;
+        reason?: string;
+        checkedAt?: string;
+      } = {
+        fullyCoverable: Boolean(row["fullyCoverable"]),
+      };
+      if (typeof row["reason"] === "string") mapped.reason = row["reason"];
+      if (typeof row["checkedAt"] === "string") mapped.checkedAt = row["checkedAt"];
+      return mapped;
+    })(),
     hasBackorderItems: orderContainsBackorder(order.items),
     hasOutstandingBackorder: summary.hasOutstandingBackorder,
     outstandingBackorderUnits: summary.outstandingBackorderUnits,

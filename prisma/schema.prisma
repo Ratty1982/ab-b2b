@@ -248,6 +248,20 @@ enum OrderFulfilmentEventKind {
   NOTE
 }
 
+/// Orthogonal to OrderStatus — how backordered lines should release for Autopart export.
+enum OrderStockReleasePolicy {
+  SHIP_AS_AVAILABLE
+  HOLD_UNTIL_COMPLETE
+}
+
+/// Stock-hold lifecycle. Order.status stays SUBMITTED while WAITING_STOCK.
+enum OrderStockHoldState {
+  NONE
+  WAITING_STOCK
+  READY_TO_EXPORT
+  CANCELLED_HOLD
+}
+
 /// Historic Autopart document kinds (561L / SLRB). Not AB Orders.
 enum AutopartHistoricDocumentType {
   INVOICE
@@ -502,6 +516,8 @@ enum TransactionalEmailPurpose {
   ORDER_UPDATED
   ORDER_PART_DESPATCHED
   ORDER_DESPATCHED
+  /// Internal notice when a hold-until-complete order becomes fully reservable.
+  ORDER_STOCK_HOLD_READY_INTERNAL
   QUOTE_SENT
   QUOTE_DECLINED_INTERNAL
   TRADE_APPLICATION_RECEIVED
@@ -769,6 +785,8 @@ model User {
   ordersArchived         Order[]        @relation("OrderArchivedBy")
   ordersBackorderAcknowledged Order[]   @relation("OrderBackorderAcknowledgedBy")
   ordersManuallyResolved Order[]        @relation("OrderManualResolver")
+  ordersStockHeld Order[]               @relation("OrderStockHeldBy")
+  ordersStockHoldCancelled Order[]      @relation("OrderStockHoldCancelledBy")
   autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
@@ -2565,6 +2583,20 @@ model Order {
   /// Staff confirmed the customer was told about backordered units. Null when the order had none.
   backorderAcknowledgedAt DateTime?
   backorderAcknowledgedByUserId String?
+  /// How backordered quantity should release for Autopart CSV export. Independent of OrderStatus.
+  stockReleasePolicy OrderStockReleasePolicy @default(SHIP_AS_AVAILABLE)
+  /// Active stock-hold state. WAITING_STOCK blocks Autopart export until every line is covered.
+  stockHoldState OrderStockHoldState @default(NONE)
+  stockHeldAt DateTime?
+  stockHeldByUserId String?
+  stockHoldLastCheckedAt DateTime?
+  /// Latest stock-coverage diagnostic for staff (blocking SKUs, availability, reason).
+  stockHoldLastCheckResult Json?
+  stockReleasedAt DateTime?
+  stockReleaseReason String?
+  stockHoldCancelledAt DateTime?
+  stockHoldCancelReason String?
+  stockHoldCancelledByUserId String?
   /// Staff resolution when 504/TRM21QC invoice evidence was missing. NONE on ordinary orders.
   manualResolutionKind OrderManualResolutionKind @default(NONE)
   manualResolutionReason String?
@@ -2581,6 +2613,8 @@ model Order {
   company      Company                 @relation(fields: [companyId], references: [id])
   archivedBy   User?                   @relation("OrderArchivedBy", fields: [archivedByUserId], references: [id], onDelete: SetNull)
   backorderAcknowledgedBy User?        @relation("OrderBackorderAcknowledgedBy", fields: [backorderAcknowledgedByUserId], references: [id], onDelete: SetNull)
+  stockHeldBy User?                    @relation("OrderStockHeldBy", fields: [stockHeldByUserId], references: [id], onDelete: SetNull)
+  stockHoldCancelledBy User?           @relation("OrderStockHoldCancelledBy", fields: [stockHoldCancelledByUserId], references: [id], onDelete: SetNull)
   manualResolvedBy User?               @relation("OrderManualResolver", fields: [manualResolvedByUserId], references: [id], onDelete: SetNull)
   salesEditDrafts SalesOrderDraft[]    @relation("OrderSalesEdit")
   items        OrderItem[]
@@ -2604,6 +2638,9 @@ model Order {
   @@index([fulfilmentChoice])
   @@index([manualResolutionKind])
   @@index([manualResolvedByUserId])
+  @@index([stockHoldState, stockHeldAt])
+  @@index([stockHeldByUserId])
+  @@index([stockHoldCancelledByUserId])
 }
 
 enum SalesOrderDraftStatus {

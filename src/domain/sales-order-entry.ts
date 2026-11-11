@@ -321,6 +321,11 @@ export const placeSalesOrderSchema = z
     lines: z.array(salesOrderLineInputSchema).max(100).optional(),
     /** Required when any line is backordered. The server checks the fresh allocation. */
     backorderAcknowledged: z.boolean().optional(),
+    /**
+     * When true and the basket has confirmed backorder quantity, place the order on
+     * stock hold until every line can be fulfilled. Default false preserves ship-as-available.
+     */
+    holdUntilComplete: z.boolean().optional(),
     expectedLinePrices: z.array(expectedLinePriceSchema).max(100).optional().nullable(),
     /** Complete reviewed snapshot. Required for a new order. Ignored when accepting a quotation. */
     expectedReview: salesOrderExpectedReviewSchema.optional().nullable(),

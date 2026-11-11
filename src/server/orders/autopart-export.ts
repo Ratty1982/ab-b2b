@@ -22,6 +22,7 @@ import {
 } from "@/domain/autopart-order-export";
 import { moneyToString, parseMoney, moneyZero } from "@/domain/money";
 import { recordFulfilmentEvent } from "@/server/orders/fulfilment";
+import { blocksAutopartExportForStockHold } from "@/domain/order-stock-hold";
 
 export type AutopartExportBlockReason =
   | "CANCELLED"
@@ -32,6 +33,7 @@ export type AutopartExportBlockReason =
   | "MISSING_DELIVERY"
   | "INVALID_FINANCIALS"
   | "ALREADY_EXPORTED"
+  | "WAITING_STOCK"
   | "NOT_FOUND"
   | "FORBIDDEN";
 
@@ -123,6 +125,12 @@ function assessOrder(
   }
   if (order.status === "DRAFT") {
     return block("DRAFT", "Draft orders cannot be exported.");
+  }
+  if (blocksAutopartExportForStockHold(order.stockHoldState)) {
+    return block(
+      "WAITING_STOCK",
+      "Order is held awaiting complete stock and cannot be exported until every line is covered.",
+    );
   }
   if (order.items.length === 0) {
     return block("NO_ITEMS", "Order has no line items.");

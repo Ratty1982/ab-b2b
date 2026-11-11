@@ -7,11 +7,14 @@ import { ROUTES } from "@/lib/app-nav";
 import { formatDateTime } from "@/lib/datetime";
 import { customerOrderStatusTone } from "@/domain/order-status";
 import {
+  cancelOrderStockHoldFn,
   deleteAdminOrderFn,
   exportAutopartOrdersCsvFn,
   getAdminOrderFn,
+  getOrderStockHoldFn,
   listOrderEmailsFn,
   repairOrderAutopartSnapshotFn,
+  retryHeldOrderEvaluationFn,
   retryTransactionalEmailFn,
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
@@ -47,11 +50,16 @@ function AdminOrderDetailPage() {
   const [testDeleteOpen, setTestDeleteOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
+  const [stockHold, setStockHold] = useState<
+    Extract<Awaited<ReturnType<typeof getOrderStockHoldFn>>, { ok: true }>["data"]
+  >(null);
+  const [holdBusy, setHoldBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const [orderResult, emailResult] = await Promise.all([
+    const [orderResult, emailResult, holdResult] = await Promise.all([
       getAdminOrderFn({ data: { orderId } }),
       listOrderEmailsFn({ data: { orderId } }),
+      getOrderStockHoldFn({ data: { orderId } }),
     ]);
     if (!orderResult.ok) {
       setError(orderResult.error);
@@ -62,6 +70,11 @@ function AdminOrderDetailPage() {
       setEmails(emailResult.data);
     } else {
       setEmails([]);
+    }
+    if (holdResult.ok) {
+      setStockHold(holdResult.data);
+    } else {
+      setStockHold(null);
     }
   }, [orderId]);
 
@@ -140,6 +153,38 @@ function AdminOrderDetailPage() {
     void navigate({ to: ROUTES.adminOrders });
   }
 
+  async function onRetryStockHold() {
+    setHoldBusy(true);
+    const result = await retryHeldOrderEvaluationFn({ data: { orderId } });
+    setHoldBusy(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`Stock hold evaluation: ${result.data.outcome}`);
+    await load();
+  }
+
+  async function onCancelStockHold(cancelOrder: boolean) {
+    const reason = window.prompt(
+      cancelOrder
+        ? "Reason for cancelling this held order:"
+        : "Reason for cancelling the stock hold (order remains placed):",
+    );
+    if (!reason?.trim()) return;
+    setHoldBusy(true);
+    const result = await cancelOrderStockHoldFn({
+      data: { orderId, reason: reason.trim(), cancelOrder },
+    });
+    setHoldBusy(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(cancelOrder ? "Held order cancelled" : "Stock hold cancelled");
+    await load();
+  }
+
   async function onRepairSnapshot() {
     if (!order) return;
     const ok = window.confirm(
@@ -196,6 +241,9 @@ function AdminOrderDetailPage() {
             >
               {order.statusLabel}
             </StatusBadge>
+            {order.stockHoldLabel ? (
+              <StatusBadge tone="warn">{order.stockHoldLabel}</StatusBadge>
+            ) : null}
             {order.salesOrderEdit.allowed ? (
               <Link
                 to="/sales/orders/new"
@@ -465,6 +513,12 @@ function AdminOrderDetailPage() {
               <dt className="text-steel">Customer fulfilment</dt>
               <dd>{order.statusLabel}</dd>
             </div>
+            {order.stockHoldLabel ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-steel">Stock hold</dt>
+                <dd className="font-semibold text-warn">{order.stockHoldLabel}</dd>
+              </div>
+            ) : null}
             {order.hasOutstandingBackorder ? (
               <div className="flex justify-between gap-3">
                 <dt className="text-steel">Outstanding backorder</dt>
@@ -476,6 +530,60 @@ function AdminOrderDetailPage() {
               </div>
             ) : null}
           </dl>
+          {order.stockHoldState !== "NONE" ? (
+            <div className="mt-4 space-y-3 rounded-md border border-amber-400/40 bg-amber-400/10 p-3 text-[13px]">
+              <p className="font-semibold text-amber-200">
+                {order.stockHoldLabel ?? order.stockHoldState}
+              </p>
+              {stockHold?.blockingSkus?.length ? (
+                <ul className="space-y-1 text-steel">
+                  {stockHold.blockingSkus.map((sku) => (
+                    <li key={sku.sku}>
+                      {sku.sku}: need {sku.requiredQty}, available {sku.availableIncludingOwn}
+                      {sku.stockConfirmed ? "" : " (stock not confirmed)"}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-steel">
+                  {order.stockHoldState === "WAITING_STOCK"
+                    ? "Waiting for confirmed stock to cover every line."
+                    : order.stockReleaseReason || order.stockHoldCancelReason || "—"}
+                </p>
+              )}
+              {order.stockHoldState === "WAITING_STOCK" && canDeleteOrders ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={holdBusy}
+                    onClick={() => void onRetryStockHold()}
+                    className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase tracking-wide disabled:opacity-50"
+                  >
+                    {holdBusy ? "Working…" : "Retry stock check"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={holdBusy}
+                    onClick={() => void onCancelStockHold(false)}
+                    className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase tracking-wide disabled:opacity-50"
+                  >
+                    Cancel hold
+                  </button>
+                  <button
+                    type="button"
+                    disabled={holdBusy}
+                    onClick={() => void onCancelStockHold(true)}
+                    className="h-9 rounded-md border border-destructive/40 px-3 text-[11px] font-bold uppercase tracking-wide text-destructive disabled:opacity-50"
+                  >
+                    Cancel hold + order
+                  </button>
+                </div>
+              ) : null}
+              <p className="text-[11px] text-steel">
+                Held orders cannot be force-exported while waiting for stock.
+              </p>
+            </div>
+          ) : null}
           {!order.autopartAccountLinked || !order.autopartCustomerCodeSnapshot ? (
             <p className="mt-4 text-[13px] font-medium text-warn" role="status">
               No verified Autopart customer account was linked when this order was placed. CSV export
@@ -498,7 +606,7 @@ function AdminOrderDetailPage() {
             {order.autopartExportStatus === "EXPORTED" ? (
               <button
                 type="button"
-                disabled={exporting}
+                disabled={exporting || order.stockHoldState === "WAITING_STOCK"}
                 onClick={() => void onExportCsv(true)}
                 className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase disabled:opacity-50"
               >
@@ -507,7 +615,11 @@ function AdminOrderDetailPage() {
             ) : (
               <button
                 type="button"
-                disabled={exporting || !order.autopartAccountLinked}
+                disabled={
+                  exporting ||
+                  !order.autopartAccountLinked ||
+                  order.stockHoldState === "WAITING_STOCK"
+                }
                 onClick={() => void onExportCsv(false)}
                 className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
               >
