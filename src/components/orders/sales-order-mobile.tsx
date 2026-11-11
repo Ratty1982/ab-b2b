@@ -641,7 +641,6 @@ export function SalesOrderReviewPanel({
   holdLocked = false,
   holdOnExistingOrder = false,
   onAcceptPrices,
-  onAuthorised,
   onBackorderAcknowledged,
   onHoldUntilComplete,
   onPlace,
