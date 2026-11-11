@@ -7,6 +7,7 @@ import { NeedsAttentionPanel } from "./NeedsAttentionPanel";
 import { SystemHealthPanel } from "./SystemHealthPanel";
 import { RecentActivityPanel } from "./RecentActivityPanel";
 import { AdminDashboardHeader } from "./AdminDashboardHeader";
+import { BackInStockPanel } from "./BackInStockPanel";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to, ...rest }: { children: ReactNode; to: string }) => (
@@ -130,5 +131,48 @@ describe("admin dashboard UI states", () => {
     expect(html).toContain("Thursday, 1 October 2026");
     expect(html).toContain("View Orders");
     expect(html).toContain('href="/admin/orders"');
+  });
+
+  it("renders back-in-stock empty state", () => {
+    const html = renderToStaticMarkup(
+      <BackInStockPanel data={{ items: [], viewAllHref: "/admin/products/stock/back-in-stock", empty: true }} />,
+    );
+    expect(html).toContain("No recent back-in-stock events");
+    expect(html).toContain("View all");
+  });
+
+  it("renders back-in-stock cards with missing image and reserved stock", () => {
+    const html = renderToStaticMarkup(
+      <BackInStockPanel
+        data={{
+          empty: false,
+          viewAllHref: "/admin/products/stock/back-in-stock",
+          items: [
+            {
+              id: "bis-1",
+              productId: "p1",
+              sku: "SKU-1",
+              productName: "Brake Pad",
+              previousQty: 0,
+              transitionQty: 12,
+              currentSellableQty: 8,
+              currentAvailQty: 12,
+              reservedQty: 4,
+              manualOverrideQty: null,
+              imageSrc: null,
+              observedAt: "2026-11-11T10:00:00.000Z",
+              observedAtLabel: "11/11/2026, 10:00 GMT",
+              href: "/admin/products/p1",
+              stockHref: "/admin/products/stock/product/SKU-1",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(html).toContain("Brake Pad");
+    expect(html).toContain("SKU-1");
+    expect(html).toContain("Now in stock");
+    expect(html).toContain("4 reserved");
+    expect(html).toContain('href="/admin/products/p1"');
   });
 });

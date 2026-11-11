@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
   AdminDashboardHeader,
+  BackInStockPanel,
   DashboardError,
   DashboardSkeleton,
   NeedsAttentionPanel,
@@ -94,6 +95,12 @@ function DashboardBody({ data }: { data: AdminDashboardData }) {
       <div className="mt-6">
         <OperationalSections data={data} />
       </div>
+
+      {data.backInStock ? (
+        <div className="mt-6">
+          <BackInStockPanel data={data.backInStock} />
+        </div>
+      ) : null}
 
       <div className="mt-6 grid gap-6 px-4 pb-8 sm:px-6 xl:grid-cols-3">
         <section className="space-y-6 xl:col-span-2">

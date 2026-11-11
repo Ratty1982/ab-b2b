@@ -8,6 +8,7 @@ export { RecentOrdersPanel } from "./RecentOrdersPanel";
 export { RecentActivityPanel } from "./RecentActivityPanel";
 export { TradeApplicationsPanel } from "./TradeApplicationsPanel";
 export { SecondaryOpsPanel } from "./SecondaryOpsPanel";
+export { BackInStockPanel } from "./BackInStockPanel";
 export { DashboardSkeleton } from "./DashboardSkeleton";
 export { DashboardError } from "./DashboardError";
 export type { AdminDashboardData } from "./types";
