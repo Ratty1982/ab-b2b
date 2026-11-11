@@ -1,0 +1,72 @@
+name: CI
+
+# Runs on every PR synchronize/rebase once this workflow exists on the PR merge
+# base (or the PR head). Merge this PR before relying on checks for other PRs.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches:
+      - production/phase-1-auth-rbac
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: typecheck-test-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ab
+          POSTGRES_PASSWORD: ab
+          POSTGRES_DB: automotive_brands
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ab -d automotive_brands"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ab:ab@localhost:5432/automotive_brands?schema=public
+      APP_URL: http://localhost:43127
+      AUTH_SECRET: ci-only-change-me-to-a-long-random-string!!
+      NODE_ENV: test
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@v4
+
+      # Repo lockfile is bun.lock (Coolify/Docker pin Bun 1.2.23). npm cache fails without package-lock.json.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.23"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Prisma generate
+        run: /usr/bin/node ./node_modules/prisma/build/index.js generate
+
+      - name: Prisma migrate deploy
+        run: /usr/bin/node ./node_modules/prisma/build/index.js migrate deploy
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Unit and integration tests
+        run: bun run test
+
+      - name: Production build
+        run: bun run build
