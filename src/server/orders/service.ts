@@ -1908,16 +1908,30 @@ export async function listAdminOrders(
         ? {
             autopartExportStatus: "NOT_EXPORTED",
             status: { notIn: ["DRAFT", "CANCELLED"] },
-            stockHoldState: { not: "WAITING_STOCK" },
             autopartAccountLinked: true,
             autopartCustomerCodeSnapshot: { not: null },
             items: { some: {} },
+            // Fail-closed: HOLD_UNTIL_COMPLETE only when explicitly released/cancelled.
+            OR: [
+              {
+                stockReleasePolicy: "SHIP_AS_AVAILABLE",
+                stockHoldState: { not: "WAITING_STOCK" },
+              },
+              {
+                stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
+                stockHoldState: { in: ["READY_TO_EXPORT", "CANCELLED_HOLD"] },
+              },
+            ],
           }
         : exportFilter === "BLOCKED"
           ? {
               OR: [
                 { status: "CANCELLED" },
                 { stockHoldState: "WAITING_STOCK" },
+                {
+                  stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
+                  stockHoldState: { notIn: ["READY_TO_EXPORT", "CANCELLED_HOLD"] },
+                },
                 { autopartAccountLinked: false },
                 { autopartCustomerCodeSnapshot: null },
                 { items: { none: {} } },

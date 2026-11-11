@@ -145,9 +145,11 @@ async function buildCoverageInputs(
     where: { orderId: order.id, status: "ACTIVE" },
     select: { variantId: true, quantity: true, orderItemId: true },
   });
-  const ownByVariant = new Map<string, number>();
+  /** Per line — never duplicate the full variant sum onto every sibling line. */
+  const ownByItem = new Map<string, number>();
   for (const row of active) {
-    ownByVariant.set(row.variantId, (ownByVariant.get(row.variantId) ?? 0) + row.quantity);
+    if (!row.orderItemId) continue;
+    ownByItem.set(row.orderItemId, (ownByItem.get(row.orderItemId) ?? 0) + row.quantity);
   }
 
   const variantIds = [
@@ -210,7 +212,7 @@ async function buildCoverageInputs(
       sku: item.sku,
       name: item.name,
       requiredQty: item.qty,
-      ownActiveReservedQty: variantId ? (ownByVariant.get(variantId) ?? 0) : 0,
+      ownActiveReservedQty: ownByItem.get(item.id) ?? 0,
       freeConfirmedSellableQty: stockConfirmed ? free : 0,
       stockConfirmed,
     };
@@ -230,7 +232,9 @@ async function evaluateAndMaybeReleaseOrder(
   assessment: StockHoldCoverageAssessment | null;
 }> {
   const freshness = await stockFreshness();
-  if (freshness.stale && !opts.allowStale) {
+  // Fail closed: no successful sync yet is not trustworthy for release.
+  const stockUntrusted = freshness.stale || !freshness.lastSuccessAt;
+  if (stockUntrusted && !opts.allowStale) {
     return { orderId, outcome: "STALE", assessment: null };
   }
 
@@ -272,12 +276,12 @@ async function evaluateAndMaybeReleaseOrder(
       return { outcome: "SKIPPED" as const, assessment };
     }
 
-    const inputs = await buildCoverageInputs(tx, order, { stale: freshness.stale });
+    const inputs = await buildCoverageInputs(tx, order, { stale: stockUntrusted });
     const assessment = assessStockHoldLineCoverage(inputs);
     const now = new Date();
     const checkPayload = stockHoldCheckResultPayload(assessment, {
       trigger: opts.trigger,
-      stockStale: freshness.stale,
+      stockStale: stockUntrusted,
       lastSuccessAt: freshness.lastSuccessAt?.toISOString() ?? null,
     });
 
@@ -306,9 +310,9 @@ async function evaluateAndMaybeReleaseOrder(
     }
 
     // Recheck after reserve attempt (stock may have vanished under lock races).
-    const recheckInputs = await buildCoverageInputs(tx, order, { stale: freshness.stale });
+    const recheckInputs = await buildCoverageInputs(tx, order, { stale: stockUntrusted });
     // Own reservations now include the just-created rows; free sellable dropped accordingly.
-    // Full coverage means every line's own ACTIVE reservation >= required.
+    // Full coverage means ACTIVE reservations for each variant cover the SUM of sibling line qtys.
     const postActive = await tx.orderStockReservation.findMany({
       where: { orderId: order.id, status: "ACTIVE" },
       select: { variantId: true, quantity: true },
@@ -317,9 +321,20 @@ async function evaluateAndMaybeReleaseOrder(
     for (const row of postActive) {
       ownByVariant.set(row.variantId, (ownByVariant.get(row.variantId) ?? 0) + row.quantity);
     }
-    const stillShort = order.items.some((item) => {
-      if (!item.variantId) return true;
-      return (ownByVariant.get(item.variantId) ?? 0) < item.qty;
+    const requiredByVariant = new Map<string, number>();
+    for (const item of order.items) {
+      if (!item.variantId) {
+        requiredByVariant.set(`missing:${item.id}`, item.qty);
+        continue;
+      }
+      requiredByVariant.set(
+        item.variantId,
+        (requiredByVariant.get(item.variantId) ?? 0) + item.qty,
+      );
+    }
+    const stillShort = [...requiredByVariant.entries()].some(([variantKey, required]) => {
+      if (variantKey.startsWith("missing:")) return true;
+      return (ownByVariant.get(variantKey) ?? 0) < required;
     });
     if (stillShort) {
       const failed = assessStockHoldLineCoverage(recheckInputs);

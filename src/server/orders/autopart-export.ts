@@ -126,7 +126,7 @@ function assessOrder(
   if (order.status === "DRAFT") {
     return block("DRAFT", "Draft orders cannot be exported.");
   }
-  if (blocksAutopartExportForStockHold(order.stockHoldState)) {
+  if (blocksAutopartExportForStockHold(order.stockHoldState, order.stockReleasePolicy)) {
     return block(
       "WAITING_STOCK",
       "Order is held awaiting complete stock and cannot be exported until every line is covered.",

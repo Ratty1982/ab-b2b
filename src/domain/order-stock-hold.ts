@@ -14,11 +14,15 @@ export type StockHoldLineCoverageInput = {
   sku: string;
   name: string;
   requiredQty: number;
-  /** ACTIVE AB reservations already held by this order for the line/variant. */
+  /**
+   * ACTIVE AB reservations already held by this order for this line
+   * (prefer per-orderItemId qty; do not pass the full variant sum on every sibling line).
+   */
   ownActiveReservedQty: number;
   /**
    * Free confirmed sellable after subtracting ALL ACTIVE reservations
-   * (including this order's). Stale / unconfirmed stock must pass 0.
+   * (including this order's). Shared across sibling lines of the same variant.
+   * Stale / unconfirmed stock must pass 0.
    */
   freeConfirmedSellableQty: number;
   stockConfirmed: boolean;
@@ -56,10 +60,21 @@ export function isActiveStockHold(state: OrderStockHoldState | string | null | u
   return state === "WAITING_STOCK";
 }
 
+/**
+ * Fail-closed export gate.
+ * - Explicit WAITING_STOCK always blocks.
+ * - HOLD_UNTIL_COMPLETE policy only exports when READY_TO_EXPORT or CANCELLED_HOLD
+ *   (unknown/null state under that policy stays blocked).
+ */
 export function blocksAutopartExportForStockHold(
   state: OrderStockHoldState | string | null | undefined,
+  policy?: OrderStockReleasePolicy | string | null,
 ): boolean {
-  return state === "WAITING_STOCK";
+  if (state === "WAITING_STOCK") return true;
+  if (policy === "HOLD_UNTIL_COMPLETE") {
+    return state !== "READY_TO_EXPORT" && state !== "CANCELLED_HOLD";
+  }
+  return false;
 }
 
 export function staffStockHoldLabel(
@@ -72,8 +87,9 @@ export function staffStockHoldLabel(
 }
 
 /**
- * Coverage for one held order. Own ACTIVE reservations count toward the line
- * without being double-reserved. Free sellable must already exclude every ACTIVE hold.
+ * Coverage for one held order.
+ * Own ACTIVE reservations count toward lines without double-reserving free stock.
+ * Sibling lines that share a variantId share one free pool and one own-reservation pool.
  */
 export function assessStockHoldLineCoverage(
   lines: StockHoldLineCoverageInput[],
@@ -87,28 +103,54 @@ export function assessStockHoldLineCoverage(
     };
   }
 
-  const assessed: StockHoldLineCoverage[] = lines.map((line) => {
-    const required = Math.max(0, Math.trunc(line.requiredQty));
-    const own = Math.max(0, Math.trunc(line.ownActiveReservedQty));
-    const free = line.stockConfirmed
-      ? Math.max(0, Math.trunc(line.freeConfirmedSellableQty))
+  const groups = new Map<string, StockHoldLineCoverageInput[]>();
+  for (const line of lines) {
+    const key = line.variantId || `item:${line.orderItemId}`;
+    const list = groups.get(key) ?? [];
+    list.push(line);
+    groups.set(key, list);
+  }
+
+  const assessedByItem = new Map<string, StockHoldLineCoverage>();
+
+  for (const groupLines of groups.values()) {
+    const sorted = [...groupLines].sort((a, b) => a.orderItemId.localeCompare(b.orderItemId));
+    const stockConfirmed = sorted.every((line) => line.stockConfirmed);
+    const freePool = stockConfirmed
+      ? Math.max(0, Math.trunc(sorted[0]?.freeConfirmedSellableQty ?? 0))
       : 0;
-    const coveredByOwnReservation = Math.min(required, own);
-    const availableIncludingOwn = free + own;
-    const shortfallQty = Math.max(0, required - availableIncludingOwn);
-    const remainingToReserve = Math.max(0, required - own);
-    return {
-      ...line,
-      requiredQty: required,
-      ownActiveReservedQty: own,
-      freeConfirmedSellableQty: free,
-      coveredByOwnReservation,
-      availableIncludingOwn,
-      shortfallQty,
-      remainingToReserve,
-      fullyCovered: shortfallQty === 0 && (required === 0 || line.stockConfirmed || own >= required),
-    };
-  });
+    let ownPool = 0;
+    for (const line of sorted) {
+      ownPool += Math.max(0, Math.trunc(line.ownActiveReservedQty));
+    }
+    let remainingOwn = ownPool;
+    let remainingFree = freePool;
+
+    for (const line of sorted) {
+      const required = Math.max(0, Math.trunc(line.requiredQty));
+      const takeOwn = Math.min(required, remainingOwn);
+      remainingOwn -= takeOwn;
+      const needFromFree = required - takeOwn;
+      const takeFree = Math.min(needFromFree, remainingFree);
+      remainingFree -= takeFree;
+      const shortfallQty = needFromFree - takeFree;
+      const remainingToReserve = needFromFree;
+      assessedByItem.set(line.orderItemId, {
+        ...line,
+        requiredQty: required,
+        ownActiveReservedQty: Math.max(0, Math.trunc(line.ownActiveReservedQty)),
+        freeConfirmedSellableQty: freePool,
+        coveredByOwnReservation: takeOwn,
+        availableIncludingOwn: takeOwn + takeFree,
+        shortfallQty,
+        remainingToReserve,
+        fullyCovered:
+          shortfallQty === 0 && (required === 0 || line.stockConfirmed || takeOwn >= required),
+      });
+    }
+  }
+
+  const assessed = lines.map((line) => assessedByItem.get(line.orderItemId)!);
 
   const blocking = assessed
     .filter((line) => !line.fullyCovered)
@@ -122,7 +164,7 @@ export function assessStockHoldLineCoverage(
     }));
 
   const untrusted = assessed.some(
-    (line) => line.requiredQty > line.ownActiveReservedQty && !line.stockConfirmed,
+    (line) => line.requiredQty > line.coveredByOwnReservation && !line.stockConfirmed,
   );
 
   return {
