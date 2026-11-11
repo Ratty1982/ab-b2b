@@ -28,7 +28,11 @@ import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price"
 import { loadStockByVariantIds } from "@/server/stock/service";
 import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
 import { staffOrderStockAvailability } from "@/domain/staff-order-stock";
-import { staffStockHoldLabel } from "@/domain/order-stock-hold";
+import { blocksAutopartExportForStockHold, staffStockHoldLabel } from "@/domain/order-stock-hold";
+import {
+  orderBlockedByStockHoldFilter,
+  orderPassesStockHoldExportFilter,
+} from "@/server/orders/stock-hold-export-filter";
 import {
   allocateOrderLineQuantities,
   isEffectiveBackorderAllowed,
@@ -1911,27 +1915,13 @@ export async function listAdminOrders(
             autopartAccountLinked: true,
             autopartCustomerCodeSnapshot: { not: null },
             items: { some: {} },
-            // Fail-closed: HOLD_UNTIL_COMPLETE only when explicitly released/cancelled.
-            OR: [
-              {
-                stockReleasePolicy: "SHIP_AS_AVAILABLE",
-                stockHoldState: { not: "WAITING_STOCK" },
-              },
-              {
-                stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
-                stockHoldState: { in: ["READY_TO_EXPORT", "CANCELLED_HOLD"] },
-              },
-            ],
+            AND: [orderPassesStockHoldExportFilter()],
           }
         : exportFilter === "BLOCKED"
           ? {
               OR: [
                 { status: "CANCELLED" },
-                { stockHoldState: "WAITING_STOCK" },
-                {
-                  stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
-                  stockHoldState: { notIn: ["READY_TO_EXPORT", "CANCELLED_HOLD"] },
-                },
+                orderBlockedByStockHoldFilter(),
                 { autopartAccountLinked: false },
                 { autopartCustomerCodeSnapshot: null },
                 { items: { none: {} } },
@@ -1986,12 +1976,19 @@ export async function listAdminOrders(
     pageSize,
     items: rows.map((row) => {
       const linked = row.autopartAccountLinked && Boolean(row.autopartCustomerCodeSnapshot?.trim());
-      const waitingStock = row.stockHoldState === "WAITING_STOCK";
+      const holdBlocked = blocksAutopartExportForStockHold(
+        row.stockHoldState,
+        row.stockReleasePolicy,
+        {
+          stockReleasedAt: row.stockReleasedAt,
+          stockReleaseReason: row.stockReleaseReason,
+        },
+      );
       const blocked =
         row.status === "CANCELLED" ||
         row._count.items === 0 ||
         !linked ||
-        waitingStock;
+        holdBlocked;
       const autopartExportFilter: AdminOrderListItem["autopartExportFilter"] =
         row.autopartExportStatus === "EXPORTED"
           ? "EXPORTED"
@@ -2101,6 +2098,7 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
             autopartExportStatus: order.autopartExportStatus,
             autopartExportCount: order.autopartExportCount,
             autopartExportedAt: order.autopartExportedAt,
+            autopartExportBatchId: order.autopartExportBatchId,
             externalRef: order.externalRef,
             invoiceCount: order.invoices.length,
             fulfilmentKinds: order.fulfilmentEvents.map((event) => event.kind),

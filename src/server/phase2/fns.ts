@@ -3720,6 +3720,36 @@ export const retryHeldOrderEvaluationFn = createServerFn({ method: "POST" })
     }
   });
 
+export const diagnoseStockHoldExportFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { orderId?: string; orderNumber?: string; poNumber?: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hold = await import("@/server/orders/stock-hold");
+      return { ok: true as const, data: await hold.diagnoseStockHoldExport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const applyHoldUntilCompleteFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { orderId: string; reason: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hold = await import("@/server/orders/stock-hold");
+      return {
+        ok: true as const,
+        data: await hold.applyHoldUntilCompleteToSubmittedOrder(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const cancelOrderStockHoldFn = createServerFn({ method: "POST" })
   .inputValidator(
     (data: unknown) =>

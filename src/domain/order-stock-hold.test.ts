@@ -14,12 +14,26 @@ describe("order stock hold domain", () => {
     expect(isActiveStockHold("WAITING_STOCK")).toBe(true);
     expect(isActiveStockHold("READY_TO_EXPORT")).toBe(false);
     expect(blocksAutopartExportForStockHold("WAITING_STOCK")).toBe(true);
+    expect(blocksAutopartExportForStockHold("WAITING_STOCK", "SHIP_AS_AVAILABLE")).toBe(true);
     expect(blocksAutopartExportForStockHold("READY_TO_EXPORT")).toBe(false);
-    expect(blocksAutopartExportForStockHold("CANCELLED_HOLD")).toBe(false);
+    expect(blocksAutopartExportForStockHold("CANCELLED_HOLD", "SHIP_AS_AVAILABLE")).toBe(false);
     expect(blocksAutopartExportForStockHold(null, "HOLD_UNTIL_COMPLETE")).toBe(true);
     expect(blocksAutopartExportForStockHold("NONE", "HOLD_UNTIL_COMPLETE")).toBe(true);
-    expect(blocksAutopartExportForStockHold("READY_TO_EXPORT", "HOLD_UNTIL_COMPLETE")).toBe(false);
-    expect(blocksAutopartExportForStockHold("CANCELLED_HOLD", "HOLD_UNTIL_COMPLETE")).toBe(false);
+    expect(blocksAutopartExportForStockHold("WAITING_STOCK", "HOLD_UNTIL_COMPLETE")).toBe(true);
+    expect(blocksAutopartExportForStockHold("CANCELLED_HOLD", "HOLD_UNTIL_COMPLETE")).toBe(true);
+    expect(blocksAutopartExportForStockHold("READY_TO_EXPORT", "HOLD_UNTIL_COMPLETE")).toBe(true);
+    expect(
+      blocksAutopartExportForStockHold("READY_TO_EXPORT", "HOLD_UNTIL_COMPLETE", {
+        stockReleasedAt: "2026-11-11T12:00:00.000Z",
+        stockReleaseReason: "STOCK_SYNC_FULL_COVERAGE",
+      }),
+    ).toBe(false);
+    expect(
+      blocksAutopartExportForStockHold("READY_TO_EXPORT", "HOLD_UNTIL_COMPLETE", {
+        stockReleasedAt: "2026-11-11T12:00:00.000Z",
+        stockReleaseReason: "OPS_SQL",
+      }),
+    ).toBe(true);
     expect(staffStockHoldLabel("WAITING_STOCK")).toBe(STOCK_HOLD_STAFF_LABEL);
   });
 

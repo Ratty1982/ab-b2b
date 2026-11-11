@@ -7,6 +7,7 @@ const open = {
   autopartExportStatus: "NOT_EXPORTED",
   autopartExportCount: 0,
   autopartExportedAt: null,
+  autopartExportBatchId: null,
   externalRef: null,
   invoiceCount: 0,
   fulfilmentKinds: ["ORDER_RECEIVED"],
@@ -21,6 +22,7 @@ describe("sales order edit eligibility", () => {
   it.each([
     [{ autopartExportStatus: "EXPORTED" }, "exported to Autopart"],
     [{ autopartExportCount: 1 }, "exported to Autopart"],
+    [{ autopartExportBatchId: "batch_1" }, "exported to Autopart"],
     [{ invoiceCount: 1 }, "invoice"],
     [{ fulfilmentKinds: ["EXPORTED_FOR_PROCESSING"] }, "Fulfilment has started"],
     [{ fulfilmentKinds: ["DESPATCHED"] }, "Fulfilment has started"],

@@ -7,7 +7,7 @@
  * atomically, then emails staff via the transactional outbox.
  */
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { grants } from "@/server/rbac/access";
@@ -24,11 +24,14 @@ import {
   assessStockHoldLineCoverage,
   blocksAutopartExportForStockHold,
   isActiveStockHold,
+  isVerifiedStockHoldRelease,
   staffStockHoldLabel,
   stockHoldCheckResultPayload,
   type StockHoldCoverageAssessment,
   type StockHoldLineCoverageInput,
 } from "@/domain/order-stock-hold";
+import { orderHasAutopartExportRecord } from "@/server/orders/stock-hold-export-filter";
+import { assessSalesOrderEditEligibility } from "@/domain/order-edit";
 import { sendOrderStockHoldReadyEmailsAfterCommit } from "@/server/email/stock-hold-ready";
 
 export type StockHoldLineView = {
@@ -531,7 +534,13 @@ export async function cancelOrderStockHold(
         orderNumber: true,
         status: true,
         stockHoldState: true,
+        stockReleasePolicy: true,
         autopartExportStatus: true,
+        autopartExportCount: true,
+        autopartExportedAt: true,
+        autopartExportBatchId: true,
+        archivedAt: true,
+        externalRef: true,
       },
     });
 
@@ -545,7 +554,7 @@ export async function cancelOrderStockHold(
     if (!isActiveStockHold(order.stockHoldState)) {
       throw new AuthError("Order is not on an active stock hold", "NOT_WAITING", 409);
     }
-    if (order.autopartExportStatus === "EXPORTED") {
+    if (await orderHasAutopartExportRecord(tx, order)) {
       throw new AuthError("Exported orders cannot have their stock hold cancelled", "ORDER_LOCKED", 409);
     }
 
@@ -561,6 +570,8 @@ export async function cancelOrderStockHold(
       where: { id: order.id },
       data: {
         stockHoldState: "CANCELLED_HOLD",
+        // Policy must leave HOLD_UNTIL_COMPLETE. CANCELLED_HOLD with that policy stays unexportable.
+        stockReleasePolicy: "SHIP_AS_AVAILABLE",
         stockHoldCancelledAt: now,
         stockHoldCancelReason: reason.slice(0, 500),
         stockHoldCancelledByUserId: actorUserId,
@@ -595,6 +606,7 @@ export async function cancelOrderStockHold(
         reason,
         cancelOrder,
         stockHoldState: "CANCELLED_HOLD",
+        stockReleasePolicy: "SHIP_AS_AVAILABLE",
         status: updated.status,
       },
     });
@@ -837,6 +849,317 @@ export async function getOrderStockHoldDetail(
     })),
     blockingSkus: assessment.blockingSkus,
     lastCheckResult: asCheckResultView(order.stockHoldLastCheckResult),
+  };
+}
+
+/**
+ * Operator remediation for a submitted order whose hold was not persisted.
+ * Does not change the order number, customer, prices, lines, or reservations.
+ * Does not export the order. Refuses exported, invoiced, dispatched, and
+ * already verified-released orders.
+ */
+export async function applyHoldUntilCompleteToSubmittedOrder(
+  actorUserId: string,
+  raw: { orderId: string; reason: string },
+): Promise<{
+  orderId: string;
+  orderNumber: string;
+  stockHoldState: string;
+  stockReleasePolicy: string;
+  alreadyHeld: boolean;
+}> {
+  const profile = await requireHoldManager(actorUserId);
+  const reason = raw.reason?.trim();
+  if (!reason || reason.length < 3) {
+    throw new AuthError("A reason is required to apply a stock hold", "VALIDATION", 400);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "Order" WHERE id = ${raw.orderId} FOR UPDATE
+    `;
+    if (!locked[0]) throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
+
+    const order = await tx.order.findUniqueOrThrow({
+      where: { id: raw.orderId },
+      include: {
+        items: { select: { backorderQtyAtOrder: true } },
+        invoices: { select: { id: true }, take: 1 },
+        fulfilmentEvents: { select: { kind: true } },
+        reservations: { where: { status: "CONSUMED" }, select: { id: true }, take: 1 },
+      },
+    });
+
+    if (!grants(profile, "admin.access", "sales.view_all_accounts")) {
+      const accessible = await getAccessibleCompanyIdsForSales(profile);
+      if (accessible !== "all" && !accessible.includes(order.companyId)) {
+        throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
+      }
+    }
+
+    if (
+      order.stockReleasePolicy === "HOLD_UNTIL_COMPLETE" &&
+      order.stockHoldState === "WAITING_STOCK"
+    ) {
+      return {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        stockHoldState: order.stockHoldState,
+        stockReleasePolicy: order.stockReleasePolicy,
+        alreadyHeld: true,
+      };
+    }
+
+    if (
+      isVerifiedStockHoldRelease(order.stockHoldState, order.stockReleasePolicy, {
+        stockReleasedAt: order.stockReleasedAt,
+        stockReleaseReason: order.stockReleaseReason,
+      })
+    ) {
+      throw new AuthError(
+        "This order was released by a verified stock check. Applying a new hold is a separate edit, not this remediation.",
+        "ORDER_LOCKED",
+        409,
+      );
+    }
+
+    if (await orderHasAutopartExportRecord(tx, order)) {
+      throw new AuthError(
+        "This order already has an Autopart export record and cannot be held.",
+        "ORDER_LOCKED",
+        409,
+      );
+    }
+
+    const eligibility = assessSalesOrderEditEligibility({
+      status: order.status,
+      archivedAt: order.archivedAt,
+      autopartExportStatus: order.autopartExportStatus,
+      autopartExportCount: order.autopartExportCount,
+      autopartExportedAt: order.autopartExportedAt,
+      autopartExportBatchId: order.autopartExportBatchId,
+      externalRef: order.externalRef,
+      invoiceCount: order.invoices.length,
+      fulfilmentKinds: order.fulfilmentEvents.map((event) => event.kind),
+      consumedReservationCount: order.reservations.length,
+    });
+    if (!eligibility.allowed) {
+      throw new AuthError(eligibility.reason ?? "This order can no longer be held.", "ORDER_LOCKED", 409);
+    }
+
+    const outstanding = order.items.reduce((sum, item) => sum + (item.backorderQtyAtOrder ?? 0), 0);
+    if (outstanding <= 0) {
+      throw new AuthError(
+        "Hold until complete needs confirmed outstanding quantities on this order.",
+        "HOLD_REQUIRES_BACKORDER",
+        400,
+      );
+    }
+
+    const now = new Date();
+    const updated = await tx.order.update({
+      where: { id: order.id },
+      data: {
+        stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
+        stockHoldState: "WAITING_STOCK",
+        stockHeldAt: now,
+        stockHeldByUserId: actorUserId,
+        stockReleasedAt: null,
+        stockReleaseReason: null,
+        stockHoldCancelledAt: null,
+        stockHoldCancelReason: null,
+        stockHoldCancelledByUserId: null,
+        stockHoldLastCheckedAt: null,
+        stockHoldLastCheckResult: Prisma.JsonNull,
+      },
+      select: { id: true, orderNumber: true, stockHoldState: true, stockReleasePolicy: true },
+    });
+
+    await recordFulfilmentEvent(tx, {
+      orderId: order.id,
+      kind: "NOTE",
+      summary: "HELD — AWAITING STOCK until every line can be fulfilled",
+      source: "MANUAL",
+      lineQuantitiesKnown: true,
+      metadata: {
+        stockHold: true,
+        remediation: true,
+        reason,
+        outstandingBackorderUnits: outstanding,
+      },
+    });
+
+    await recordAuditEventInTransaction(tx, {
+      action: "order.stock_hold.remediation_applied",
+      entityType: "Order",
+      entityId: order.id,
+      actorUserId,
+      companyId: order.companyId,
+      before: {
+        stockHoldState: order.stockHoldState,
+        stockReleasePolicy: order.stockReleasePolicy,
+      },
+      after: {
+        orderNumber: order.orderNumber,
+        stockHoldState: "WAITING_STOCK",
+        stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
+        reason,
+        outstandingBackorderUnits: outstanding,
+        linesUnchanged: true,
+        reservationsUnchanged: true,
+      },
+    });
+
+    return {
+      orderId: updated.id,
+      orderNumber: updated.orderNumber,
+      stockHoldState: updated.stockHoldState,
+      stockReleasePolicy: updated.stockReleasePolicy,
+      alreadyHeld: false,
+    };
+  });
+}
+
+export type StockHoldExportDiagnostic = {
+  matched: number;
+  ambiguousPo: boolean;
+  orders: Array<{
+    orderId: string;
+    orderNumber: string;
+    companyName: string;
+    poNumber: string | null;
+    status: string;
+    stockReleasePolicy: string;
+    stockHoldState: string;
+    stockHoldLabel: string | null;
+    stockHeldAt: string | null;
+    stockReleasedAt: string | null;
+    stockReleaseReason: string | null;
+    autopartExportStatus: string;
+    autopartExportCount: number;
+    autopartExportedAt: string | null;
+    autopartExportBatchId: string | null;
+    outstandingBackorderUnits: number;
+    exportEligible: boolean;
+    exportBlockReason: string | null;
+    exportBlockMessage: string | null;
+    exportRecords: Array<{
+      id: string;
+      reference: string;
+      filename: string;
+      createdAt: string;
+      isReexport: boolean;
+    }>;
+    holdPersisted: boolean;
+    /** Backordered and still exportable because no active hold is stored. */
+    holdNotPersisted: boolean;
+  }>;
+};
+
+/**
+ * Read-only. Looks up by order id, order number, or customer PO.
+ * PO values are not unique — every match is returned and nothing is updated.
+ */
+export async function diagnoseStockHoldExport(
+  actorUserId: string,
+  raw: { orderId?: string; orderNumber?: string; poNumber?: string },
+): Promise<StockHoldExportDiagnostic> {
+  const profile = await requireHoldManager(actorUserId);
+  const orderId = raw.orderId?.trim() || "";
+  const orderNumber = raw.orderNumber?.trim() || "";
+  const poNumber = raw.poNumber?.trim() || "";
+  if (!orderId && !orderNumber && !poNumber) {
+    throw new AuthError("Provide an order id, order number, or PO reference", "VALIDATION", 400);
+  }
+
+  const accessible = await getAccessibleCompanyIdsForSales(profile);
+  const companyFilter = accessible === "all" ? {} : { companyId: { in: accessible } };
+  const orders = await prisma.order.findMany({
+    where: {
+      ...companyFilter,
+      ...(orderId
+        ? { id: orderId }
+        : orderNumber
+          ? { orderNumber }
+          : { poNumber }),
+    },
+    include: {
+      items: { select: { backorderQtyAtOrder: true } },
+      company: { select: { name: true } },
+    },
+    orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+    take: 25,
+  });
+
+  const { previewAutopartOrderExport } = await import("@/server/orders/autopart-export");
+  const preview =
+    orders.length > 0
+      ? await previewAutopartOrderExport(
+          actorUserId,
+          orders.map((order) => order.id),
+        )
+      : null;
+  const eligibilityById = new Map(preview?.items.map((item) => [item.orderId, item]) ?? []);
+
+  const rows = [];
+  for (const order of orders) {
+    const batches = await prisma.autopartOrderExportBatch.findMany({
+      where: {
+        OR: [
+          ...(order.autopartExportBatchId ? [{ id: order.autopartExportBatchId }] : []),
+          { orderIds: { array_contains: order.id } },
+        ],
+      },
+      select: {
+        id: true,
+        reference: true,
+        filename: true,
+        createdAt: true,
+        isReexport: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const eligibility = eligibilityById.get(order.id);
+    const outstanding = order.items.reduce((sum, item) => sum + (item.backorderQtyAtOrder ?? 0), 0);
+    const holdPersisted =
+      order.stockReleasePolicy === "HOLD_UNTIL_COMPLETE" && order.stockHoldState === "WAITING_STOCK";
+    const exportEligible = Boolean(eligibility?.eligible);
+    rows.push({
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      companyName: order.company.name,
+      poNumber: order.poNumber,
+      status: order.status,
+      stockReleasePolicy: order.stockReleasePolicy,
+      stockHoldState: order.stockHoldState,
+      stockHoldLabel: staffStockHoldLabel(order.stockHoldState),
+      stockHeldAt: order.stockHeldAt?.toISOString() ?? null,
+      stockReleasedAt: order.stockReleasedAt?.toISOString() ?? null,
+      stockReleaseReason: order.stockReleaseReason,
+      autopartExportStatus: order.autopartExportStatus,
+      autopartExportCount: order.autopartExportCount,
+      autopartExportedAt: order.autopartExportedAt?.toISOString() ?? null,
+      autopartExportBatchId: order.autopartExportBatchId,
+      outstandingBackorderUnits: outstanding,
+      exportEligible,
+      exportBlockReason: eligibility?.reason ?? null,
+      exportBlockMessage: eligibility?.message ?? null,
+      exportRecords: batches.map((batch) => ({
+        id: batch.id,
+        reference: batch.reference,
+        filename: batch.filename,
+        createdAt: batch.createdAt.toISOString(),
+        isReexport: batch.isReexport,
+      })),
+      holdPersisted,
+      holdNotPersisted: outstanding > 0 && !holdPersisted && exportEligible,
+    });
+  }
+
+  return {
+    matched: rows.length,
+    ambiguousPo: !orderId && !orderNumber && rows.length > 1,
+    orders: rows,
   };
 }
 
