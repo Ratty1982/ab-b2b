@@ -55,6 +55,26 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain("purchasing.manage");
   });
 
+  it("keeps the lines table above the fold with compact chrome and secondary panels", () => {
+    expect(src).toContain('data-backorders-page=""');
+    expect(src).toContain('data-backorders-chrome=""');
+    expect(src).toContain('data-backorders-scroll=""');
+    expect(src).toContain('data-backorders-summary=""');
+    expect(src).toContain("Outstanding orders");
+    expect(src).toContain("Outstanding lines");
+    expect(src).toContain("Outstanding units");
+    expect(src).toContain("Outstanding value");
+    expect(src).toContain("Daily movement");
+    expect(src).toContain('data-backorders-secondary-trigger=""');
+    expect(src).toContain("More filters");
+    expect(src).toContain('data-backorders-views=""');
+    expect(src).toContain('data-backorders-table-hscroll=""');
+    expect(src).toContain('sticky left-0');
+    expect(src.indexOf('data-backorders-chrome=""')).toBeLessThan(src.indexOf('data-backorders-scroll=""'));
+    expect(src.indexOf('data-backorders-views=""')).toBeLessThan(src.indexOf('data-backorders-scroll=""'));
+    expect(src.indexOf("function Metrics")).toBeLessThan(src.indexOf("function LinesTable"));
+  });
+
   it("gates upload, poll, and auto-import on purchasing.manage while leaving export visible", () => {
     expect(src).toContain("data?.canManage");
     expect(src).toContain("Upload and mailbox poll require purchasing.manage");
