@@ -8,6 +8,8 @@ import { formatDate, formatDateTime } from "@/lib/datetime";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
 import {
   acceptQuoteOnBehalfFn,
+  downloadQuotePdfFn,
+  emailQuoteToSelfFn,
   deleteStaffQuoteFn,
   duplicateQuoteFn,
   getQuoteCompanyContextFn,
@@ -257,6 +259,39 @@ function QuoteWorkspace() {
     void navigate({ to: ROUTES.salesQuotes });
   }
 
+  async function downloadPdf() {
+    const result = await downloadQuotePdfFn({ data: { id: quoteId } });
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    const binary = atob(result.data.pdfBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = result.data.filename;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Quote PDF downloaded");
+  }
+
+  async function emailToMyself() {
+    const result = await emailQuoteToSelfFn({
+      data: { id: quoteId, idempotencyKey: `quote-copy-${quoteId}-${crypto.randomUUID()}` },
+    });
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    if (!result.data.sent) {
+      toast.error(result.data.message);
+      return;
+    }
+    toast.success(result.data.message);
+  }
+
   async function acceptOnBehalf() {
     if (!acceptNote.trim()) {
       toast.error("Add a confirmation note");
@@ -357,6 +392,20 @@ function QuoteWorkspace() {
                 {deleting ? "Deleting…" : "Delete"}
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => void downloadPdf()}
+              className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold"
+            >
+              Download PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => void emailToMyself()}
+              className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold"
+            >
+              Email to myself
+            </button>
             <button
               type="button"
               onClick={() => window.print()}

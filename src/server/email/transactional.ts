@@ -8,6 +8,7 @@
 import { Prisma, type TransactionalEmailPurpose, type TransactionalEmailStatus } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { resolveEmailAdapter, type EmailAdapter } from "@/infra/email";
+import type { EmailAttachment } from "@/infra/email/types";
 import { getServerEnv } from "@/server/env";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -240,7 +241,10 @@ export async function upsertPendingEmail(input: {
 export async function attemptSend(
   emailId: string,
   adapter?: EmailAdapter,
-  options?: { bypassDeliveryToggle?: boolean },
+  options?: {
+    bypassDeliveryToggle?: boolean;
+    attachments?: EmailAttachment[];
+  },
 ) {
   const row = await prisma.transactionalEmail.findUniqueOrThrow({ where: { id: emailId } });
   if (row.status === "SENT") {
@@ -272,6 +276,7 @@ export async function attemptSend(
       entityType: row.entityType,
       entityId: row.entityId,
     },
+    ...(options?.attachments?.length ? { attachments: options.attachments } : {}),
   });
 
   if (result.ok) {

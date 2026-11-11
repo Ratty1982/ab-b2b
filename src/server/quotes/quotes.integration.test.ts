@@ -19,6 +19,9 @@ import {
   updateQuoteDraft,
 } from "@/server/quotes/service";
 import { allocateQuoteNumber } from "@/server/quotes/quote-number";
+import { downloadQuotePdf, emailQuoteCopyToSelf } from "@/server/quotes/quote-copy";
+import type { EmailMessage } from "@/infra/email/types";
+import { PDFDocument } from "pdf-lib";
 
 const prisma = new PrismaClient();
 let adminId = "";
@@ -853,5 +856,99 @@ describe("Quote quantities are not forced to case size", () => {
     expect(order.items[0]?.qty).toBe(5);
     const quoted = await prisma.quoteItem.findFirstOrThrow({ where: { quoteId: draft.id } });
     expect(quoted.qty).toBe(5);
+  });
+});
+
+describe("Quote PDF and email to myself", () => {
+  it("builds an A4 PDF from the saved quantity and price", async () => {
+    const stamp = Date.now().toString(36);
+    const variant = await seedVariant(`QT-PDF-${stamp}`, 9, 12);
+    const { company, contact } = await seedCompany(`Quote PDF ${stamp}`);
+    const draft = await createQuote(adminId, {
+      companyId: company.id,
+      contactId: contact.id,
+      customerNotes: "Deliver to the trade counter",
+      validUntil: "2099-06-30",
+    });
+    await updateQuoteDraft(adminId, {
+      id: draft.id,
+      lines: [{ variantId: variant.id, qty: 5, quotedUnitPrice: "4.2500" }],
+      customerNotes: "Deliver to the trade counter",
+      validUntil: "2099-06-30",
+    });
+    const file = await downloadQuotePdf(adminId, { id: draft.id });
+    expect(file.filename).toMatch(/^QT-\d{6}\.pdf$/);
+    const bytes = Buffer.from(file.pdfBase64, "base64");
+    expect(bytes.subarray(0, 4).toString()).toBe("%PDF");
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPageCount()).toBeGreaterThan(0);
+    expect(pdf.getTitle()).toContain("quotation");
+    const quote = await prisma.quoteItem.findFirstOrThrow({ where: { quoteId: draft.id } });
+    expect(quote.qty).toBe(5);
+    expect(Number(quote.customerUnitPrice)).toBe(4.25);
+  });
+
+  it("emails only the verified salesperson and does not send twice for the same request", async () => {
+    const stamp = Date.now().toString(36);
+    const variant = await seedVariant(`QT-MAIL-${stamp}`, 9, 12);
+    const { company } = await seedCompany(`Quote Mail ${stamp}`);
+    const draft = await createQuote(adminId, { companyId: company.id });
+    await updateQuoteDraft(adminId, {
+      id: draft.id,
+      lines: [{ variantId: variant.id, qty: 5, quotedUnitPrice: "4.0000" }],
+    });
+    const previous = await prisma.emailSettings.findUnique({ where: { id: "singleton" } });
+    await prisma.emailSettings.upsert({
+      where: { id: "singleton" },
+      create: { id: "singleton", enabled: true },
+      update: { enabled: true },
+    });
+    const sent: EmailMessage[] = [];
+    const adapter = {
+      name: "quote-copy-test",
+      async send(message: EmailMessage) {
+        sent.push(message);
+        return { ok: true as const, id: "test-message" };
+      },
+    };
+    try {
+    const first = await emailQuoteCopyToSelf(
+      adminId,
+      { id: draft.id, idempotencyKey: `copy-${stamp}` },
+      adapter,
+    );
+    expect(first.sent).toBe(true);
+    expect(first.toEmail).toBe("quotes.admin@example.invalid");
+    expect(first.toEmail).not.toContain("quotemail");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.subject).toContain(draft.quoteNumber);
+    expect(sent[0]?.subject).toContain(`Quote Mail ${stamp}`);
+    expect(sent[0]?.attachments?.[0]?.filename).toBe(`${draft.quoteNumber}.pdf`);
+    expect(sent[0]?.text).toContain("customer was not emailed");
+    const second = await emailQuoteCopyToSelf(
+      adminId,
+      { id: draft.id, idempotencyKey: `copy-${stamp}` },
+      adapter,
+    );
+    expect(second.alreadySent).toBe(true);
+    expect(sent).toHaveLength(1);
+    const rows = await prisma.transactionalEmail.count({
+      where: { entityId: draft.id, purpose: "QUOTE_COPY_TO_SELF" },
+    });
+    expect(rows).toBe(1);
+
+    const unverified = await ensureUser(`unverified-${stamp}@example.invalid`, ["SUPER_ADMIN"]);
+    await prisma.user.update({ where: { id: unverified }, data: { emailVerified: false } });
+    await expect(
+      emailQuoteCopyToSelf(unverified, { id: draft.id, idempotencyKey: `copy-unverified-${stamp}` }),
+    ).rejects.toMatchObject({ code: "EMAIL_UNVERIFIED" });
+    } finally {
+      if (previous) {
+        await prisma.emailSettings.update({
+          where: { id: "singleton" },
+          data: { enabled: previous.enabled },
+        });
+      }
+    }
   });
 });

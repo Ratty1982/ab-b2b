@@ -104,6 +104,15 @@ export function createSmtpEmailTransport(config: SmtpTransportConfig): EmailTran
           text: message.text,
           ...(message.html ? { html: message.html } : {}),
           ...(addresses.replyTo ? { replyTo: addresses.replyTo } : {}),
+          ...(message.attachments?.length
+            ? {
+                attachments: message.attachments.map((attachment) => ({
+                  filename: attachment.filename,
+                  content: Buffer.from(attachment.content),
+                  contentType: attachment.contentType,
+                })),
+              }
+            : {}),
         });
         const messageId = typeof info.messageId === "string" ? info.messageId : undefined;
         return {
