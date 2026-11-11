@@ -638,9 +638,11 @@ export function SalesOrderReviewPanel({
   fulfilmentChoice,
   backorders,
   backorderAcknowledged,
+  holdUntilComplete,
   onAcceptPrices,
   onAuthorised,
   onBackorderAcknowledged,
+  onHoldUntilComplete,
   onPlace,
 }: {
   companyName: string | undefined;
@@ -663,9 +665,11 @@ export function SalesOrderReviewPanel({
   fulfilmentChoice: OrderFulfilmentChoice;
   backorders: SalesOrderBackorderRow[];
   backorderAcknowledged: boolean;
+  holdUntilComplete: boolean;
   onAcceptPrices: (checked: boolean) => void;
   onAuthorised: (checked: boolean) => void;
   onBackorderAcknowledged: (checked: boolean) => void;
+  onHoldUntilComplete: (checked: boolean) => void;
   onPlace: () => void;
 }) {
   return (
@@ -729,6 +733,15 @@ export function SalesOrderReviewPanel({
               className="mt-1 size-5"
             />
             <span>The customer has been informed of this backorder.</span>
+          </label>
+          <label className="flex min-h-11 items-start gap-3">
+            <input
+              type="checkbox"
+              checked={holdUntilComplete}
+              onChange={(event) => onHoldUntilComplete(event.target.checked)}
+              className="mt-1 size-5"
+            />
+            <span>HOLD ORDER UNTIL ALL STOCK IS AVAILABLE</span>
           </label>
         </div>
       ) : null}

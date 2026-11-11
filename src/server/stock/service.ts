@@ -675,6 +675,33 @@ export async function applyStockFeed(input: {
       });
     }
 
+    let heldOrderEvaluation: {
+      considered: number;
+      released: number;
+      stillWaiting: number;
+      skipped: number;
+      stale: boolean;
+    } | null = null;
+    // Trusted live apply only — never dry-run, failed import, or forecast feeds.
+    if (
+      !input.dryRun &&
+      (finalStatus === "SUCCESS" || finalStatus === "PARTIAL") &&
+      source.includes("231PO3NEW")
+    ) {
+      try {
+        const { evaluateHeldOrdersAfterStockSync } = await import("@/server/orders/stock-hold");
+        heldOrderEvaluation = await evaluateHeldOrdersAfterStockSync({
+          actorUserId: input.actorUserId ?? null,
+          trigger: "STOCK_SYNC",
+        });
+      } catch (holdError) {
+        console.error("[ab:stock-sync:held-orders]", {
+          runId: run.id,
+          error: holdError instanceof Error ? holdError.message : String(holdError),
+        });
+      }
+    }
+
     return {
       runId: run.id,
       status: finalStatus,
@@ -696,6 +723,7 @@ export async function applyStockFeed(input: {
       wouldChanges: changeDrafts.slice(0, WOULD_CHANGE_CAP).map(serializeWouldChange),
       commercial: commercialRecord,
       supplierGroups,
+      heldOrderEvaluation,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stock sync failed";
