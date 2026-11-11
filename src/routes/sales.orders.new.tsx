@@ -133,6 +133,7 @@ function NewSalesOrder() {
   const [saveAddressAsDefaultDelivery, setSaveAddressAsDefaultDelivery] = useState(false);
   const [fulfilmentChoice, setFulfilmentChoice] = useState<OrderFulfilmentChoice>("DELIVERY");
   const [backorderAcknowledged, setBackorderAcknowledged] = useState(false);
+  const [holdUntilComplete, setHoldUntilComplete] = useState(false);
   const [oneOff, setOneOff] = useState({ line1: "", line2: "", town: "", county: "", postcode: "" });
   const [poNumber, setPoNumber] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -479,6 +480,7 @@ function NewSalesOrder() {
         contactId: contactId || null,
         addressId: fulfilmentChoice === "COLLECTION" || useOneOff ? null : addressId || null,
         backorderAcknowledged,
+        holdUntilComplete: backorders.length > 0 ? holdUntilComplete : false,
         oneOffAddress: fulfilmentChoice === "COLLECTION" || !useOneOff
           ? null
           : {
@@ -910,13 +912,21 @@ function NewSalesOrder() {
               !backorderAcknowledged)
           }
           placeLabel={
-            quoteId ? "Accept quotation" : workspace?.draft.editingOrderId ? "Confirm order changes" : "Place order"
+            quoteId
+              ? "Accept quotation"
+              : workspace?.draft.editingOrderId
+                ? "Confirm order changes"
+                : holdUntilComplete && salesOrderBackorderSummary(review?.lines ?? []).length > 0
+                  ? "Place order on hold"
+                  : "Place order"
           }
           placingLabel={workspace?.draft.editingOrderId ? "Saving…" : "Placing…"}
           fulfilmentChoice={fulfilmentChoice}
           backorders={salesOrderBackorderSummary(review?.lines ?? [])}
           backorderAcknowledged={backorderAcknowledged}
+          holdUntilComplete={holdUntilComplete}
           onBackorderAcknowledged={setBackorderAcknowledged}
+          onHoldUntilComplete={setHoldUntilComplete}
           onAcceptPrices={(checked) => {
             setAcceptedPrices(checked);
             setAuthorised(false);

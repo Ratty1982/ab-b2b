@@ -3678,6 +3678,63 @@ export const exportAutopartOrdersCsvFn = createServerFn({ method: "POST" })
     }
   });
 
+export const listHeldOrdersFn = createServerFn({ method: "GET" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { page?: number; pageSize?: number; q?: string } | undefined,
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hold = await import("@/server/orders/stock-hold");
+      return { ok: true as const, data: await hold.listHeldOrders(userId, data ?? {}) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getOrderStockHoldFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hold = await import("@/server/orders/stock-hold");
+      return { ok: true as const, data: await hold.getOrderStockHoldDetail(userId, data.orderId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const retryHeldOrderEvaluationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hold = await import("@/server/orders/stock-hold");
+      return {
+        ok: true as const,
+        data: await hold.retryHeldOrderEvaluation(userId, data.orderId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const cancelOrderStockHoldFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { orderId: string; reason: string; cancelOrder?: boolean },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hold = await import("@/server/orders/stock-hold");
+      return { ok: true as const, data: await hold.cancelOrderStockHold(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listOrderEmailsFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { orderId: string })
   .handler(async ({ data }) => {

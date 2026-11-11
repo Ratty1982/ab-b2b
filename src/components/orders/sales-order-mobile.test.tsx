@@ -452,9 +452,11 @@ describe("staff sales order stock display", () => {
           },
         ],
         backorderAcknowledged: false,
+        holdUntilComplete: false,
         onAcceptPrices: () => undefined,
         onAuthorised: () => undefined,
         onBackorderAcknowledged: () => undefined,
+        onHoldUntilComplete: () => undefined,
         onPlace: () => undefined,
       }),
     );
@@ -463,6 +465,7 @@ describe("staff sales order stock display", () => {
     expect(html).toContain("Available to order: 6 units");
     expect(html).toContain("ordered 12, allocated 6, backordered 6");
     expect(html).toContain("The customer has been informed of this backorder.");
+    expect(html).toContain("HOLD ORDER UNTIL ALL STOCK IS AVAILABLE");
   });
 });
 
@@ -532,9 +535,11 @@ function OrderHarness() {
       fulfilmentChoice: "DELIVERY",
       backorders: [],
       backorderAcknowledged: false,
+      holdUntilComplete: false,
       onAcceptPrices: () => undefined,
       onAuthorised: () => undefined,
       onBackorderAcknowledged: () => undefined,
+      onHoldUntilComplete: () => undefined,
       onPlace: () => undefined,
     }),
     createElement(SalesOrderMobileFooter, {

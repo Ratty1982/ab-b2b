@@ -1541,6 +1541,7 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
 
   const staffName = profile.name?.trim() || profile.email;
   const hasBackorder = lines.some((line) => line.issue === "VALID" && line.backorderQtyAtOrder > 0);
+  const holdUntilComplete = Boolean(input.holdUntilComplete) && hasBackorder;
   if (draft.editingOrderId) {
     const { amendSubmittedSalesOrder } = await import("@/server/orders/sales-order-edit");
     return amendSubmittedSalesOrder({
@@ -1565,6 +1566,8 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     contact,
     fulfilmentChoice,
     backorderAcknowledgedByUserId: hasBackorder ? actorUserId : null,
+    holdUntilComplete,
+    holdUntilCompleteByUserId: holdUntilComplete ? actorUserId : null,
     poNumber: input.poNumber ?? null,
     deliveryInstructions: input.deliveryInstructions ?? null,
     idempotencyKey: input.idempotencyKey,
@@ -1653,6 +1656,8 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       autopartSideEffects: false,
       abReservation: true,
       externalRef: null,
+      holdUntilComplete,
+      stockHoldState: holdUntilComplete ? "WAITING_STOCK" : "NONE",
       priceOverrides: lines
         .filter((line) => line.priceOverridden)
         .map((line) => ({
@@ -1666,6 +1671,20 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
         })),
     },
   });
+  if (holdUntilComplete) {
+    await recordAuditEvent({
+      action: "order.stock_hold.placed",
+      entityType: "Order",
+      entityId: created.order.id,
+      actorUserId,
+      companyId: company.id,
+      after: {
+        orderNumber: created.order.orderNumber,
+        stockHoldState: "WAITING_STOCK",
+        stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
+      },
+    });
+  }
   await ensureSalesOrderCrmActivity({
     actorUserId,
     companyId: company.id,

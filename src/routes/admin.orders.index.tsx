@@ -505,6 +505,9 @@ function AdminOrdersPage() {
                         {o.containsBackorder ? (
                           <StatusBadge tone="warn">{o.fullyBackordered ? "Full backorder" : "Backorder"}</StatusBadge>
                         ) : null}
+                        {o.stockHoldLabel ? (
+                          <StatusBadge tone="warn">{o.stockHoldLabel}</StatusBadge>
+                        ) : null}
                         {o.manualResolutionKind === "FULFILLED_MANUALLY" ? (
                           <StatusBadge tone="info">Fulfilled manually</StatusBadge>
                         ) : null}
