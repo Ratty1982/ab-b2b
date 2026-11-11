@@ -87,23 +87,19 @@ describe("imported sales reset without a backup", () => {
     // CREATE DATABASE cannot run inside a Prisma interactive transaction.
     runPsql(endpoint, "postgres", `CREATE DATABASE ${name} OWNER ${endpoint.user};`);
     created = true;
-    execFileSync(
-      "bash",
-      [
-        "-c",
-        `pg_dump --schema-only --no-owner --no-acl -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" "$SOURCE_DB" | psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -q`,
-      ],
-      {
-        stdio: "pipe",
-        env: {
-          ...psqlEnv(endpoint),
-          SOURCE_DB: endpoint.sourceDatabase,
-          TARGET_DB: name,
-        },
-      },
-    );
 
-    const targetUrl = `postgresql://${encodeURIComponent(endpoint.user)}:${encodeURIComponent(endpoint.password)}@${endpoint.host}:${endpoint.port}/${name}`;
+    // Apply migrations directly. Avoid pg_dump|psql schema clone: runner pg_dump
+    // (often newer than the CI Postgres 16 service) emits SETs such as
+    // transaction_timeout that the server rejects under ON_ERROR_STOP.
+    const targetUrl = `postgresql://${encodeURIComponent(endpoint.user)}:${encodeURIComponent(endpoint.password)}@${endpoint.host}:${endpoint.port}/${name}?schema=public`;
+    execFileSync("node", ["./node_modules/prisma/build/index.js", "migrate", "deploy"], {
+      stdio: "pipe",
+      env: {
+        ...process.env,
+        DATABASE_URL: targetUrl,
+      },
+    });
+
     const output = execFileSync("bun", ["scripts/prove-imported-sales-reset-no-backup.ts"], {
       env: {
         ...process.env,
