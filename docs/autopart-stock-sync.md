@@ -151,6 +151,22 @@ The importer never zeros the catalogue first. A missing header, empty file, or o
 
 `StockSyncChange` stores **live** old → new Avail for matched AB SKUs when the sellable quantity actually changes. Unchanged SKUs and non-catalogued Autopart SKUs are not written. Dry-run returns `wouldChanges` on the result and does not persist history. Inventory upserts and change rows share the same Prisma transaction chunk.
 
+### Back in Stock events
+
+`StockBackInStockEvent` is a durable, idempotent (`@@unique([runId, variantId])`) record written in the same live apply transaction when:
+
+1. A prior `Inventory` row already existed (confirmed observation — never UNKNOWN / first confirmation).
+2. Previous `Inventory.qtyOnHand` (Autopart **Avail**) was **0**.
+3. New Avail is **> 0**.
+4. The SKU uniquely matched an AB variant.
+5. The product is `ACTIVE`, `isActive`, and `isTradeVisible`.
+
+Detection uses feed Avail only — never Physical Stk / Stk / Pick Qty. Manual overrides and AB reservations do **not** create or suppress events; they only affect **displayed** current sellable via `getEffectiveSellableQuantity`.
+
+Examples: `0→10` yes; `10→20` no; `UNKNOWN→10` no; `10→0→5` yes on the `0→5` run; repeating the same report does not duplicate.
+
+Admin dashboard (`canSeeStock`) shows the latest 6 still-confirmed-positive events. View all: `/admin/products/stock/back-in-stock`.
+
 Admin → Autopart Stock → Sync history: click a run for detail (Changed / Matched / Not in AB catalogue / Invalid). The **Updated** count opens Changed when it is greater than zero. SKU/product links go to the existing product workspace Inventory tab.
 
 `StockSyncIssue` caps at 400 diagnostic rows per run. Invalid Rows lists malformed/conflict/duplicate rows only — never valid non-catalogued Autopart SKUs.

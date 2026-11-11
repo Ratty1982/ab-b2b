@@ -144,6 +144,7 @@ import { Route as AdminCustomersGroupsGroupIdRouteImport } from './routes/admin.
 import { Route as AdminIntegrationsAutopartImportsRouteImport } from './routes/admin.integrations.autopart.imports'
 import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
+import { Route as AdminProductsStockBackInStockRouteImport } from './routes/admin.products.stock.back-in-stock'
 import { Route as ApiAutopartImportsProspectExceptionsCsvRouteImport } from './routes/api/autopart-imports/prospect-exceptions.csv'
 import { Route as ApiAutopartImportsReconciliationCsvRouteImport } from './routes/api/autopart-imports/reconciliation.csv'
 import { Route as ApiCertificationsIdCertificateRouteImport } from './routes/api/certifications/$id.certificate'
@@ -847,6 +848,12 @@ const AdminProductsImportsIdRoute = AdminProductsImportsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminProductsImportsRoute,
 } as any)
+const AdminProductsStockBackInStockRoute =
+  AdminProductsStockBackInStockRouteImport.update({
+    id: '/back-in-stock',
+    path: '/back-in-stock',
+    getParentRoute: () => AdminProductsStockRoute,
+  } as any)
 const ApiAutopartImportsProspectExceptionsCsvRoute =
   ApiAutopartImportsProspectExceptionsCsvRouteImport.update({
     id: '/api/autopart-imports/prospect-exceptions/csv',
@@ -1018,6 +1025,7 @@ export interface FileRoutesByFullPath {
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/integrations/autopart/imports': typeof AdminIntegrationsAutopartImportsRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/admin/products/stock/back-in-stock': typeof AdminProductsStockBackInStockRoute
   '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
   '/api/certifications/$id/certificate': typeof ApiCertificationsIdCertificateRoute
@@ -1144,6 +1152,7 @@ export interface FileRoutesByTo {
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/integrations/autopart/imports': typeof AdminIntegrationsAutopartImportsRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/admin/products/stock/back-in-stock': typeof AdminProductsStockBackInStockRoute
   '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
   '/api/certifications/$id/certificate': typeof ApiCertificationsIdCertificateRoute
@@ -1288,6 +1297,7 @@ export interface FileRoutesById {
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/integrations/autopart/imports': typeof AdminIntegrationsAutopartImportsRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/admin/products/stock/back-in-stock': typeof AdminProductsStockBackInStockRoute
   '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
   '/api/certifications/$id/certificate': typeof ApiCertificationsIdCertificateRoute
@@ -1433,6 +1443,7 @@ export interface FileRouteTypes {
     | '/admin/customers/groups/$groupId'
     | '/admin/integrations/autopart/imports'
     | '/admin/products/imports/$id'
+    | '/admin/products/stock/back-in-stock'
     | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
     | '/api/certifications/$id/certificate'
@@ -1559,6 +1570,7 @@ export interface FileRouteTypes {
     | '/admin/customers/groups/$groupId'
     | '/admin/integrations/autopart/imports'
     | '/admin/products/imports/$id'
+    | '/admin/products/stock/back-in-stock'
     | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
     | '/api/certifications/$id/certificate'
@@ -1702,6 +1714,7 @@ export interface FileRouteTypes {
     | '/admin/customers/groups/$groupId'
     | '/admin/integrations/autopart/imports'
     | '/admin/products/imports/$id'
+    | '/admin/products/stock/back-in-stock'
     | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
     | '/api/certifications/$id/certificate'
@@ -2701,6 +2714,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProductsImportsIdRouteImport
       parentRoute: typeof AdminProductsImportsRoute
     }
+    '/admin/products/stock/back-in-stock': {
+      id: '/admin/products/stock/back-in-stock'
+      path: '/back-in-stock'
+      fullPath: '/admin/products/stock/back-in-stock'
+      preLoaderRoute: typeof AdminProductsStockBackInStockRouteImport
+      parentRoute: typeof AdminProductsStockRoute
+    }
     '/api/autopart-imports/prospect-exceptions/csv': {
       id: '/api/autopart-imports/prospect-exceptions/csv'
       path: '/api/autopart-imports/prospect-exceptions/csv'
@@ -2819,10 +2839,12 @@ const AdminProductsImportsRouteWithChildren =
   AdminProductsImportsRoute._addFileChildren(AdminProductsImportsRouteChildren)
 
 interface AdminProductsStockRouteChildren {
+  AdminProductsStockBackInStockRoute: typeof AdminProductsStockBackInStockRoute
   AdminProductsStockProductSkuRoute: typeof AdminProductsStockProductSkuRoute
 }
 
 const AdminProductsStockRouteChildren: AdminProductsStockRouteChildren = {
+  AdminProductsStockBackInStockRoute: AdminProductsStockBackInStockRoute,
   AdminProductsStockProductSkuRoute: AdminProductsStockProductSkuRoute,
 }
 

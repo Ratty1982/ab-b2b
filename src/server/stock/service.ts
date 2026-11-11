@@ -23,6 +23,7 @@ import {
   summariseStockQtyChanges,
   type VariantStock,
 } from "@/domain/stock";
+import { isBackInStockTransition } from "@/domain/stock-back-in-stock";
 import { classifyStockRows, parseAutopart231Po3New } from "@/domain/stock-parse";
 import { dueStockWindow, shouldThrottleFailedAttempt, nextSyncDisplay } from "@/domain/stock-schedule";
 import { autopartConfigured, loadAutopartStockConfig, publicAutopartStatus } from "@/server/stock/config";
@@ -98,6 +99,9 @@ type VariantRow = {
   isDefault: boolean;
   productId: string;
   productName: string;
+  productIsActive: boolean;
+  productIsTradeVisible: boolean;
+  productStatus: string;
 };
 
 function variantMap(rows: VariantRow[]) {
@@ -160,7 +164,14 @@ export async function applyStockFeed(input: {
 
     const classified = classifyStockRows(parsed.rows);
     const variants = await prisma.productVariant.findMany({
-      select: { id: true, sku: true, name: true, isDefault: true, productId: true, product: { select: { name: true } } },
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        isDefault: true,
+        productId: true,
+        product: { select: { name: true, isActive: true, isTradeVisible: true, status: true } },
+      },
     });
     const bySku = variantMap(
       variants.map((row) => ({
@@ -170,6 +181,9 @@ export async function applyStockFeed(input: {
         isDefault: row.isDefault,
         productId: row.productId,
         productName: row.product.name,
+        productIsActive: row.product.isActive,
+        productIsTradeVisible: row.product.isTradeVisible,
+        productStatus: row.product.status,
       })),
     );
     const warehouse = await ensureAutopartWarehouse();
@@ -182,6 +196,9 @@ export async function applyStockFeed(input: {
       variantLabel: string | null;
       avail: number;
       raw: string;
+      productIsActive: boolean;
+      productIsTradeVisible: boolean;
+      productStatus: string;
       incoming?: { kind: "set"; qty: number | null; raw: string } | { kind: "skip" };
     };
     const toApply: ApplyRow[] = [];
@@ -307,6 +324,9 @@ export async function applyStockFeed(input: {
         variantLabel: !hit.isDefault && hit.name ? hit.name : null,
         avail: row.avail,
         raw: row.row.availRaw,
+        productIsActive: hit.productIsActive,
+        productIsTradeVisible: hit.productIsTradeVisible,
+        productStatus: hit.productStatus,
         ...(incoming ? { incoming } : {}),
       });
       recordUnknownCondition(row.row);
@@ -329,12 +349,22 @@ export async function applyStockFeed(input: {
     const now = input.observedAt ?? new Date();
     // `now` is also the observation timestamp for commercial cost/usage snapshots.
     type ChangeDraft = ApplyRow & { previousQty: number; newQty: number; previousAvailability: string; newAvailability: string };
+    type BackInStockDraft = {
+      variantId: string;
+      productId: string;
+      sku: string;
+      productName: string;
+      previousQty: number;
+      newQty: number;
+    };
     const changeDrafts: ChangeDraft[] = [];
+    const backInStockDrafts: BackInStockDraft[] = [];
     for (const row of toApply) {
       const sellable = sellableQuantityFromAvail(row.avail);
       const prior = existingByVariant.get(row.variantId);
       if (!prior) {
         // First trusted Inventory confirmation — including Avail 0. Not an "unchanged" 0→0.
+        // UNKNOWN → positive is NOT a back-in-stock event (no confirmed prior zero).
         newlyConfirmed += 1;
         if (sellable !== 0) {
           const described = describeStockQtyChange(0, sellable);
@@ -364,14 +394,40 @@ export async function applyStockFeed(input: {
         previousAvailability: described.previousAvailability,
         newAvailability: described.newAvailability,
       });
+      // Feed Avail transition only — ignore manual overrides / Physical Stk for detection.
+      if (
+        isBackInStockTransition({
+          hasPriorInventory: true,
+          previousQtyOnHand: prior.qtyOnHand,
+          newQtyOnHand: sellable,
+          productIsActive: row.productIsActive,
+          productIsTradeVisible: row.productIsTradeVisible,
+          productStatus: row.productStatus,
+        })
+      ) {
+        backInStockDrafts.push({
+          variantId: row.variantId,
+          productId: row.productId,
+          sku: row.sku,
+          productName: row.productName,
+          previousQty: 0,
+          newQty: sellable,
+        });
+      }
     }
     const writes = input.dryRun ? [] : toApply;
 
     if (!input.dryRun) {
       const changeByVariant = new Map(changeDrafts.map((row) => [row.variantId, row]));
+      const bisByVariant = new Map(backInStockDrafts.map((row) => [row.variantId, row]));
       for (let i = 0; i < writes.length; i += UPSERT_CHUNK) {
         const chunk = writes.slice(i, i + UPSERT_CHUNK);
         const changedChunk = chunk.map((row) => changeByVariant.get(row.variantId)).filter(Boolean) as ChangeDraft[];
+        const bisChunk = chunk
+          .map((row) => bisByVariant.get(row.variantId))
+          .filter(Boolean) as BackInStockDraft[];
+        // Inventory + StockSyncChange commit first. Back-in-stock events are durable
+        // history only — never roll back Avail writes if BIS insert fails.
         await prisma.$transaction([
           ...chunk.map((row) => {
             const sellable = sellableQuantityFromAvail(row.avail);
@@ -434,6 +490,28 @@ export async function applyStockFeed(input: {
               ]
             : []),
         ]);
+        if (bisChunk.length) {
+          try {
+            await prisma.stockBackInStockEvent.createMany({
+              data: bisChunk.map((row) => ({
+                runId: run.id,
+                variantId: row.variantId,
+                productId: row.productId,
+                skuSnapshot: row.sku,
+                productNameSnapshot: row.productName,
+                previousQty: row.previousQty,
+                newQty: row.newQty,
+                observedAt: now,
+              })),
+              skipDuplicates: true,
+            });
+          } catch (bisError) {
+            console.warn(
+              "[stock] Back-in-stock event write failed after Inventory commit; Avail kept.",
+              bisError instanceof Error ? bisError.message : bisError,
+            );
+          }
+        }
       }
 
       await persistAutopartProducts({
