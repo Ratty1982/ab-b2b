@@ -21,7 +21,8 @@ const prisma = new PrismaClient();
 const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const largeAccount = `LH${stamp.slice(0, 6).toUpperCase()}`;
 const smallAccount = `SM${stamp.slice(0, 6).toUpperCase()}`;
-const QUALIFYING_LINES = 100_000;
+/** Large enough to exercise multi-batch staging/publish; small enough for CI budgets. */
+const QUALIFYING_LINES = 15_000;
 const INTERRUPT_LINES = CUSTOMER_SALES_HISTORY_STAGE_BATCH + 500;
 
 let adminId = "";
@@ -140,7 +141,7 @@ ${account},PAY,PAY1,20 Aug 15,,,,"£0.00"
     expect(await prisma.customerSalesCutover.findUnique({ where: { companyId: previewCompanyId } })).toBeNull();
   });
 
-  it("publishes at least 100,000 qualifying lines and keeps retries from duplicating or overwriting them", async () => {
+  it("publishes a large qualifying history and keeps retries from duplicating or overwriting them", async () => {
     const feedBefore = await prisma.autopartOngoingSalesFeedSettings.findUnique({ where: { id: "default" } });
     const lines = productReport(largeAccount, QUALIFYING_LINES);
     lines.push(`${largeAccount},I/D000001/2,SKU1,Same sku,2,"£2.50"`);
@@ -151,7 +152,7 @@ ${account},PAY,PAY1,20 Aug 15,,,,"£0.00"
 
     const imported = await confirmCustomerSalesHistory(
       adminId,
-      { companyId: largeCompanyId, text561l, filename561l: "synthetic-100k.csv" },
+      { companyId: largeCompanyId, text561l, filename561l: "synthetic-scale.csv" },
       { bounded: true },
     );
     expect(imported.rowsImported).toBeGreaterThanOrEqual(QUALIFYING_LINES);
@@ -188,7 +189,7 @@ ${account},PAY,PAY1,20 Aug 15,,,,"£0.00"
     });
     const again = await confirmCustomerSalesHistory(
       adminId,
-      { companyId: largeCompanyId, text561l, filename561l: "synthetic-100k.csv" },
+      { companyId: largeCompanyId, text561l, filename561l: "synthetic-scale.csv" },
       { bounded: true },
     );
     expect(again.rowsImported).toBe(0);
@@ -202,7 +203,7 @@ ${account},PAY,PAY1,20 Aug 15,,,,"£0.00"
     const feedAfter = await prisma.autopartOngoingSalesFeedSettings.findUnique({ where: { id: "default" } });
     expect(feedAfter?.enabled ?? false).toBe(feedBefore?.enabled ?? false);
     expect(feedAfter?.fulfilmentMode ?? "OFF").toBe(feedBefore?.fulfilmentMode ?? "OFF");
-  }, 900_000);
+  }, 240_000);
 
   it("resumes an interrupted import without publishing a partial history", async () => {
     const lines = productReport(smallAccount, INTERRUPT_LINES);

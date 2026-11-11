@@ -197,7 +197,49 @@ beforeAll(async () => {
         status: "ACTIVE",
       },
     });
+    // Confirmed Autopart inventory + fresh sync so Buy Again is orderable.
+    // Missing inventory is intentionally non-orderable (stockConfirmed=false).
+    const warehouse = await prisma.warehouse.upsert({
+      where: { code: "AUTOPART" },
+      create: { code: "AUTOPART", name: "Studley", isDefault: true },
+      update: {},
+    });
+    await prisma.inventory.upsert({
+      where: { variantId_warehouseId: { variantId: v.id, warehouseId: warehouse.id } },
+      create: {
+        variantId: v.id,
+        warehouseId: warehouse.id,
+        qtyOnHand: 50,
+        qtyReserved: 0,
+        status: "IN_STOCK",
+        externalSyncedAt: new Date(),
+        sourceAvailRaw: "50",
+      },
+      update: {
+        qtyOnHand: 50,
+        qtyReserved: 0,
+        status: "IN_STOCK",
+        externalSyncedAt: new Date(),
+        sourceAvailRaw: "50",
+      },
+    });
   }
+  await prisma.stockSyncRun.create({
+    data: {
+      source: "231PO3NEW",
+      mode: "live",
+      status: "SUCCESS",
+      trigger: "test",
+      completedAt: new Date(),
+      rowsRead: 2,
+      matched: 2,
+      updated: 2,
+      unchanged: 0,
+      unmatched: 0,
+      invalid: 0,
+      duplicates: 0,
+    },
+  });
 
   const companyA = await prisma.company.create({
     data: { name: `PH Co A ${stamp}`, status: "ACTIVE" },

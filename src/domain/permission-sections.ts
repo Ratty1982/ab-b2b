@@ -189,7 +189,19 @@ export const STAFF_PERMISSION_TREE: readonly PermissionTreeCategory[] = [
         label: "Activities",
         actions: ["crm.activities.view", "crm.activities.create"],
       },
+      {
+        id: "appointments",
+        label: "Appointments",
+        fixedNote: "Uses CRM Activities permissions (view / create).",
+        actions: [],
+      },
       { id: "tasks", label: "Tasks", actions: ["tasks.view", "tasks.manage"] },
+      {
+        id: "crm-microsoft",
+        label: "Microsoft 365",
+        fixedNote: "Uses Tasks view permission.",
+        actions: [],
+      },
     ],
   },
   {
@@ -375,7 +387,15 @@ export function keysInCategory(id: string): PermissionKey[] {
 }
 
 export function treePermissionKeys(): PermissionKey[] {
-  return STAFF_PERMISSION_TREE.flatMap((category) => category.sections.flatMap((section) => [...section.actions]));
+  // Sections may share action keys (or use empty actions + fixedNote). Deduplicate
+  // so catalogue / coverage tests compare against the unique PERMISSIONS set.
+  return [
+    ...new Set(
+      STAFF_PERMISSION_TREE.flatMap((category) =>
+        category.sections.flatMap((section) => [...section.actions]),
+      ),
+    ),
+  ];
 }
 
 /**

@@ -487,9 +487,12 @@ describe("hold until complete stock workflow", () => {
     expect(placed.ok).toBe(true);
     if (!placed.ok) return;
 
-    // Mark stock sync stale by aging the success run.
+    // Mark stock sync stale by aging every live SUCCESS/PARTIAL run.
+    // stockFreshness reads the latest live success globally (any source), so
+    // aging only 231PO3NEW leaves fresh SUCCESS rows from other suites and
+    // falsely reports freshness in CI.
     await prisma.stockSyncRun.updateMany({
-      where: { source: "231PO3NEW", status: "SUCCESS" },
+      where: { mode: "live", status: { in: ["SUCCESS", "PARTIAL"] } },
       data: { completedAt: new Date(Date.now() - 100 * 60 * 60 * 1000) },
     });
     const staleEval = await evaluateHeldOrdersAfterStockSync({ actorUserId: staff.id });

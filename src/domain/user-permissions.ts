@@ -186,7 +186,7 @@ export function cataloguePermissionKeys(): PermissionKey[] {
   for (const category of PERMISSION_CATEGORIES) {
     keys.push(...category.permissions);
   }
-  return keys;
+  return [...new Set(keys)];
 }
 
 export function isEffective(

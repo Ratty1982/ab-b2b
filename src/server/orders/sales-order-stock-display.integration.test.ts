@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createLegacyEligibleTradingCompany } from "@/server/testing/sales-ready-company";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { saveProduct } from "@/server/catalogue/service";
@@ -84,8 +85,9 @@ async function seedStock(variantId: string, avail: number) {
 }
 
 async function seedCompany(name: string) {
-  const company = await prisma.company.create({
-    data: { name, status: "ACTIVE", paymentTerms: "Net 30" },
+  const company = await createLegacyEligibleTradingCompany(prisma, {
+    name,
+    paymentTerms: "Net 30",
   });
   const address = await prisma.address.create({
     data: {
