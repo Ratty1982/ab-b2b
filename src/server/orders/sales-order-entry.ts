@@ -17,7 +17,7 @@ import {
 } from "@/domain/checkout";
 import { assessSalesOrderEditEligibility } from "@/domain/order-edit";
 import { moneyToString, parseMoney } from "@/domain/money";
-import { zeroValueReasonForPrice } from "@/domain/zero-value-reason";
+import { zeroValueAuditLines, zeroValueReasonForPrice } from "@/domain/zero-value-reason";
 import {
   openSalesOrderDraftSchema,
   placeSalesOrderSchema,
@@ -1320,6 +1320,10 @@ async function placeFromQuote(
     },
   );
 
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: result.orderId },
+    include: { items: true, company: { select: { name: true } } },
+  });
   if (!result.alreadyConverted) {
     await recordAuditEvent({
       action: "order.placed_for_customer",
@@ -1333,6 +1337,15 @@ async function placeFromQuote(
         placedByStaffUserId: actorUserId,
         sourceQuoteNumber: quote.quoteNumber,
         salesOrderDraftId: draft.id,
+        zeroValueLines: zeroValueAuditLines(
+          order.items.map((item) => ({
+            sku: item.sku,
+            qty: item.qty,
+            customerUnitPrice: item.customerUnitPrice,
+            zeroValueReasonCode: item.zeroValueReasonCode,
+            zeroValueReasonDetail: item.zeroValueReasonDetail,
+          })),
+        ),
       },
     });
   }
@@ -1346,10 +1359,6 @@ async function placeFromQuote(
     internalNote,
   });
 
-  const order = await prisma.order.findUniqueOrThrow({
-    where: { id: result.orderId },
-    include: { items: true, company: { select: { name: true } } },
-  });
   const usesThisKey =
     order.idempotencyKey === input.idempotencyKey ||
     order.idempotencyKey === `quote-accept:${input.idempotencyKey}`;
@@ -1710,6 +1719,15 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       externalRef: null,
       holdUntilComplete,
       stockHoldState: holdUntilComplete ? "WAITING_STOCK" : "NONE",
+      zeroValueLines: zeroValueAuditLines(
+        lines.map((line) => ({
+          sku: line.sku,
+          qty: line.quantity,
+          customerUnitPrice: line.customerUnit2dp,
+          zeroValueReasonCode: line.zeroValueReasonCode,
+          zeroValueReasonDetail: line.zeroValueReasonDetail,
+        })),
+      ),
       priceOverrides: lines
         .filter((line) => line.priceOverridden)
         .map((line) => ({

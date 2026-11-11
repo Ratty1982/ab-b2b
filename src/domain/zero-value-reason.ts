@@ -53,3 +53,99 @@ export function zeroValueReasonForPrice(input: {
 export function zeroValueReasonLabel(code: string | null | undefined): string | null {
   return ZERO_VALUE_REASONS.find((reason) => reason.code === code)?.label ?? null;
 }
+
+export type ZeroQuotationSendItem = {
+  sku: string;
+  customerUnitPrice: string | number | null | undefined;
+  priceOverride?: boolean | null;
+  zeroValueReasonCode?: string | null;
+  zeroValueReasonDetail?: string | null;
+};
+
+/**
+ * An entirely £0.00 quotation can be sent when every line has a valid reason.
+ * An overridden zero price still needs quote price-override permission.
+ * A positive quotation whose goods or grand total is not positive stays blocked.
+ */
+export function assessZeroQuotationSend(input: {
+  items: ZeroQuotationSendItem[];
+  goodsArePositive: boolean;
+  grandIsPositive: boolean;
+  canOverridePrice: boolean;
+}):
+  | {
+      ok: true;
+      zeroLines: Array<{ sku: string; zeroValueReasonCode: string; zeroValueReasonDetail: string | null }>;
+    }
+  | { ok: false; code: "VALIDATION" | "ZERO_VALUE_REASON_REQUIRED" | "FORBIDDEN"; message: string } {
+  if (input.items.length === 0) {
+    return {
+      ok: false,
+      code: "VALIDATION",
+      message: "Add at least one valid product before sending this quotation.",
+    };
+  }
+  const zeroLines: Array<{ sku: string; zeroValueReasonCode: string; zeroValueReasonDetail: string | null }> = [];
+  for (const item of input.items) {
+    if (!isZeroSellingPrice(item.customerUnitPrice)) continue;
+    const reason = zeroValueReasonForPrice({
+      customerUnitPrice: item.customerUnitPrice,
+      code: item.zeroValueReasonCode,
+      detail: item.zeroValueReasonDetail,
+    });
+    if (!reason.ok) {
+      return {
+        ok: false,
+        code: "ZERO_VALUE_REASON_REQUIRED",
+        message: `${item.sku}: ${reason.message}`,
+      };
+    }
+    if (item.priceOverride && !input.canOverridePrice) {
+      return { ok: false, code: "FORBIDDEN", message: "Quote price override not permitted" };
+    }
+    if (!reason.code) {
+      return {
+        ok: false,
+        code: "ZERO_VALUE_REASON_REQUIRED",
+        message: `${item.sku}: Choose a reason for the £0.00 selling price.`,
+      };
+    }
+    zeroLines.push({
+      sku: item.sku,
+      zeroValueReasonCode: reason.code,
+      zeroValueReasonDetail: reason.detail,
+    });
+  }
+  const entirelyZero = zeroLines.length === input.items.length;
+  if (!entirelyZero && (!input.goodsArePositive || !input.grandIsPositive)) {
+    return {
+      ok: false,
+      code: "VALIDATION",
+      message: "Add at least one valid product before sending this quotation.",
+    };
+  }
+  return { ok: true, zeroLines };
+}
+
+export function zeroValueAuditLines(
+  items: Array<{
+    sku: string;
+    qty?: number | null | undefined;
+    customerUnitPrice: string | number | { toString(): string } | null | undefined;
+    zeroValueReasonCode?: string | null | undefined;
+    zeroValueReasonDetail?: string | null | undefined;
+  }>,
+) {
+  return items.flatMap((item) => {
+    const price = item.customerUnitPrice == null ? null : String(item.customerUnitPrice);
+    if (!isZeroSellingPrice(price)) return [];
+    return [
+      {
+        sku: item.sku,
+        qty: item.qty ?? null,
+        zeroValueReasonCode: item.zeroValueReasonCode ?? null,
+        zeroValueReasonDetail: item.zeroValueReasonDetail ?? null,
+      },
+    ];
+  });
+}

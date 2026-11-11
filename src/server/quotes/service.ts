@@ -60,7 +60,7 @@ import {
   resolveCustomerOrdering,
 } from "@/domain/ordering";
 import type { VariantStock } from "@/domain/stock";
-import { zeroValueReasonForPrice } from "@/domain/zero-value-reason";
+import { assessZeroQuotationSend, zeroValueAuditLines, zeroValueReasonForPrice } from "@/domain/zero-value-reason";
 
 function money2(value: unknown): string {
   return moneyToString(parseMoney(String(value)) ?? moneyZero(), 2);
@@ -1028,7 +1028,7 @@ export async function listQuotesForStaff(actorUserId: string, raw?: unknown) {
 }
 
 export async function sendQuote(actorUserId: string, raw: unknown) {
-  await requireQuoteStaff(actorUserId, "quotes.send");
+  const profile = await requireQuoteStaff(actorUserId, "quotes.send");
   const input = quoteSendSchema.parse(raw);
   const quote = await prisma.quote.findUnique({
     where: { id: input.id },
@@ -1039,21 +1039,22 @@ export async function sendQuote(actorUserId: string, raw: unknown) {
   if (quote.status !== "DRAFT" && quote.status !== "SENT" && quote.status !== "VIEWED") {
     throw new AuthError("Only draft, sent, or viewed quotes can be (re)sent", "CONFLICT", 409);
   }
-  if (!quote.items.length) {
-    throw new AuthError(
-      "Add at least one valid product before sending this quotation.",
-      "VALIDATION",
-      400,
-    );
-  }
   const goods = parseMoney(String(quote.subtotal)) ?? moneyZero();
   const grand = parseMoney(String(quote.grandTotal)) ?? moneyZero();
-  if (goods.minor <= 0n || grand.minor <= 0n) {
-    throw new AuthError(
-      "Add at least one valid product before sending this quotation.",
-      "VALIDATION",
-      400,
-    );
+  const sendCheck = assessZeroQuotationSend({
+    items: quote.items.map((item) => ({
+      sku: item.sku,
+      customerUnitPrice: String(item.customerUnitPrice ?? item.unitPrice),
+      priceOverride: item.priceOverride,
+      zeroValueReasonCode: item.zeroValueReasonCode,
+      zeroValueReasonDetail: item.zeroValueReasonDetail,
+    })),
+    goodsArePositive: goods.minor > 0n,
+    grandIsPositive: grand.minor > 0n,
+    canOverridePrice: hasPermission(profile, "quotes.override_price"),
+  });
+  if (!sendCheck.ok) {
+    throw new AuthError(sendCheck.message, sendCheck.code, sendCheck.code === "FORBIDDEN" ? 403 : 400);
   }
   if (!quote.expiresAt) {
     throw new AuthError("Set a validity date before sending", "VALIDATION", 400);
@@ -1092,7 +1093,7 @@ export async function sendQuote(actorUserId: string, raw: unknown) {
     entityId: quote.id,
     actorUserId,
     companyId: quote.companyId,
-    after: { toEmail, status: updated.status },
+    after: { toEmail, status: updated.status, zeroValueLines: sendCheck.zeroLines },
   });
 
   let emailSent = false;
@@ -1706,6 +1707,15 @@ async function convertQuoteToOrder(input: {
       sourceQuoteNumber: quote.quoteNumber,
       autopartSideEffects: false,
       abReservation: true,
+      zeroValueLines: zeroValueAuditLines(
+        created.order.items.map((item) => ({
+          sku: item.sku,
+          qty: item.qty,
+          customerUnitPrice: item.customerUnitPrice,
+          zeroValueReasonCode: item.zeroValueReasonCode,
+          zeroValueReasonDetail: item.zeroValueReasonDetail,
+        })),
+      ),
     },
   });
 

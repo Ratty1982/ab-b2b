@@ -2030,6 +2030,11 @@ describe("sales order entry on behalf of a customer", () => {
     expect(order.items[0]?.zeroValueReasonCode).toBe("WARRANTY");
     expect(Number(order.items[0]?.customerUnitPrice)).toBe(0);
     expect(Number(order.grandTotal)).toBeGreaterThan(0);
+    const placedAudit = await prisma.auditEvent.findFirstOrThrow({
+      where: { entityId: order.id, action: "order.placed_for_customer" },
+    });
+    expect(JSON.stringify(placedAudit.after)).toContain("WARRANTY");
+    expect(JSON.stringify(placedAudit.after)).toContain("Seal failed");
 
     const editing = await startSalesOrderEdit(adminId, { orderId: order.id });
     expect(editing.draft.lines[0]?.zeroValueReasonCode).toBe("WARRANTY");
@@ -2121,5 +2126,62 @@ describe("sales order entry on behalf of a customer", () => {
     expect(zero?.zeroValueReasonCode).toBe("SAMPLE");
     expect(zero?.zeroValueReasonDetail).toBe("Launch pack");
     expect(charged?.zeroValueReasonCode).toBeNull();
+  });
+
+  it("sends and converts a quotation that is entirely £0.00 when every line has a reason", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`QT-ONLY-ZERO-${stamp}`, 8, 1, 20);
+    const { company, contact } = await seedCompany(`Quote Only Zero ${stamp}`);
+    const quote = await createQuote(adminId, {
+      companyId: company.id,
+      contactId: contact.id,
+      validUntil: "2099-12-31",
+    });
+    await updateQuoteDraft(adminId, {
+      id: quote.id,
+      validUntil: "2099-12-31",
+      lines: [
+        {
+          variantId: variant.id,
+          qty: 2,
+          quotedUnitPrice: "0.00",
+          zeroValueReasonCode: "GOODWILL",
+          zeroValueReasonDetail: "Failed seal",
+        },
+      ],
+    });
+    await prisma.quoteItem.updateMany({
+      where: { quoteId: quote.id },
+      data: { zeroValueReasonCode: null, zeroValueReasonDetail: null },
+    });
+    await expect(sendQuote(adminId, { id: quote.id })).rejects.toMatchObject({
+      code: "ZERO_VALUE_REASON_REQUIRED",
+    });
+    await prisma.quoteItem.updateMany({
+      where: { quoteId: quote.id },
+      data: { zeroValueReasonCode: "GOODWILL", zeroValueReasonDetail: "Failed seal" },
+    });
+    await sendQuote(adminId, { id: quote.id });
+    const sentAudit = await prisma.auditEvent.findFirstOrThrow({
+      where: { entityId: quote.id, action: "quote.sent" },
+    });
+    expect(JSON.stringify(sentAudit.after)).toContain("GOODWILL");
+    const accepted = await acceptQuoteOnBehalf(adminId, {
+      id: quote.id,
+      idempotencyKey: `only-zero-${stamp}`,
+      note: "Customer confirmed the goodwill replacement",
+    });
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: accepted.orderId },
+      include: { items: true },
+    });
+    expect(order.items).toHaveLength(1);
+    expect(Number(order.items[0]?.customerUnitPrice)).toBe(0);
+    expect(order.items[0]?.zeroValueReasonCode).toBe("GOODWILL");
+    expect(order.items[0]?.zeroValueReasonDetail).toBe("Failed seal");
+    const createdAudit = await prisma.auditEvent.findFirstOrThrow({
+      where: { entityId: order.id, action: "order.created" },
+    });
+    expect(JSON.stringify(createdAudit.after)).toContain("Failed seal");
   });
 });
