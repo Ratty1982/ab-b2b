@@ -7,8 +7,8 @@ import {
 } from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
 import { cmsMediaPublicPath, cmsFocalStyle } from "@/lib/cms-media";
+import { bootstrapTeamDepartments as bootstrapTeamDepartmentsRecord } from "@/server/team/system-bootstrap";
 import {
-  DEFAULT_TEAM_DEPARTMENTS,
   normalizeTeamDepartmentInput,
   normalizeTeamMemberInput,
   publicTeamBio,
@@ -22,25 +22,8 @@ import {
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export async function bootstrapTeamDepartments(db: Db = prisma) {
-  // Only seed when the table is empty so admin deletes of default departments stick.
-  const existingCount = await db.teamDepartment.count();
-  if (existingCount > 0) return { created: 0 };
-
-  let created = 0;
-  for (const dept of DEFAULT_TEAM_DEPARTMENTS) {
-    await db.teamDepartment.create({
-      data: {
-        slug: dept.slug,
-        name: dept.name,
-        description: dept.description,
-        sortOrder: dept.sortOrder,
-        isPublic: true,
-      },
-    });
-    created += 1;
-  }
-  return { created };
+export async function bootstrapTeamDepartments(db: PrismaClient = prisma) {
+  return bootstrapTeamDepartmentsRecord(db);
 }
 
 function photoSelect() {

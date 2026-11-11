@@ -10,11 +10,18 @@ Nitro server accepts traffic:
 3. Production system bootstrap (`.output/bootstrap/run-production.mjs`)
    - Upsert permissions / system roles / role-permission maps
    - Optional initial SUPER_ADMIN from env
-   - Idempotent CMS homepage seed (published draft) if missing
+   - Idempotent CMS / team / catalogue / Autopart warehouse seeds
 4. `node .output/server/index.mjs`
 
 Prisma is invoked via its **package entrypoint** (`node_modules/prisma/build/index.js`),
 not a copied `.bin` shim, so WASM/engine assets resolve correctly.
+
+The Docker image bundles `run-production.ts` with `bun build` as a **standalone**
+Node module. That entrypoint must import only Prisma bootstrap helpers
+(`prisma/bootstrap/*` and `src/server/*/system-bootstrap.ts` /
+`warehouse-bootstrap.ts`). Importing application `service.ts` modules pulls the
+TanStack Start request graph (`#tanstack-router-entry` /
+`#tanstack-start-entry`) into the bootstrap bundle and fails the image build.
 
 No Coolify Pre/Post Deployment Command is required for migrations or RBAC —
 the image entrypoint handles it. If you already have a Pre-Deploy command that
@@ -22,13 +29,22 @@ runs migrate, remove it to avoid double-running (harmless but redundant).
 
 ## Required Coolify environment variables
 
+These are **runtime** container environment variables (entrypoint + Nitro). They
+must not be supplied as Docker **build-args**: the multi-stage Dockerfile does
+not declare `ARG` for secrets, and bake-time `DATABASE_URL` / `AUTH_SECRET` would
+land in image history / Coolify build logs.
+
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `DATABASE_URL` | Yes | Coolify Postgres connection string |
-| `AUTH_SECRET` | Yes | ≥ 32 chars; not the repo default |
+| `DATABASE_URL` | Yes | Coolify Postgres connection string (runtime only) |
+| `AUTH_SECRET` | Yes | ≥ 32 chars; not the repo default (runtime only) |
 | `APP_URL` | Yes | `https://automotivebrands.co.uk`. Do not change it on a routine redeploy. The temporary b2b hostname redirect is separate: leave `B2B_LEGACY_REDIRECT` unset, or set it to `off` only when that hostname moves to the warehouse. See [domain-migration-cutover.md](domain-migration-cutover.md). |
 | `NODE_ENV` | Yes | `production` |
 | `CUSTOMER_SALES_UPLOAD_DIR` | Before customer sales imports | `/data/autopart-imports/customer-sales-uploads` |
+
+The build stage uses a **dummy** local `DATABASE_URL` only for `prisma generate`
+schema loading; it is not the production database and is not copied into the
+runner as a baked secret.
 
 Outbound SMTP is **not** configured via Coolify. Use **Admin → Settings → Email**
 (SiteGround host/port/user/password). `AUTH_SECRET` encrypts the stored SMTP password.

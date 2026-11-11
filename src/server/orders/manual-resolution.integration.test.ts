@@ -3,6 +3,7 @@
  */
 import "@/server/testing/use-protect-integration-database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createLegacyEligibleTradingCompany } from "@/server/testing/sales-ready-company";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { prisma } from "@/infra/database/client";
 import { closeOrderAdministratively, fulfilOrderManually } from "@/server/orders/manual-resolution";
@@ -36,8 +37,8 @@ async function uniqueAbOrderNumber(): Promise<string> {
 async function createOrder(qty: number) {
   const orderNumber = await uniqueAbOrderNumber();
   const sku = `MAN-${orderNumber.slice(-6)}`;
-  const company = await prisma.company.create({
-    data: { name: `Manual ${orderNumber}`, status: "ACTIVE" },
+  const company = await createLegacyEligibleTradingCompany(prisma, {
+    name: `Manual ${orderNumber}`,
   });
   const brand = await prisma.brand.create({ data: { name: `Brand ${sku}`, slug: `brand-${sku.toLowerCase()}` } });
   const category = await prisma.category.create({ data: { name: `Cat ${sku}`, slug: `cat-${sku.toLowerCase()}` } });
@@ -93,7 +94,9 @@ async function createOrder(qty: number) {
 
 async function createTwoLineOrder() {
   const orderNumber = await uniqueAbOrderNumber();
-  const company = await prisma.company.create({ data: { name: `Manual ${orderNumber}`, status: "ACTIVE" } });
+  const company = await createLegacyEligibleTradingCompany(prisma, {
+    name: `Manual ${orderNumber}`,
+  });
   const warehouse = await prisma.warehouse.upsert({
     where: { code: "AUTOPART" },
     create: { code: "AUTOPART", name: "Autopart" },

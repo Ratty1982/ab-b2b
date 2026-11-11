@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createLegacyEligibleTradingCompany } from "@/server/testing/sales-ready-company";
 import { searchSalesOrderProducts } from "@/server/orders/sales-order-entry";
 
 const prisma = new PrismaClient();
@@ -37,8 +38,8 @@ describe("exact SKU first product search", () => {
     });
     categoryId = category.id;
 
-    const company = await prisma.company.create({
-      data: { name: `Exact Search Co ${stamp}`, status: "ACTIVE" },
+    const company = await createLegacyEligibleTradingCompany(prisma, {
+      name: `Exact Search Co ${stamp}`,
     });
     companyId = company.id;
 

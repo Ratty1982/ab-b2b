@@ -3,10 +3,10 @@ import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireAnySystemPermission } from "@/server/rbac/guards";
 import { grants, hasPermission } from "@/server/rbac/access";
+import { ensureAutopartWarehouse as ensureAutopartWarehouseRecord } from "@/server/stock/warehouse-bootstrap";
 import {
   AUTOPART_FEED_SOURCE,
   AUTOPART_WAREHOUSE_CODE,
-  AUTOPART_WAREHOUSE_NAME,
   catalogueMatchSummary,
   customerAvailabilityForStock,
   describeStockQtyChange,
@@ -50,11 +50,7 @@ const CHANGE_LIST_DEFAULT = 50;
 const WOULD_CHANGE_CAP = 80;
 
 export async function ensureAutopartWarehouse() {
-  return prisma.warehouse.upsert({
-    where: { code: AUTOPART_WAREHOUSE_CODE },
-    create: { code: AUTOPART_WAREHOUSE_CODE, name: AUTOPART_WAREHOUSE_NAME, isDefault: true },
-    update: { name: AUTOPART_WAREHOUSE_NAME },
-  });
+  return ensureAutopartWarehouseRecord(prisma);
 }
 
 async function requireInternalStockView(actorUserId: string) {

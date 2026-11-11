@@ -8,15 +8,25 @@
  * Sequence:
  *   1. RBAC permissions + system roles + role-permission maps
  *   2. Optional INITIAL_ADMIN_* administrator (idempotent; never resets password)
+ *   3. CMS / team / catalogue / warehouse seeds (Prisma-only modules)
  *
  * Does NOT create demo companies, sample users, or commercial fixtures.
+ *
+ * Import rule: only local bootstrap helpers and system-bootstrap / warehouse-bootstrap
+ * modules. Never import application service.ts modules — those pull request/auth
+ * graphs into TanStack Start virtual entries and break the standalone Docker bun build.
  */
 import { PrismaClient } from "@prisma/client";
 
 import { bootstrapRbac } from "./rbac";
 import { bootstrapInitialAdmin } from "./initial-admin";
-import { bootstrapHomepageCms, bootstrapMarketingCmsPages } from "../../src/server/cms/service";
-import { bootstrapCatalogue } from "../../src/server/catalogue/service";
+import {
+  bootstrapHomepageCms,
+  bootstrapMarketingCmsPages,
+} from "../../src/server/cms/system-bootstrap";
+import { bootstrapCatalogue } from "../../src/server/catalogue/system-bootstrap";
+import { bootstrapTeamDepartments } from "../../src/server/team/system-bootstrap";
+import { ensureAutopartWarehouse } from "../../src/server/stock/warehouse-bootstrap";
 
 async function main() {
   const databaseUrl = process.env["DATABASE_URL"];
@@ -59,15 +69,13 @@ async function main() {
     const marketing = await bootstrapMarketingCmsPages(prisma);
     console.log("[ab:bootstrap] CMS marketing pages", marketing);
 
-    const { bootstrapTeamDepartments } = await import("../../src/server/team/service");
     const team = await bootstrapTeamDepartments(prisma);
     console.log("[ab:bootstrap] Team departments", team);
 
     const catalogue = await bootstrapCatalogue(prisma);
     console.log("[ab:bootstrap] Catalogue taxonomy", catalogue);
 
-    const { ensureAutopartWarehouse } = await import("../../src/server/stock/service");
-    const warehouse = await ensureAutopartWarehouse();
+    const warehouse = await ensureAutopartWarehouse(prisma);
     console.log("[ab:bootstrap] Autopart warehouse", { id: warehouse.id, code: warehouse.code });
 
     console.log("[ab:bootstrap] Done.");

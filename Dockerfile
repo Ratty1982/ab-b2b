@@ -44,7 +44,10 @@ ENV NODE_ENV=production
 RUN DATABASE_URL="postgresql://prisma:prisma@127.0.0.1:5432/prisma?schema=public" \
     /usr/bin/node ./node_modules/prisma/build/index.js generate
 RUN bun run build
-# Bundle production bootstrap (Prisma client stays external — provided at runtime)
+# Bundle production bootstrap (Prisma client stays external — provided at runtime).
+# run-production.ts must not import application service.ts modules — that pulls
+# TanStack Start virtual entries (#tanstack-router-entry / #tanstack-start-entry)
+# into this standalone bundle and fails the Coolify image build.
 RUN bun build ./prisma/bootstrap/run-production.ts \
   --outfile .output/bootstrap/run-production.mjs \
   --target node \
