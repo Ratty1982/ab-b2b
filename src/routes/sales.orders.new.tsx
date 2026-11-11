@@ -228,6 +228,10 @@ function NewSalesOrder() {
     setFulfilmentChoice(nextFulfilment);
     setUseOneOff(nextOneOffFlag);
     setBackorderAcknowledged(false);
+    setHoldUntilComplete(
+      data.draft.editingStockReleasePolicy === "HOLD_UNTIL_COMPLETE" &&
+        data.draft.editingStockHoldState === "WAITING_STOCK",
+    );
     if (saved && typeof saved === "object") setOneOff(nextOneOff);
     setPoNumber(nextPo);
     setInstructions(nextInstructions);
@@ -915,7 +919,9 @@ function NewSalesOrder() {
             quoteId
               ? "Accept quotation"
               : workspace?.draft.editingOrderId
-                ? "Confirm order changes"
+                ? holdUntilComplete && salesOrderBackorderSummary(review?.lines ?? []).length > 0
+                  ? "Confirm and hold order"
+                  : "Confirm order changes"
                 : holdUntilComplete && salesOrderBackorderSummary(review?.lines ?? []).length > 0
                   ? "Place order on hold"
                   : "Place order"
@@ -925,6 +931,11 @@ function NewSalesOrder() {
           backorders={salesOrderBackorderSummary(review?.lines ?? [])}
           backorderAcknowledged={backorderAcknowledged}
           holdUntilComplete={holdUntilComplete}
+          holdLocked={
+            workspace?.draft.editingStockReleasePolicy === "HOLD_UNTIL_COMPLETE" &&
+            workspace?.draft.editingStockHoldState === "WAITING_STOCK"
+          }
+          holdOnExistingOrder={Boolean(workspace?.draft.editingOrderId)}
           onBackorderAcknowledged={setBackorderAcknowledged}
           onHoldUntilComplete={setHoldUntilComplete}
           onAcceptPrices={(checked) => {

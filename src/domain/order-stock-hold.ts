@@ -8,6 +8,32 @@ export type OrderStockHoldState = "NONE" | "WAITING_STOCK" | "READY_TO_EXPORT" |
 
 export const STOCK_HOLD_STAFF_LABEL = "HELD — AWAITING STOCK";
 
+/** Reasons written only by the trusted stock-hold release transaction. */
+export const VERIFIED_STOCK_RELEASE_REASONS = [
+  "MANUAL_RETRY_FULL_STOCK",
+  "PLACED_WITH_FULL_STOCK",
+  "STOCK_SYNC_FULL_COVERAGE",
+] as const;
+
+export type VerifiedStockReleaseReason = (typeof VERIFIED_STOCK_RELEASE_REASONS)[number];
+
+export type StockHoldReleaseEvidence = {
+  stockReleasedAt?: Date | string | null;
+  stockReleaseReason?: string | null;
+};
+
+export function isVerifiedStockHoldRelease(
+  state: OrderStockHoldState | string | null | undefined,
+  policy: OrderStockReleasePolicy | string | null | undefined,
+  release?: StockHoldReleaseEvidence | null,
+): boolean {
+  if (policy !== "HOLD_UNTIL_COMPLETE" || state !== "READY_TO_EXPORT") return false;
+  if (!release?.stockReleasedAt) return false;
+  return (VERIFIED_STOCK_RELEASE_REASONS as readonly string[]).includes(
+    release.stockReleaseReason ?? "",
+  );
+}
+
 export type StockHoldLineCoverageInput = {
   orderItemId: string;
   variantId: string;
@@ -62,17 +88,22 @@ export function isActiveStockHold(state: OrderStockHoldState | string | null | u
 
 /**
  * Fail-closed export gate.
- * - Explicit WAITING_STOCK always blocks.
- * - HOLD_UNTIL_COMPLETE policy only exports when READY_TO_EXPORT or CANCELLED_HOLD
- *   (unknown/null state under that policy stays blocked).
+ * - Explicit WAITING_STOCK always blocks, on any policy.
+ * - HOLD_UNTIL_COMPLETE exports only after a verified release:
+ *   state READY_TO_EXPORT, stockReleasedAt set, and a known release reason.
+ * - WAITING_STOCK, NONE, CANCELLED_HOLD, and READY_TO_EXPORT without that
+ *   evidence stay blocked while the hold policy is still active.
+ * - Cancelling a hold must switch the policy back to SHIP_AS_AVAILABLE.
+ *   CANCELLED_HOLD alone is not an export permission.
  */
 export function blocksAutopartExportForStockHold(
   state: OrderStockHoldState | string | null | undefined,
   policy?: OrderStockReleasePolicy | string | null,
+  release?: StockHoldReleaseEvidence | null,
 ): boolean {
   if (state === "WAITING_STOCK") return true;
   if (policy === "HOLD_UNTIL_COMPLETE") {
-    return state !== "READY_TO_EXPORT" && state !== "CANCELLED_HOLD";
+    return !isVerifiedStockHoldRelease(state, policy, release);
   }
   return false;
 }

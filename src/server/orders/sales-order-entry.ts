@@ -42,6 +42,7 @@ import {
 } from "@/server/orders/service";
 import type { OrderAmendmentEmailFeedback } from "@/domain/order-updated-email";
 import { recordAuditEvent } from "@/server/audit/record";
+import { orderHasAutopartExportRecord } from "@/server/orders/stock-hold-export-filter";
 import { loadOrderUpdatedEmailOutcome, sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
@@ -85,6 +86,9 @@ export type SalesOrderDraftDto = {
   fulfilmentChoice: OrderFulfilmentChoice;
   editingOrderId: string | null;
   editingOrderNumber: string | null;
+  /** Persisted hold on the order being edited. Null when this draft creates a new order. */
+  editingStockHoldState: string | null;
+  editingStockReleasePolicy: string | null;
   updatedAt: string;
   lines: Array<{
     id: string;
@@ -250,7 +254,9 @@ async function canUseCustomerQuotations(profile: LoadedAccessProfile, companyId:
 
 const draftInclude = {
   company: { select: { id: true, name: true, status: true, paymentTerms: true } },
-  editingOrder: { select: { id: true, orderNumber: true } },
+  editingOrder: {
+    select: { id: true, orderNumber: true, stockHoldState: true, stockReleasePolicy: true },
+  },
   lines: {
     orderBy: { sortOrder: "asc" as const },
     include: {
@@ -280,6 +286,8 @@ function toDraftDto(row: DraftRow): SalesOrderDraftDto {
     fulfilmentChoice: row.fulfilmentChoice,
     editingOrderId: row.editingOrderId,
     editingOrderNumber: row.editingOrder?.orderNumber ?? null,
+    editingStockHoldState: row.editingOrder?.stockHoldState ?? null,
+    editingStockReleasePolicy: row.editingOrder?.stockReleasePolicy ?? null,
     updatedAt: row.updatedAt.toISOString(),
     lines: row.lines.map((line) => ({
       id: line.id,
@@ -791,6 +799,7 @@ export async function startSalesOrderEdit(actorUserId: string, raw: unknown) {
     autopartExportStatus: order.autopartExportStatus,
     autopartExportCount: order.autopartExportCount,
     autopartExportedAt: order.autopartExportedAt,
+    autopartExportBatchId: order.autopartExportBatchId,
     externalRef: order.externalRef,
     invoiceCount: order.invoices.length,
     fulfilmentKinds: order.fulfilmentEvents.map((event) => event.kind),
@@ -845,6 +854,7 @@ export async function startSalesOrderEdit(actorUserId: string, raw: unknown) {
       autopartExportStatus: fresh.autopartExportStatus,
       autopartExportCount: fresh.autopartExportCount,
       autopartExportedAt: fresh.autopartExportedAt,
+      autopartExportBatchId: fresh.autopartExportBatchId,
       externalRef: fresh.externalRef,
       invoiceCount: fresh.invoices.length,
       fulfilmentKinds: fresh.fulfilmentEvents.map((event) => event.kind),
@@ -852,6 +862,13 @@ export async function startSalesOrderEdit(actorUserId: string, raw: unknown) {
     });
     if (!again.allowed) {
       throw new AuthError(again.reason ?? "This order can no longer be edited.", "ORDER_LOCKED", 409);
+    }
+    if (await orderHasAutopartExportRecord(tx, fresh)) {
+      throw new AuthError(
+        "This order has an Autopart export record and can no longer be edited.",
+        "ORDER_LOCKED",
+        409,
+      );
     }
     const open = await tx.salesOrderDraft.findFirst({
       where: { editingOrderId: order.id, status: "OPEN" },
@@ -1541,7 +1558,8 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
 
   const staffName = profile.name?.trim() || profile.email;
   const hasBackorder = lines.some((line) => line.issue === "VALID" && line.backorderQtyAtOrder > 0);
-  const holdUntilComplete = Boolean(input.holdUntilComplete) && hasBackorder;
+  const requestedHold = Boolean(input.holdUntilComplete);
+  const holdUntilComplete = requestedHold && hasBackorder;
   if (draft.editingOrderId) {
     const { amendSubmittedSalesOrder } = await import("@/server/orders/sales-order-edit");
     return amendSubmittedSalesOrder({
@@ -1555,6 +1573,7 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       contact,
       requestedLines,
       hasBackorder,
+      holdUntilComplete: requestedHold,
     });
   }
   let created;

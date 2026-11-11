@@ -639,6 +639,8 @@ export function SalesOrderReviewPanel({
   backorders,
   backorderAcknowledged,
   holdUntilComplete,
+  holdLocked = false,
+  holdOnExistingOrder = false,
   onAcceptPrices,
   onAuthorised,
   onBackorderAcknowledged,
@@ -666,6 +668,10 @@ export function SalesOrderReviewPanel({
   backorders: SalesOrderBackorderRow[];
   backorderAcknowledged: boolean;
   holdUntilComplete: boolean;
+  /** Active hold already stored. Unchecking here does not remove it. */
+  holdLocked?: boolean;
+  /** This review saves an existing order rather than creating one. */
+  holdOnExistingOrder?: boolean;
   onAcceptPrices: (checked: boolean) => void;
   onAuthorised: (checked: boolean) => void;
   onBackorderAcknowledged: (checked: boolean) => void;
@@ -737,11 +743,23 @@ export function SalesOrderReviewPanel({
           <label className="flex min-h-11 items-start gap-3">
             <input
               type="checkbox"
-              checked={holdUntilComplete}
+              checked={holdUntilComplete || holdLocked}
+              disabled={holdLocked}
               onChange={(event) => onHoldUntilComplete(event.target.checked)}
               className="mt-1 size-5"
             />
-            <span>HOLD ORDER UNTIL ALL STOCK IS AVAILABLE</span>
+            <span>
+              HOLD ORDER UNTIL ALL STOCK IS AVAILABLE
+              {holdLocked ? (
+                <span className="mt-1 block text-steel">
+                  This order is already held. Removing the hold is a separate authorised action on the order, with a reason.
+                </span>
+              ) : holdOnExistingOrder ? (
+                <span className="mt-1 block text-steel">
+                  Applies to this existing order and removes it from Autopart export until every line can be covered.
+                </span>
+              ) : null}
+            </span>
           </label>
         </div>
       ) : null}

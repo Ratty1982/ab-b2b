@@ -6,7 +6,9 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDateTime } from "@/lib/datetime";
 import { customerOrderStatusTone } from "@/domain/order-status";
+import { blocksAutopartExportForStockHold } from "@/domain/order-stock-hold";
 import {
+  applyHoldUntilCompleteFn,
   cancelOrderStockHoldFn,
   deleteAdminOrderFn,
   exportAutopartOrdersCsvFn,
@@ -162,6 +164,29 @@ function AdminOrderDetailPage() {
       return;
     }
     toast.success(`Stock hold evaluation: ${result.data.outcome}`);
+    await load();
+  }
+
+  async function onApplyHoldUntilComplete() {
+    if (!order) return;
+    const reason = window.prompt(
+      `Hold ${order.orderNumber} until every line can be covered?\n\nThis keeps the order number, prices, and lines, and removes it from Autopart export. Enter a reason:`,
+    );
+    if (!reason?.trim()) return;
+    setHoldBusy(true);
+    const result = await applyHoldUntilCompleteFn({
+      data: { orderId, reason: reason.trim() },
+    });
+    setHoldBusy(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(
+      result.data.alreadyHeld
+        ? "Order is already held awaiting stock"
+        : "Order held until all stock is available",
+    );
     await load();
   }
 
@@ -603,10 +628,29 @@ function AdminOrderDetailPage() {
                 Repair Autopart snapshot
               </button>
             ) : null}
+            {canDeleteOrders &&
+            order.salesOrderEdit.allowed &&
+            order.hasOutstandingBackorder &&
+            order.stockHoldState === "NONE" ? (
+              <button
+                type="button"
+                disabled={holdBusy || exporting}
+                onClick={() => void onApplyHoldUntilComplete()}
+                className="h-10 rounded-md border border-amber-400/50 px-4 text-[12px] font-bold uppercase disabled:opacity-50"
+              >
+                {holdBusy ? "Working…" : "Hold until all stock is available"}
+              </button>
+            ) : null}
             {order.autopartExportStatus === "EXPORTED" ? (
               <button
                 type="button"
-                disabled={exporting || order.stockHoldState === "WAITING_STOCK"}
+                disabled={
+                  exporting ||
+                  blocksAutopartExportForStockHold(order.stockHoldState, order.stockReleasePolicy, {
+                    stockReleasedAt: order.stockReleasedAt,
+                    stockReleaseReason: order.stockReleaseReason,
+                  })
+                }
                 onClick={() => void onExportCsv(true)}
                 className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase disabled:opacity-50"
               >
@@ -618,7 +662,10 @@ function AdminOrderDetailPage() {
                 disabled={
                   exporting ||
                   !order.autopartAccountLinked ||
-                  order.stockHoldState === "WAITING_STOCK"
+                  blocksAutopartExportForStockHold(order.stockHoldState, order.stockReleasePolicy, {
+                    stockReleasedAt: order.stockReleasedAt,
+                    stockReleaseReason: order.stockReleaseReason,
+                  })
                 }
                 onClick={() => void onExportCsv(false)}
                 className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"

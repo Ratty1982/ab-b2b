@@ -467,6 +467,56 @@ describe("staff sales order stock display", () => {
     expect(html).toContain("The customer has been informed of this backorder.");
     expect(html).toContain("HOLD ORDER UNTIL ALL STOCK IS AVAILABLE");
   });
+
+  it("keeps an existing hold selected and explains that removal is a separate action", () => {
+    const html = renderToStaticMarkup(
+      createElement(SalesOrderReviewPanel, {
+        companyName: "Triple A Motor Factors Ltd",
+        paymentTerms: "30 days",
+        poNumber: "PO-HOLD",
+        subtotal: "12.00",
+        deliveryTotal: "5.95",
+        vatTotal: "3.59",
+        grandTotal: "21.54",
+        blocking: false,
+        changes: [],
+        totalsChanged: false,
+        previousGrandTotal: null,
+        acceptedPrices: true,
+        authorised: false,
+        placing: false,
+        placeDisabled: true,
+        placeLabel: "Confirm order changes",
+        fulfilmentChoice: "DELIVERY",
+        backorders: [
+          {
+            variantId: "var_1",
+            sku: "PMECAVK",
+            name: "Kit",
+            orderedQty: 6,
+            availableQty: 0,
+            backorderQty: 6,
+            extent: "FULL",
+            sellableQty: 0,
+            stockConfirmed: true,
+          },
+        ],
+        backorderAcknowledged: true,
+        holdUntilComplete: true,
+        holdLocked: true,
+        holdOnExistingOrder: true,
+        onAcceptPrices: () => undefined,
+        onAuthorised: () => undefined,
+        onBackorderAcknowledged: () => undefined,
+        onHoldUntilComplete: () => undefined,
+        onPlace: () => undefined,
+      }),
+    );
+    expect(html).toContain("HOLD ORDER UNTIL ALL STOCK IS AVAILABLE");
+    expect(html).toContain("already held");
+    expect(html).toContain("The customer has been informed of this backorder.");
+    expect(html).toContain('disabled=""');
+  });
 });
 
 function OrderHarness() {

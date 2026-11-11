@@ -126,10 +126,18 @@ function assessOrder(
   if (order.status === "DRAFT") {
     return block("DRAFT", "Draft orders cannot be exported.");
   }
-  if (blocksAutopartExportForStockHold(order.stockHoldState, order.stockReleasePolicy)) {
+  if (
+    blocksAutopartExportForStockHold(order.stockHoldState, order.stockReleasePolicy, {
+      stockReleasedAt: order.stockReleasedAt,
+      stockReleaseReason: order.stockReleaseReason,
+    })
+  ) {
+    const waiting = order.stockHoldState === "WAITING_STOCK";
     return block(
       "WAITING_STOCK",
-      "Order is held awaiting complete stock and cannot be exported until every line is covered.",
+      waiting
+        ? "Order is held awaiting complete stock and cannot be exported until every line is covered."
+        : "Order is under hold-until-complete and cannot be exported until a verified stock release marks it ready.",
     );
   }
   if (order.items.length === 0) {
@@ -443,10 +451,18 @@ export async function exportAutopartOrdersCsv(
       // Successful Autopart CSV handoff → customer-facing PROCESSING (CONFIRMED).
       // Do not overwrite later fulfilment states; do not touch reservations; no APC.
       // Export is NOT proof of picking or despatch.
+      // Compare-and-set: a hold activation that committed after this read must not export.
       const nextStatus =
         order.status === "SUBMITTED" ? ("CONFIRMED" as const) : undefined;
-      await tx.order.update({
-        where: { id: order.id },
+      const marked = await tx.order.updateMany({
+        where: {
+          id: order.id,
+          stockHoldState: order.stockHoldState,
+          stockReleasePolicy: order.stockReleasePolicy,
+          autopartExportStatus: order.autopartExportStatus,
+          autopartExportCount: order.autopartExportCount,
+          status: order.status,
+        },
         data: {
           autopartExportStatus: "EXPORTED",
           autopartExportedAt: now,
@@ -456,6 +472,13 @@ export async function exportAutopartOrdersCsv(
           ...(nextStatus ? { status: nextStatus } : {}),
         },
       });
+      if (marked.count !== 1) {
+        throw new AuthError(
+          "This order changed while it was being exported.",
+          "EXPORT_BLOCKED",
+          409,
+        );
+      }
       if (nextStatus === "CONFIRMED") {
         await recordFulfilmentEvent(tx, {
           orderId: order.id,

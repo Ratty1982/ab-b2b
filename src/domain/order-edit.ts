@@ -22,6 +22,8 @@ export function assessSalesOrderEditEligibility(input: {
   autopartExportStatus: string;
   autopartExportCount: number;
   autopartExportedAt: Date | null;
+  /** Set when a CSV batch already exists, even if the status columns disagree. */
+  autopartExportBatchId: string | null;
   externalRef: string | null;
   invoiceCount: number;
   fulfilmentKinds: string[];
@@ -39,7 +41,8 @@ export function assessSalesOrderEditEligibility(input: {
   if (
     input.autopartExportStatus !== "NOT_EXPORTED" ||
     input.autopartExportCount > 0 ||
-    input.autopartExportedAt
+    input.autopartExportedAt ||
+    input.autopartExportBatchId
   ) {
     return {
       allowed: false,

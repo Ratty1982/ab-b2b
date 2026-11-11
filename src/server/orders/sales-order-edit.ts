@@ -11,7 +11,9 @@ import { assessSalesOrderEditEligibility } from "@/domain/order-edit";
 import type { PlaceSalesOrderInput } from "@/domain/sales-order-entry";
 import { addMoney, moneyToString, moneyZero, parseMoney } from "@/domain/money";
 import { calculateTradeOrderTotals, tradeDeliveryTotalsDto } from "@/domain/trade-delivery";
-import { recordAuditEvent } from "@/server/audit/record";
+import { recordAuditEvent, recordAuditEventInTransaction } from "@/server/audit/record";
+import { recordFulfilmentEvent } from "@/server/orders/fulfilment";
+import { orderHasAutopartExportRecord } from "@/server/orders/stock-hold-export-filter";
 import type { OrderAmendmentEmailFeedback } from "@/domain/order-updated-email";
 import {
   loadOrderUpdatedEmailOutcome,
@@ -42,6 +44,8 @@ export async function amendSubmittedSalesOrder(args: {
   contact: ContactSnapshot;
   requestedLines: Array<{ variantId: string; qty: number; unitPriceOverride: string | null }>;
   hasBackorder: boolean;
+  /** Raw checkbox. Outstanding quantity is validated here. Unchecked does not clear an active hold. */
+  holdUntilComplete: boolean;
 }): Promise<SalesPlaceResult> {
   const orderId = args.draft.editingOrderId;
   if (!orderId) {
@@ -89,6 +93,7 @@ export async function amendSubmittedSalesOrder(args: {
       autopartExportStatus: order.autopartExportStatus,
       autopartExportCount: order.autopartExportCount,
       autopartExportedAt: order.autopartExportedAt,
+      autopartExportBatchId: order.autopartExportBatchId,
       externalRef: order.externalRef,
       invoiceCount: order.invoices.length,
       fulfilmentKinds: order.fulfilmentEvents.map((event) => event.kind),
@@ -97,6 +102,25 @@ export async function amendSubmittedSalesOrder(args: {
     if (!eligibility.allowed) {
       throw new AuthError(eligibility.reason ?? "This order can no longer be edited.", "ORDER_LOCKED", 409);
     }
+    if (await orderHasAutopartExportRecord(tx, order)) {
+      throw new AuthError(
+        "This order has an Autopart export record and can no longer be edited.",
+        "ORDER_LOCKED",
+        409,
+      );
+    }
+    if (args.holdUntilComplete && !args.hasBackorder) {
+      throw new AuthError(
+        "Hold until complete needs confirmed outstanding quantities on this order.",
+        "HOLD_REQUIRES_BACKORDER",
+        400,
+      );
+    }
+
+    const alreadyWaiting =
+      order.stockReleasePolicy === "HOLD_UNTIL_COMPLETE" && order.stockHoldState === "WAITING_STOCK";
+    const activatingHold = args.holdUntilComplete && args.hasBackorder && !alreadyWaiting;
+    const preservedActiveHold = alreadyWaiting;
 
     const draftLock = await tx.$queryRaw<Array<{ id: string; status: string }>>`
       SELECT id, status FROM "SalesOrderDraft"
@@ -189,6 +213,21 @@ export async function amendSubmittedSalesOrder(args: {
         editIdempotencyKey: args.input.idempotencyKey,
         backorderAcknowledgedAt: args.hasBackorder ? new Date() : null,
         backorderAcknowledgedByUserId: args.hasBackorder ? args.actorUserId : null,
+        ...(activatingHold
+          ? {
+              stockReleasePolicy: "HOLD_UNTIL_COMPLETE" as const,
+              stockHoldState: "WAITING_STOCK" as const,
+              stockHeldAt: new Date(),
+              stockHeldByUserId: args.actorUserId,
+              stockReleasedAt: null,
+              stockReleaseReason: null,
+              stockHoldCancelledAt: null,
+              stockHoldCancelReason: null,
+              stockHoldCancelledByUserId: null,
+              stockHoldLastCheckedAt: null,
+              stockHoldLastCheckResult: Prisma.JsonNull,
+            }
+          : {}),
       },
     });
 
@@ -216,11 +255,60 @@ export async function amendSubmittedSalesOrder(args: {
       );
     }
 
+    if (activatingHold) {
+      const outstanding = args.lines.reduce(
+        (sum, line) => sum + (line.issue === "VALID" ? line.backorderQtyAtOrder : 0),
+        0,
+      );
+      await recordFulfilmentEvent(tx, {
+        orderId: order.id,
+        kind: "NOTE",
+        summary: "HELD — AWAITING STOCK until every line can be fulfilled",
+        source: "MANUAL",
+        lineQuantitiesKnown: true,
+        metadata: {
+          stockHold: true,
+          stockHoldState: "WAITING_STOCK",
+          stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
+          outstandingBackorderUnits: outstanding,
+          appliedOnEdit: true,
+        },
+      });
+      await recordAuditEventInTransaction(tx, {
+        action: "order.stock_hold.applied_on_edit",
+        entityType: "Order",
+        entityId: order.id,
+        actorUserId: args.actorUserId,
+        companyId: args.company.id,
+        before: {
+          stockHoldState: order.stockHoldState,
+          stockReleasePolicy: order.stockReleasePolicy,
+        },
+        after: {
+          orderNumber: order.orderNumber,
+          stockHoldState: "WAITING_STOCK",
+          stockReleasePolicy: "HOLD_UNTIL_COMPLETE",
+          outstandingBackorderUnits: outstanding,
+        },
+      });
+    }
+
     const afterOrder = await tx.order.findUniqueOrThrow({
       where: { id: order.id },
       include: { items: { orderBy: { id: "asc" } } },
     });
-    return { kind: "updated" as const, before, after: commercialSnapshot(afterOrder), orderId: order.id };
+    return {
+      kind: "updated" as const,
+      before,
+      after: commercialSnapshot(afterOrder),
+      orderId: order.id,
+      hold: {
+        activated: activatingHold,
+        preserved: preservedActiveHold,
+        stockHoldState: afterOrder.stockHoldState,
+        stockReleasePolicy: afterOrder.stockReleasePolicy,
+      },
+    };
   });
 
   const confirmation = await loadConfirmation(result.orderId);
@@ -245,6 +333,10 @@ export async function amendSubmittedSalesOrder(args: {
       staffUserId: args.actorUserId,
       staffName: args.staffName,
       orderNumber: confirmation.orderNumber,
+      stockHoldState: result.hold.stockHoldState,
+      stockReleasePolicy: result.hold.stockReleasePolicy,
+      stockHoldActivated: result.hold.activated,
+      stockHoldPreserved: result.hold.preserved,
     },
   });
 
