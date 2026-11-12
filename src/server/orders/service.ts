@@ -103,6 +103,7 @@ export type CheckoutAddressSummary = {
   isDefaultDelivery: boolean;
   contactName: string | null;
   contactPhone: string | null;
+  companyName: string | null;
 };
 
 export type CheckoutContext = {
@@ -587,6 +588,7 @@ export async function resolveDeliverySnapshot(
       label: address.label,
       contactName: address.contactName,
       contactPhone: address.contactPhone,
+      companyName: address.companyName,
     });
   }
   const fallback = await prisma.address.findFirst({
@@ -605,6 +607,7 @@ export async function resolveDeliverySnapshot(
     label: fallback.label,
     contactName: fallback.contactName,
     contactPhone: fallback.contactPhone,
+    companyName: fallback.companyName,
   });
 }
 
@@ -1094,6 +1097,7 @@ export async function getCheckoutContext(userId: string): Promise<CheckoutContex
       isDefaultDelivery: a.isDefaultDelivery,
       contactName: a.contactName,
       contactPhone: a.contactPhone,
+      companyName: a.companyName,
     })),
     contact: buildContactSnapshot(user),
     basket,

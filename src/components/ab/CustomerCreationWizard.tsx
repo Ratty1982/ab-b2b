@@ -313,6 +313,8 @@ function DetailsStep({
   const [contactEmail, setContactEmail] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [jobTitle, setJobTitle] = useState("");
+  const [addressCompanyName, setAddressCompanyName] = useState("");
+  const [addressCompanyTouched, setAddressCompanyTouched] = useState(false);
   const [line1, setLine1] = useState("");
   const [line2, setLine2] = useState("");
   const [town, setTown] = useState("");
@@ -354,8 +356,13 @@ function DetailsStep({
     setNotes(data.company.staffNotes);
     setSalesRepId(data.company.salesperson?.salesRepId ?? "");
     setConfirmActivation(data.company.status === "ACTIVE");
+    setAddressCompanyTouched(false);
     setFilledFor(data.company.id);
   }, [data, filledFor]);
+
+  useEffect(() => {
+    if (!addressCompanyTouched) setAddressCompanyName(name);
+  }, [name, addressCompanyTouched]);
 
   async function lookForDuplicates() {
     const result = await searchCustomerCreationDuplicatesFn({
@@ -398,7 +405,15 @@ function DetailsStep({
         address:
           data && data.addresses.length > 0
             ? null
-            : { line1, line2, town, county, postcode, country: "GB" },
+            : {
+                line1,
+                line2,
+                town,
+                county,
+                postcode,
+                country: "GB",
+                companyName: addressCompanyName,
+              },
       },
     });
     setSaving(false);
@@ -672,6 +687,7 @@ function DetailsStep({
         <div className="rounded-md border border-border bg-surface/30 p-4" data-existing-address="">
           <p className="text-[13px] font-semibold">Existing address</p>
           <p className="mt-1 text-[13px] text-steel">
+            {existingAddress.companyName ? `${existingAddress.companyName} — ` : ""}
             {existingAddress.line1}, {existingAddress.town}, {existingAddress.postcode}
             {existingAddress.isDefaultDelivery ? " · default delivery" : ""}
           </p>
@@ -692,6 +708,17 @@ function DetailsStep({
         <fieldset className="grid gap-4 rounded-md border border-border p-4" data-new-address="">
           <legend className="px-1 text-[13px] font-semibold">Add address</legend>
           <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Company name" htmlFor="wizard-address-company">
+              <input
+                id="wizard-address-company"
+                value={addressCompanyName}
+                onChange={(event) => {
+                  setAddressCompanyTouched(true);
+                  setAddressCompanyName(event.target.value);
+                }}
+                className={inputClass}
+              />
+            </Field>
             <Field label="Address line 1" htmlFor="wizard-line1">
               <input
                 id="wizard-line1"

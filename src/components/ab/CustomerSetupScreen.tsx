@@ -61,6 +61,7 @@ type AddressDraft = {
   isDefaultDelivery: boolean;
   contactName: string;
   contactPhone: string;
+  companyName: string;
   persisted: boolean;
 };
 
@@ -187,6 +188,7 @@ export function CustomerSetupScreen({
         isDefaultDelivery: address.isDefaultDelivery,
         contactName: address.contactName ?? "",
         contactPhone: address.contactPhone ?? "",
+        companyName: address.companyName ?? "",
         persisted: true,
       })),
     );
@@ -375,6 +377,7 @@ export function CustomerSetupScreen({
           isDefaultDelivery: address.isDefaultDelivery,
           contactName: address.contactName || null,
           contactPhone: address.contactPhone || null,
+          companyName: address.companyName || null,
         })),
         enableOrdering,
         expectedUpdatedAt: data.company.updatedAt,
@@ -948,6 +951,7 @@ export function CustomerSetupScreen({
                         isDefaultDelivery: rows.every((row) => !row.isDefaultDelivery),
                         contactName: "",
                         contactPhone: "",
+                        companyName: name.trim(),
                         persisted: false,
                       },
                     ]);
@@ -963,6 +967,28 @@ export function CustomerSetupScreen({
                     key={address.key}
                     className="grid gap-3 rounded-md border border-border p-3 md:grid-cols-2"
                   >
+                    <div className="md:col-span-2">
+                      <Field label="Company name" htmlFor={`a-co-name-${address.key}`}>
+                        <input
+                          id={`a-co-name-${address.key}`}
+                          className={inputClass}
+                          value={address.companyName}
+                          placeholder={name.trim() || "Customer company name"}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setAddresses((rows) =>
+                              rows.map((row, i) =>
+                                i === index ? { ...row, companyName: value } : row,
+                              ),
+                            );
+                            markDirty();
+                          }}
+                        />
+                      </Field>
+                      <p className="mt-1 text-[12px] text-steel">
+                        Use the customer name, or a branch or warehouse name. Contact names stay separate. A saved name is kept when this is reopened.
+                      </p>
+                    </div>
                     <Field label="Line 1" htmlFor={`a-l1-${address.key}`}>
                       <input
                         id={`a-l1-${address.key}`}

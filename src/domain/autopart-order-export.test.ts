@@ -304,9 +304,79 @@ describe("autopart order CSV contract", () => {
     );
     const csv = serializeAutopartOrderCsv(rows);
     expect(csv.split("\n")[0]).toContain(csvEscapeAutopartField("External Reference"));
-    expect(csv).toContain('José ""Trade"" O\'Brien');
-    expect(csv).toContain("12 High Street, Annex");
+    expect(csv).toContain('Smith ""Trade"" & Co');
+    expect(rows[0]!["Shipping Name"]).toBe('Smith "Trade" & Co');
+    expect(rows[0]!["Shipping Address 1"]).toBe("12 High Street, Annex");
+    expect(rows[0]!["Shipping Address 1"]).not.toContain("José");
     expect(csv).toContain("Floor 1\nRear");
+  });
+
+  it("exports the address company name without repeating it on the street lines", () => {
+    const rows = buildAutopartCsvRowsForOrder(
+      sampleOrder({
+        deliveryAddress: {
+          companyName: "Example Leeds Warehouse",
+          line1: "Example Leeds Warehouse, 12 High Street",
+          line2: "Unit B",
+          town: "Leeds",
+          county: "West Yorkshire",
+          postcode: "LS1 1AA",
+          country: "GB",
+          contactName: "Alex Buyer",
+        },
+      }),
+    );
+    expect(rows[0]!["Shipping Name"]).toBe("Example Leeds Warehouse");
+    expect(rows[0]!["Shipping Address 1"]).toBe("12 High Street");
+    expect(rows[0]!["Shipping Address 2"]).toBe("Unit B");
+    expect(rows[0]!["Shipping Address 1"]).not.toContain("Example Leeds Warehouse");
+    expect(rows[0]!["Email"]).toBe("buyer@example.test");
+  });
+
+  it("uses the registered company name when the address has no saved company name", () => {
+    const rows = buildAutopartCsvRowsForOrder(sampleOrder());
+    expect(rows[0]!["Shipping Name"]).toBe("Example Motor Factors Ltd");
+    expect(rows[0]!["Shipping Address 1"]).toBe("12 High Street");
+    expect(rows[0]!["Shipping Address 2"]).toBe("Unit B");
+  });
+
+  it("promotes the street when line 1 is only the company name", () => {
+    const rows = buildAutopartCsvRowsForOrder(
+      sampleOrder({
+        deliveryAddress: {
+          companyName: "Example Motor Factors Ltd",
+          line1: "Example Motor Factors Ltd",
+          line2: "12 High Street",
+          town: "Leeds",
+          county: "West Yorkshire",
+          postcode: "LS1 1AA",
+          country: "GB",
+          contactName: "Alex Buyer",
+        },
+      }),
+    );
+    expect(rows[0]!["Shipping Name"]).toBe("Example Motor Factors Ltd");
+    expect(rows[0]!["Shipping Address 1"]).toBe("12 High Street");
+    expect(rows[0]!["Shipping Address 2"]).toBe("");
+  });
+
+  it("keeps the historical contact Shipping Name for already exported orders", () => {
+    const rows = buildAutopartCsvRowsForOrder(
+      sampleOrder({
+        shippingNamePolicy: "legacy-contact",
+        deliveryAddress: {
+          line1: "Example Motor Factors Ltd, 12 High Street",
+          line2: "Unit B",
+          town: "Leeds",
+          county: "West Yorkshire",
+          postcode: "LS1 1AA",
+          country: "GB",
+          contactName: "Alex Buyer",
+        },
+      }),
+    );
+    expect(rows[0]!["Shipping Name"]).toBe("Alex Buyer");
+    expect(rows[0]!["Shipping Address 1"]).toBe("Example Motor Factors Ltd, 12 High Street");
   });
 
   it("protects phone and formula-like SKU/refs", () => {

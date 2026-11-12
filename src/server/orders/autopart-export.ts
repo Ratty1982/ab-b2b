@@ -205,9 +205,26 @@ function assessOrder(
   };
 }
 
+/**
+ * Unexported orders with no address company name lock the registered company
+ * name onto the delivery snapshot at first export. Already exported orders
+ * are left untouched so a re-export keeps the historical Shipping Name.
+ */
+function companyNameForFirstExport(order: OrderForExport): Prisma.InputJsonValue | null {
+  if (order.autopartExportStatus === "EXPORTED") return null;
+  if (order.fulfilmentChoice === "COLLECTION") return null;
+  const delivery = parseDelivery(order.deliveryAddress);
+  if (!delivery || delivery.companyName?.trim()) return null;
+  const registered = order.company.name.trim();
+  if (!registered) return null;
+  return { ...delivery, companyName: registered };
+}
+
 function toExportInput(order: OrderForExport): AutopartExportOrderInput {
   const delivery = parseDelivery(order.deliveryAddress);
   const contact = parseContact(order.contactSnapshot);
+  const legacyShippingName =
+    order.autopartExportStatus === "EXPORTED" && !delivery?.companyName?.trim();
   return {
     orderNumber: order.orderNumber,
     orderDate: order.placedAt ?? order.createdAt,
@@ -215,6 +232,7 @@ function toExportInput(order: OrderForExport): AutopartExportOrderInput {
     deliveryAddress: delivery,
     contact,
     fulfilmentChoice: order.fulfilmentChoice,
+    shippingNamePolicy: legacyShippingName ? "legacy-contact" : "company",
     autopartCustomerCodeSnapshot: order.autopartCustomerCodeSnapshot!.trim(),
     subtotal: money2(order.subtotal),
     deliveryTotal: money2(order.deliveryTotal),
@@ -418,7 +436,15 @@ export async function exportAutopartOrdersCsv(
       freshOrders.push(fresh);
     }
 
-    const inputs = freshOrders.map(toExportInput);
+    const stampedCompanyNames = new Map<string, Prisma.InputJsonValue>();
+    const exportOrders = freshOrders.map((order) => {
+      const stamped = companyNameForFirstExport(order);
+      if (!stamped) return order;
+      stampedCompanyNames.set(order.id, stamped);
+      return { ...order, deliveryAddress: stamped as OrderForExport["deliveryAddress"] };
+    });
+
+    const inputs = exportOrders.map(toExportInput);
     const csv = buildAutopartOrdersCsv(inputs);
     const lineCount = inputs.reduce((n, order) => n + countAutopartCsvLinesForOrder(order), 0);
     const reference = await allocateBatchReference(tx);
@@ -447,13 +473,13 @@ export async function exportAutopartOrdersCsv(
       },
     });
 
-    for (const order of freshOrders) {
+    for (const order of exportOrders) {
       // Successful Autopart CSV handoff → customer-facing PROCESSING (CONFIRMED).
       // Do not overwrite later fulfilment states; do not touch reservations; no APC.
       // Export is NOT proof of picking or despatch.
       // Compare-and-set: a hold activation that committed after this read must not export.
-      const nextStatus =
-        order.status === "SUBMITTED" ? ("CONFIRMED" as const) : undefined;
+      const nextStatus = order.status === "SUBMITTED" ? ("CONFIRMED" as const) : null;
+      const stampedAddress = stampedCompanyNames.get(order.id) ?? null;
       const marked = await tx.order.updateMany({
         where: {
           id: order.id,
@@ -470,6 +496,7 @@ export async function exportAutopartOrdersCsv(
           autopartExportBatchId: batch.id,
           autopartExportCount: { increment: 1 },
           ...(nextStatus ? { status: nextStatus } : {}),
+          ...(stampedAddress ? { deliveryAddress: stampedAddress } : {}),
         },
       });
       if (marked.count !== 1) {

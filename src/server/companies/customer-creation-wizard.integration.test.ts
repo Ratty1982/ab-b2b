@@ -106,7 +106,13 @@ describe("customer creation wizard", () => {
         email: `ada.${stamp}@example.invalid`,
         phone: "0114000111",
       },
-      address: { line1: "1 Test Street", town: "Sheffield", postcode: "S1 1AA", country: "GB" },
+      address: {
+        line1: "1 Test Street",
+        town: "Sheffield",
+        postcode: "S1 1AA",
+        country: "GB",
+        companyName: `${name} Warehouse`,
+      },
     });
     companyId = created.companyId;
     expect(created.created).toBe(true);
@@ -117,7 +123,11 @@ describe("customer creation wizard", () => {
     expect(row.autopartCustomerCodeVerifiedAt).toBeNull();
     expect(row.notes).toContain("Customer type: Motor Factor");
     expect(await prisma.contact.count({ where: { companyId } })).toBe(1);
-    expect(await prisma.address.count({ where: { companyId, isDefaultDelivery: true } })).toBe(1);
+    const address = await prisma.address.findFirstOrThrow({
+      where: { companyId, isDefaultDelivery: true },
+    });
+    expect(address.companyName).toBe(`${name} Warehouse`);
+    expect(address.line1).toBe("1 Test Street");
     expect(await prisma.userInvitation.count({ where: { companyId } })).toBe(0);
     expect(await prisma.companyUser.count({ where: { companyId } })).toBe(0);
     expect(await prisma.customerSalesCutover.count({ where: { companyId } })).toBe(0);

@@ -60,6 +60,7 @@ export const deliveryAddressSnapshotSchema = z.object({
   label: optionalPlainText(120),
   contactName: optionalPlainText(160),
   contactPhone: optionalPlainText(40),
+  companyName: optionalPlainText(200),
 });
 
 export type DeliveryAddressSnapshot = z.infer<typeof deliveryAddressSnapshotSchema>;

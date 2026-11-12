@@ -66,6 +66,7 @@ function SalesCustomer() {
       postcode: string;
       isDefaultBilling: boolean;
       isDefaultDelivery: boolean;
+      companyName?: string | null;
     }>;
     onboarding?: ComponentProps<typeof CustomerOnboardingOverview>["onboarding"];
   }>(null);
@@ -362,7 +363,7 @@ function SalesCustomer() {
           <ul className="grid gap-2">
             {addresses.map((a) => (
               <li key={a.id} className="border border-border p-3">
-                <div className="font-semibold">{a.label ?? "Address"}</div>
+                <div className="font-semibold">{a.companyName || a.label || "Address"}</div>
                 {a.line1}, {a.town} {a.postcode}
               </li>
             ))}

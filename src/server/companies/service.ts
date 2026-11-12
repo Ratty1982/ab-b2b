@@ -586,6 +586,7 @@ export async function createCompany(actorUserId: string, raw: unknown) {
           county: emptyToNull(input.address.county),
           postcode: input.address.postcode,
           country: input.address.country,
+          companyName: emptyToNull(input.address.companyName),
           isDefault: true,
           isDefaultBilling: true,
           isDefaultDelivery: true,
@@ -1172,6 +1173,7 @@ export async function createAddress(actorUserId: string, raw: unknown) {
         isDefaultDelivery: input.isDefaultDelivery,
         contactName: emptyToNull(input.contactName),
         contactPhone: emptyToNull(input.contactPhone),
+        companyName: emptyToNull(input.companyName),
       },
     });
     await tx.activity.create({
@@ -1241,6 +1243,9 @@ export async function updateAddress(actorUserId: string, raw: unknown) {
           : {}),
         ...(input.contactPhone !== undefined
           ? { contactPhone: emptyToNull(input.contactPhone) }
+          : {}),
+        ...(input.companyName !== undefined
+          ? { companyName: emptyToNull(input.companyName) }
           : {}),
       },
     });

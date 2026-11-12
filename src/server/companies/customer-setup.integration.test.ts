@@ -471,4 +471,134 @@ describe("customer setup READY_FOR_SALES", { timeout: 60_000 }, () => {
 
     await cleanupCompany(companyId);
   });
+
+  it("saves billing and delivery company names and does not replace a saved name", async () => {
+    const local = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const registered = `Branch Co ${local}`;
+    const created = await saveCustomerCreationDetails(adminId, {
+      name: registered,
+      status: "PROSPECT",
+      taxStatus: "STANDARD",
+      primaryEmail: `branch-${local}@example.invalid`,
+      phone: "01130000002",
+      customerType: "Motor Factor",
+    });
+    const companyId = created.companyId;
+    const code = `BR${local.slice(-8).toUpperCase()}`;
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId, code });
+    await completeCustomerSalesCutoverWithoutHistory(adminId, {
+      companyId,
+      confirmAccount: code,
+      reason: "Brand-new Autopart customer. No historical sales exist for this verified account.",
+    });
+
+    const saved = await saveCustomerSetupAndEnableOrdering(adminId, {
+      companyId,
+      paymentTerms: "30 DAYS",
+      creditLimit: null,
+      creditLimitReviewed: true,
+      contacts: [
+        {
+          firstName: "Sam",
+          lastName: "Buyer",
+          email: `buyer-branch-${local}@example.invalid`,
+          phone: "01130000003",
+          isPrimary: true,
+          isPurchasing: true,
+        },
+      ],
+      addresses: [
+        {
+          type: "BILLING",
+          label: "Accounts",
+          line1: "1 Billing Street",
+          town: "Leeds",
+          postcode: "LS1 1BB",
+          country: "GB",
+          companyName: registered,
+          isDefaultBilling: true,
+          contactName: "Accounts Team",
+        },
+        {
+          type: "DELIVERY",
+          label: "Leeds warehouse",
+          line1: "2 Warehouse Road",
+          town: "Leeds",
+          postcode: "LS2 2WW",
+          country: "GB",
+          companyName: "Leeds Depot Ltd",
+          isDefaultDelivery: true,
+          contactName: "Goods In",
+        },
+        {
+          type: "DELIVERY",
+          label: "Manchester warehouse",
+          line1: "3 Depot Lane",
+          town: "Manchester",
+          postcode: "M1 1DD",
+          country: "GB",
+          isDefaultDelivery: false,
+          contactName: "Night Gate",
+        },
+      ],
+      enableOrdering: true,
+    });
+    expect(saved.salesReadiness.readyForSales).toBe(true);
+
+    const stored = await prisma.address.findMany({
+      where: { companyId },
+      orderBy: { line1: "asc" },
+    });
+    expect(stored.map((row) => [row.line1, row.companyName, row.contactName])).toEqual([
+      ["1 Billing Street", registered, "Accounts Team"],
+      ["2 Warehouse Road", "Leeds Depot Ltd", "Goods In"],
+      ["3 Depot Lane", null, "Night Gate"],
+    ]);
+
+    const reloaded = await getCustomerSetup(adminId, companyId);
+    const warehouse = reloaded.addresses.find((row) => row.line1 === "2 Warehouse Road");
+    expect(warehouse?.companyName).toBe("Leeds Depot Ltd");
+    expect(warehouse?.contactName).toBe("Goods In");
+
+    await saveCustomerSetupAndEnableOrdering(adminId, {
+      companyId,
+      paymentTerms: "30 DAYS",
+      creditLimit: null,
+      creditLimitReviewed: true,
+      contacts: [
+        {
+          firstName: "Sam",
+          lastName: "Buyer",
+          email: `buyer-branch-${local}@example.invalid`,
+          phone: "01130000003",
+          isPrimary: true,
+          isPurchasing: true,
+        },
+      ],
+      addresses: stored.map((row) => ({
+        id: row.id,
+        type: row.type,
+        label: row.label,
+        line1: row.line1,
+        town: row.town,
+        postcode: row.postcode,
+        country: row.country,
+        isDefaultBilling: row.isDefaultBilling,
+        isDefaultDelivery: row.isDefaultDelivery,
+        contactName: row.contactName,
+      })),
+      enableOrdering: true,
+    });
+    const preserved = await prisma.address.findMany({
+      where: { companyId },
+      orderBy: { line1: "asc" },
+    });
+    expect(preserved.map((row) => row.companyName)).toEqual([
+      registered,
+      "Leeds Depot Ltd",
+      null,
+    ]);
+
+    await cleanupCompany(companyId);
+  });
 });

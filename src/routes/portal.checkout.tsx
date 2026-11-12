@@ -39,6 +39,7 @@ function CheckoutPage() {
   const [addressId, setAddressId] = useState<string>("");
   const [useOneOff, setUseOneOff] = useState(false);
   const [oneOff, setOneOff] = useState({
+    companyName: "",
     contactName: "",
     line1: "",
     line2: "",
@@ -64,6 +65,11 @@ function CheckoutPage() {
     setAddressId(result.data.defaultAddressId ?? result.data.addresses[0]?.id ?? "");
     setContactName(result.data.contact.name);
     setContactPhone(result.data.contact.phone ?? "");
+    setOneOff((current) =>
+      current.companyName.trim()
+        ? current
+        : { ...current, companyName: result.data.companyName },
+    );
   }, []);
 
   useEffect(() => {
@@ -267,7 +273,7 @@ function CheckoutPage() {
                           className="mt-1"
                         />
                         <span>
-                          <span className="font-semibold">{a.label || a.line1}</span>
+                          <span className="font-semibold">{a.companyName || a.label || a.line1}</span>
                           <br />
                           {a.line1}
                           {a.line2 ? `, ${a.line2}` : ""}
@@ -288,7 +294,14 @@ function CheckoutPage() {
                 </div>
               ) : (
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <Field label="Recipient / company">
+                  <Field label="Company name">
+                    <input
+                      className={inputClass}
+                      value={oneOff.companyName}
+                      onChange={(e) => setOneOff({ ...oneOff, companyName: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Contact name">
                     <input
                       className={inputClass}
                       value={oneOff.contactName}
