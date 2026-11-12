@@ -62,6 +62,7 @@ import {
   isOrderableByStockPolicy,
 } from "@/domain/ordering";
 import type { VariantStock } from "@/domain/stock";
+import { assessZeroQuotationSend, zeroValueAuditLines, zeroValueReasonForPrice } from "@/domain/zero-value-reason";
 
 function money2(value: unknown): string {
   return moneyToString(parseMoney(String(value)) ?? moneyZero(), 2);
@@ -210,13 +211,21 @@ type BuiltLine = {
   quantityBreakId: string | null;
   promotionId: string | null;
   promotionBaselineUnitPrice: string | null;
+  zeroValueReasonCode: string | null;
+  zeroValueReasonDetail: string | null;
   sortOrder: number;
 };
 
 async function buildQuoteLines(
   companyId: string,
   companyTaxStatus: string,
-  lines: Array<{ variantId: string; qty: number; quotedUnitPrice?: string | null }>,
+  lines: Array<{
+    variantId: string;
+    qty: number;
+    quotedUnitPrice?: string | null;
+    zeroValueReasonCode?: string | null;
+    zeroValueReasonDetail?: string | null;
+  }>,
   opts: { allowOverride: boolean; actorUserId: string },
 ): Promise<BuiltLine[]> {
   if (!lines.length) return [];
@@ -277,6 +286,14 @@ async function buildQuoteLines(
       priceOverride = moneyToString(override, 4) !== moneyToString(normalCommercial, 4);
     }
     const quotedCustomer = toCustomerSellUnitPrice(quotedCommercial);
+    const zeroValue = zeroValueReasonForPrice({
+      customerUnitPrice: moneyToString(quotedCustomer, 2),
+      code: input.zeroValueReasonCode,
+      detail: input.zeroValueReasonDetail,
+    });
+    if (!zeroValue.ok) {
+      throw new AuthError(`${variant.sku}: ${zeroValue.message}`, "ZERO_VALUE_REASON_REQUIRED", 400);
+    }
     const lineNet = customerLineNetExVat(quotedCommercial, input.qty);
     const vatInfo = vatRateForCodes({
       vatCode: variant.vatCode,
@@ -310,6 +327,8 @@ async function buildQuoteLines(
         priceOverride || !resolved.promotionApplied
           ? null
           : resolved.promotionBaselineUnitExVat,
+      zeroValueReasonCode: zeroValue.code,
+      zeroValueReasonDetail: zeroValue.detail,
       sortOrder: sortOrder++,
     });
   }
@@ -451,6 +470,8 @@ function serializeQuote(
       vatRate: { toString(): string } | string;
       caseQty: number | null;
       priceSource: string | null;
+      zeroValueReasonCode?: string | null;
+      zeroValueReasonDetail?: string | null;
     }>;
     orders?: Array<{ id: string; orderNumber: string }>;
   },
@@ -582,6 +603,8 @@ function serializeQuote(
       vatRate: money2(it.vatRate),
       caseQty: it.caseQty ?? null,
       priceSource: opts?.customerView ? null : (it.priceSource ?? null),
+      zeroValueReasonCode: opts?.customerView ? null : it.zeroValueReasonCode,
+      zeroValueReasonDetail: opts?.customerView ? null : it.zeroValueReasonDetail,
     })),
   };
 }
@@ -750,6 +773,8 @@ export async function updateQuoteDraft(actorUserId: string, raw: unknown) {
         variantId: l.variantId,
         qty: l.qty,
         quotedUnitPrice: l.quotedUnitPrice ?? null,
+        zeroValueReasonCode: l.zeroValueReasonCode ?? null,
+        zeroValueReasonDetail: l.zeroValueReasonDetail ?? null,
       })),
       {
         allowOverride,
@@ -800,6 +825,8 @@ export async function updateQuoteDraft(actorUserId: string, raw: unknown) {
           quantityBreakId: it.quantityBreakId,
           promotionId: it.promotionId,
           promotionBaselineUnitPrice: it.promotionBaselineUnitPrice ? money4(it.promotionBaselineUnitPrice) : null,
+          zeroValueReasonCode: it.zeroValueReasonCode,
+          zeroValueReasonDetail: it.zeroValueReasonDetail,
           sortOrder: idx,
         }) satisfies BuiltLine,
     );
@@ -844,6 +871,8 @@ export async function updateQuoteDraft(actorUserId: string, raw: unknown) {
             quantityBreakId: l.quantityBreakId,
             promotionId: l.promotionId,
             promotionBaselineUnitPrice: l.promotionBaselineUnitPrice,
+            zeroValueReasonCode: l.zeroValueReasonCode,
+            zeroValueReasonDetail: l.zeroValueReasonDetail,
             sortOrder: l.sortOrder,
           })),
         });
@@ -998,7 +1027,7 @@ export async function listQuotesForStaff(actorUserId: string, raw?: unknown) {
 }
 
 export async function sendQuote(actorUserId: string, raw: unknown) {
-  await requireQuoteStaff(actorUserId, "quotes.send");
+  const profile = await requireQuoteStaff(actorUserId, "quotes.send");
   const input = quoteSendSchema.parse(raw);
   const quote = await prisma.quote.findUnique({
     where: { id: input.id },
@@ -1009,21 +1038,22 @@ export async function sendQuote(actorUserId: string, raw: unknown) {
   if (quote.status !== "DRAFT" && quote.status !== "SENT" && quote.status !== "VIEWED") {
     throw new AuthError("Only draft, sent, or viewed quotes can be (re)sent", "CONFLICT", 409);
   }
-  if (!quote.items.length) {
-    throw new AuthError(
-      "Add at least one valid product before sending this quotation.",
-      "VALIDATION",
-      400,
-    );
-  }
   const goods = parseMoney(String(quote.subtotal)) ?? moneyZero();
   const grand = parseMoney(String(quote.grandTotal)) ?? moneyZero();
-  if (goods.minor <= 0n || grand.minor <= 0n) {
-    throw new AuthError(
-      "Add at least one valid product before sending this quotation.",
-      "VALIDATION",
-      400,
-    );
+  const sendCheck = assessZeroQuotationSend({
+    items: quote.items.map((item) => ({
+      sku: item.sku,
+      customerUnitPrice: String(item.customerUnitPrice ?? item.unitPrice),
+      priceOverride: item.priceOverride,
+      zeroValueReasonCode: item.zeroValueReasonCode,
+      zeroValueReasonDetail: item.zeroValueReasonDetail,
+    })),
+    goodsArePositive: goods.minor > 0n,
+    grandIsPositive: grand.minor > 0n,
+    canOverridePrice: hasPermission(profile, "quotes.override_price"),
+  });
+  if (!sendCheck.ok) {
+    throw new AuthError(sendCheck.message, sendCheck.code, sendCheck.code === "FORBIDDEN" ? 403 : 400);
   }
   if (!quote.expiresAt) {
     throw new AuthError("Set a validity date before sending", "VALIDATION", 400);
@@ -1062,7 +1092,7 @@ export async function sendQuote(actorUserId: string, raw: unknown) {
     entityId: quote.id,
     actorUserId,
     companyId: quote.companyId,
-    after: { toEmail, status: updated.status },
+    after: { toEmail, status: updated.status, zeroValueLines: sendCheck.zeroLines },
   });
 
   let emailSent = false;
@@ -1304,6 +1334,20 @@ async function convertQuoteToOrder(input: {
   }
   if (!quote.items.length) {
     throw new AuthError("Quote has no lines", "VALIDATION", 400);
+  }
+  for (const item of quote.items) {
+    const reason = zeroValueReasonForPrice({
+      customerUnitPrice: String(item.customerUnitPrice),
+      code: item.zeroValueReasonCode,
+      detail: item.zeroValueReasonDetail,
+    });
+    if (!reason.ok) {
+      throw new AuthError(
+        `${item.sku}: ${reason.message} Save the reason on the quotation before converting it.`,
+        "ZERO_VALUE_REASON_REQUIRED",
+        400,
+      );
+    }
   }
 
   // Stock/backorder uses CURRENT live availability. Commercial prices stay on the quote snapshot.
@@ -1605,6 +1649,8 @@ async function convertQuoteToOrder(input: {
               quantityBreakId: item.quantityBreakId,
               promotionId: item.promotionId,
               promotionBaselineUnitPrice: item.promotionBaselineUnitPrice,
+              zeroValueReasonCode: item.zeroValueReasonCode,
+              zeroValueReasonDetail: item.zeroValueReasonDetail,
               availableQtyAtOrder: alloc.availableQtyAtOrder,
               backorderQtyAtOrder: alloc.backorderQtyAtOrder,
             };
@@ -1730,6 +1776,15 @@ async function convertQuoteToOrder(input: {
       sourceQuoteNumber: quote.quoteNumber,
       autopartSideEffects: false,
       abReservation: true,
+      zeroValueLines: zeroValueAuditLines(
+        created.order.items.map((item) => ({
+          sku: item.sku,
+          qty: item.qty,
+          customerUnitPrice: item.customerUnitPrice,
+          zeroValueReasonCode: item.zeroValueReasonCode,
+          zeroValueReasonDetail: item.zeroValueReasonDetail,
+        })),
+      ),
     },
   });
 
@@ -1871,6 +1926,8 @@ export async function duplicateQuote(actorUserId: string, raw: unknown) {
           qty: i.qty,
           // Re-resolve pricing — do not carry old negotiated prices automatically
           quotedUnitPrice: null,
+          zeroValueReasonCode: i.zeroValueReasonCode,
+          zeroValueReasonDetail: i.zeroValueReasonDetail,
         })),
     });
   }

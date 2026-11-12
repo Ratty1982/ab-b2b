@@ -94,12 +94,13 @@ afterAll(async () => {
 
 describe("company CRUD + sales scoping", () => {
   it("creates, lists, updates a company", async () => {
+    const stamp = Date.now();
     const created = await createCompany(adminId, {
-      name: `Phase2 Co ${Date.now()}`,
+      name: `Phase2 Co ${stamp}`,
       tradingName: "P2 Trading",
       status: "ACTIVE",
       salesRepId,
-      primaryEmail: "ops@phase2.example",
+      primaryEmail: `ops.${stamp}@phase2.example`,
     });
     expect(created.id).toBeTruthy();
 

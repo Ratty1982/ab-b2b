@@ -153,23 +153,29 @@ describe("customer creation wizard", () => {
   });
 
   it("blocks create-time duplicates for equivalent UK phone formats without a preliminary search", async () => {
+    const local = String(stamp).slice(-7).padStart(7, "0");
+    const subscriber = `114${local}`;
+    const spaced = `0114 ${local.slice(0, 3)} ${local.slice(3)}`;
+    const national = `+44 ${subscriber.slice(0, 3)} ${subscriber.slice(3, 6)} ${subscriber.slice(6)}`;
+    const international = `0044 (0)${subscriber.slice(0, 3)} ${subscriber.slice(3, 6)} ${subscriber.slice(6)}`;
+    const compact = `+44${subscriber}`;
     const phoneSeed = await saveCustomerCreationDetails(adminId, {
       name: `Phone seed ${stamp}`,
       status: "PROSPECT",
-      phone: "0114 987 6543",
+      phone: spaced,
     });
     await expect(
       saveCustomerCreationDetails(adminId, {
         name: `Phone clash national ${stamp}`,
         status: "PROSPECT",
-        phone: "+44 114 987 6543",
+        phone: national,
       }),
     ).rejects.toMatchObject({ code: "DUPLICATE_CUSTOMER" });
     await expect(
       saveCustomerCreationDetails(adminId, {
         name: `Phone clash intl ${stamp}`,
         status: "PROSPECT",
-        phone: "0044 (0)114 987 6543",
+        phone: international,
       }),
     ).rejects.toMatchObject({ code: "DUPLICATE_CUSTOMER" });
 
@@ -178,18 +184,18 @@ describe("customer creation wizard", () => {
       createCompany(adminId, {
         name: `Quick create phone clash ${stamp}`,
         status: "PROSPECT",
-        phone: "+441149876543",
+        phone: compact,
       }),
     ).rejects.toMatchObject({ code: "DUPLICATE_CUSTOMER" });
 
     const phoneMatches = await searchCustomerCreationDuplicates(adminId, {
       name: "Unrelated",
-      phone: "+44 114 987 6543",
+      phone: national,
     });
     expect(
       phoneMatches.some((match) => match.id === phoneSeed.companyId && match.reason === "phone"),
     ).toBe(true);
-    expect(await prisma.company.count({ where: { phone: "+44 114 987 6543" } })).toBe(0);
+    expect(await prisma.company.count({ where: { phone: national } })).toBe(0);
   });
 
   it("preserves staff notes and keeps a single Customer type line on resume saves", async () => {

@@ -22,6 +22,7 @@ import {
 import { grants, hasPermission } from "@/server/rbac/access";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 import { assessSalesOrderEditEligibility } from "@/domain/order-edit";
+import { zeroValueReasonForPrice } from "@/domain/zero-value-reason";
 import { recordAuditEvent } from "@/server/audit/record";
 import { getBasket } from "@/server/basket/service";
 import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
@@ -356,6 +357,8 @@ export type AdminOrderDetail = PortalOrderDetail & {
     PortalOrderDetail["items"][number] & {
       unitPrice: string;
       priceSource: string | null;
+      zeroValueReasonCode: string | null;
+      zeroValueReasonDetail: string | null;
       vatRate: string;
       vatCode: string | null;
     }
@@ -410,6 +413,8 @@ export type ResolvedLine = {
   stockConfirmed: boolean;
   priceOverridden: boolean;
   resolvedCustomerUnit2dp: string;
+  zeroValueReasonCode?: string | null;
+  zeroValueReasonDetail?: string | null;
 };
 
 function mapBasketIssueToCheckout(issue: BasketLineIssue): CheckoutLineIssue {
@@ -1287,6 +1292,19 @@ export type SubmittedOrderCommit = {
  * A reservation failure throws and rolls the whole transaction back.
  */
 export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
+  for (const line of input.lines) {
+    if (line.issue !== "VALID") continue;
+    const reason = zeroValueReasonForPrice({
+      customerUnitPrice: line.customerUnit2dp,
+      code: line.zeroValueReasonCode,
+      detail: line.zeroValueReasonDetail,
+    });
+    if (!reason.ok) {
+      throw new AuthError(`${line.sku}: ${reason.message}`, "ZERO_VALUE_REASON_REQUIRED", 400);
+    }
+    line.zeroValueReasonCode = reason.code;
+    line.zeroValueReasonDetail = reason.detail;
+  }
   const fulfilmentChoice = input.fulfilmentChoice ?? "DELIVERY";
   if (fulfilmentChoice === "DELIVERY" && !input.deliveryAddress) {
     throw new AuthError("A delivery address is required", "ADDRESS_REQUIRED", 400);
@@ -1406,6 +1424,8 @@ export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
             promotionBaselineUnitPrice: line.promotionBaselineUnit4dp,
             availableQtyAtOrder: line.availableQtyAtOrder,
             backorderQtyAtOrder: line.backorderQtyAtOrder,
+            zeroValueReasonCode: line.zeroValueReasonCode ?? null,
+            zeroValueReasonDetail: line.zeroValueReasonDetail ?? null,
           })),
         },
       },
@@ -2158,6 +2178,8 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
         orderingMode: item.orderingMode,
         caseQty: item.caseQty,
         priceSource: item.priceSource,
+        zeroValueReasonCode: item.zeroValueReasonCode,
+        zeroValueReasonDetail: item.zeroValueReasonDetail,
         vatRate: moneyToString(parseMoney(String(item.vatRate)) ?? moneyZero(), 2),
         vatCode: item.vatCode,
         availableQtyAtOrder: item.availableQtyAtOrder,

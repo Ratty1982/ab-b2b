@@ -17,6 +17,7 @@ import {
 } from "@/domain/checkout";
 import { assessSalesOrderEditEligibility } from "@/domain/order-edit";
 import { moneyToString, parseMoney } from "@/domain/money";
+import { zeroValueAuditLines, zeroValueReasonForPrice } from "@/domain/zero-value-reason";
 import {
   openSalesOrderDraftSchema,
   placeSalesOrderSchema,
@@ -97,6 +98,8 @@ export type SalesOrderDraftDto = {
     sku: string;
     name: string;
     unitPriceOverride: string | null;
+    zeroValueReasonCode: string | null;
+    zeroValueReasonDetail: string | null;
   }>;
 };
 
@@ -296,6 +299,8 @@ function toDraftDto(row: DraftRow): SalesOrderDraftDto {
       sku: line.variant.sku,
       name: line.variant.product.name,
       unitPriceOverride: money2(line.unitPriceOverride?.toString() ?? null),
+      zeroValueReasonCode: line.zeroValueReasonCode,
+      zeroValueReasonDetail: line.zeroValueReasonDetail,
     })),
   };
 }
@@ -906,6 +911,8 @@ export async function startSalesOrderEdit(actorUserId: string, raw: unknown) {
                   variantId: item.variantId,
                   qty: item.qty,
                   unitPriceOverride: item.priceSource === "STAFF_OVERRIDE" ? item.customerUnitPrice : null,
+                  zeroValueReasonCode: item.zeroValueReasonCode,
+                  zeroValueReasonDetail: item.zeroValueReasonDetail,
                   sortOrder,
                 }]
               : [],
@@ -978,9 +985,22 @@ export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
   await prisma.$transaction(async (tx) => {
     const locked = await lockOpenDraft(tx, actorUserId, draft.id);
     if (input.lines) {
-      const unique = new Map<string, { qty: number | null; unitPriceOverride: string | null }>();
+      const unique = new Map<
+        string,
+        {
+          qty: number | null;
+          unitPriceOverride: string | null;
+          zeroValueReasonCode: string | null;
+          zeroValueReasonDetail: string | null;
+        }
+      >();
       for (const line of input.lines) {
-        unique.set(line.variantId, { qty: line.qty, unitPriceOverride: line.unitPriceOverride });
+        unique.set(line.variantId, {
+          qty: line.qty,
+          unitPriceOverride: line.unitPriceOverride,
+          zeroValueReasonCode: line.zeroValueReasonCode,
+          zeroValueReasonDetail: line.zeroValueReasonDetail,
+        });
       }
       await tx.salesOrderDraftLine.deleteMany({ where: { draftId: locked.id } });
       if (unique.size > 0) {
@@ -990,6 +1010,8 @@ export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
             variantId,
             qty: line.qty,
             unitPriceOverride: line.unitPriceOverride,
+            zeroValueReasonCode: line.zeroValueReasonCode,
+            zeroValueReasonDetail: line.zeroValueReasonDetail,
             sortOrder,
           })),
         });
@@ -1163,7 +1185,7 @@ export const salesOrderCrmDependencies = {
         subject: `Order ${input.orderNumber} placed for the customer`,
         body: [
           `Source: ${SOURCE_LABEL[input.source]}.`,
-          "Staff confirmed they are authorised to submit this order on the customer's behalf.",
+          "Placed by the signed-in salesperson.",
           input.internalNote ? `Internal note: ${input.internalNote}` : null,
         ]
           .filter(Boolean)
@@ -1287,7 +1309,7 @@ async function placeFromQuote(
     {
       id: quote.id,
       idempotencyKey: input.idempotencyKey,
-      note: `Sales order entry (${SOURCE_LABEL[input.source]}). Staff confirmed customer authorisation.`,
+      note: `Sales order entry (${SOURCE_LABEL[input.source]}).`,
     },
     {
       entrySource: input.source,
@@ -1298,6 +1320,10 @@ async function placeFromQuote(
     },
   );
 
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: result.orderId },
+    include: { items: true, company: { select: { name: true } } },
+  });
   if (!result.alreadyConverted) {
     await recordAuditEvent({
       action: "order.placed_for_customer",
@@ -1309,9 +1335,17 @@ async function placeFromQuote(
         orderNumber: result.orderNumber,
         entrySource: input.source,
         placedByStaffUserId: actorUserId,
-        customerAuthorised: true,
         sourceQuoteNumber: quote.quoteNumber,
         salesOrderDraftId: draft.id,
+        zeroValueLines: zeroValueAuditLines(
+          order.items.map((item) => ({
+            sku: item.sku,
+            qty: item.qty,
+            customerUnitPrice: item.customerUnitPrice,
+            zeroValueReasonCode: item.zeroValueReasonCode,
+            zeroValueReasonDetail: item.zeroValueReasonDetail,
+          })),
+        ),
       },
     });
   }
@@ -1325,10 +1359,6 @@ async function placeFromQuote(
     internalNote,
   });
 
-  const order = await prisma.order.findUniqueOrThrow({
-    where: { id: result.orderId },
-    include: { items: true, company: { select: { name: true } } },
-  });
   const usesThisKey =
     order.idempotencyKey === input.idempotencyKey ||
     order.idempotencyKey === `quote-accept:${input.idempotencyKey}`;
@@ -1515,7 +1545,7 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
   }
 
   const ownActiveReservedByVariant = await loadOwnActiveReservedByVariant(draft.editingOrderId);
-  const lines = await resolveOrderLinesFromItems(
+  const resolvedLines = await resolveOrderLinesFromItems(
     company.id,
     requestedLines,
     expected.lines.map((line) => ({ variantId: line.variantId, customerUnitPrice: line.customerUnitPrice })),
@@ -1525,6 +1555,19 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       ...(ownActiveReservedByVariant ? { ownActiveReservedByVariant } : {}),
     },
   );
+  const lines = resolvedLines.map((line) => {
+    if (line.issue !== "VALID") return line;
+    const saved = draft.lines.find((item) => item.variantId === line.variantId);
+    const reason = zeroValueReasonForPrice({
+      customerUnitPrice: line.customerUnit2dp,
+      code: saved?.zeroValueReasonCode,
+      detail: saved?.zeroValueReasonDetail,
+    });
+    if (!reason.ok) {
+      throw new AuthError(`${line.sku}: ${reason.message}`, "ZERO_VALUE_REASON_REQUIRED", 400);
+    }
+    return { ...line, zeroValueReasonCode: reason.code, zeroValueReasonDetail: reason.detail };
+  });
   const review = buildCheckoutReview({
     company,
     lines,
@@ -1669,7 +1712,6 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       lineCount: confirmation.lineCount,
       entrySource: input.source,
       placedByStaffUserId: actorUserId,
-      customerAuthorised: true,
       contactEmail: contact.email,
       salesOrderDraftId: draft.id,
       autopartSideEffects: false,
@@ -1677,6 +1719,15 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       externalRef: null,
       holdUntilComplete,
       stockHoldState: holdUntilComplete ? "WAITING_STOCK" : "NONE",
+      zeroValueLines: zeroValueAuditLines(
+        lines.map((line) => ({
+          sku: line.sku,
+          qty: line.quantity,
+          customerUnitPrice: line.customerUnit2dp,
+          zeroValueReasonCode: line.zeroValueReasonCode,
+          zeroValueReasonDetail: line.zeroValueReasonDetail,
+        })),
+      ),
       priceOverrides: lines
         .filter((line) => line.priceOverridden)
         .map((line) => ({

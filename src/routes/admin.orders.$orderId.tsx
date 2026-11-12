@@ -758,6 +758,8 @@ function AdminOrderDetailPage() {
                 const adminItem = item as typeof item & {
                   unitPrice?: string;
                   priceSource?: string | null;
+                  zeroValueReasonCode?: string | null;
+                  zeroValueReasonDetail?: string | null;
                   availableQtyAtOrder?: number | null;
                   backorderQtyAtOrder?: number;
                   despatchedQty?: number;
@@ -779,6 +781,13 @@ function AdminOrderDetailPage() {
                   <td className="num px-3 py-2">{item.sku}</td>
                   <td className="px-3 py-2">
                     {item.name}
+                    {Number(item.customerUnitPrice) === 0 ? (
+                      <span className="mt-1 block text-[11px] text-steel">
+                        {adminItem.zeroValueReasonCode
+                          ? `£0.00 reason: ${adminItem.zeroValueReasonDetail ? `${adminItem.zeroValueReasonCode} — ${adminItem.zeroValueReasonDetail}` : adminItem.zeroValueReasonCode}`
+                          : "£0.00 reason was not recorded on this line."}
+                      </span>
+                    ) : null}
                     {item.orderingMode ? (
                       <span className="ml-2 text-[11px] uppercase text-steel">{item.orderingMode}</span>
                     ) : null}

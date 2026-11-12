@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { inputClass } from "@/components/ab/Drawer";
 import type { OrderFulfilmentChoice, SalesOrderBackorderRow, SalesOrderDraftLineInput } from "@/domain/sales-order-entry";
 import { parseStaffOrderUnitPrice } from "@/domain/sales-order-entry";
+import { ZERO_VALUE_REASONS, isZeroSellingPrice } from "@/domain/zero-value-reason";
 import { staffOrderAvailableLabel } from "@/domain/staff-order-stock";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -286,6 +287,7 @@ function LinePrice({
   onPriceDraftChange,
   onPriceOverride,
   onClearPriceDraft,
+  onZeroValueReason,
 }: {
   line: SalesOrderDraftLineInput;
   priced: SalesOrderLinePricing | undefined;
@@ -293,6 +295,7 @@ function LinePrice({
   onPriceDraftChange: (variantId: string, raw: string) => void;
   onPriceOverride: (variantId: string, override: string | null) => void;
   onClearPriceDraft: (variantId: string) => void;
+  onZeroValueReason: ((variantId: string, code: string, detail: string) => void) | undefined;
 }) {
   return (
     <div>
@@ -336,6 +339,44 @@ function LinePrice({
         </div>
       ) : priced?.priceSource ? (
         <p className="text-[12px] text-steel">{priced.priceSource}</p>
+      ) : null}
+      {isZeroSellingPrice(
+        parseStaffOrderUnitPrice(draft ?? "") ??
+          line.unitPriceOverride ??
+          priced?.customerUnitPrice ??
+          priced?.resolvedUnitPrice,
+      ) ? (
+        <div className="mt-2 space-y-2">
+          <label className="block text-[13px] text-steel">
+            Reason for £0.00
+            <select
+              className={cn(salesOrderControlClass, "mt-1 w-full")}
+              aria-label={`Zero value reason for ${line.sku}`}
+              value={line.zeroValueReasonCode ?? ""}
+              onChange={(event) =>
+                onZeroValueReason?.(line.variantId, event.target.value, line.zeroValueReasonDetail ?? "")
+              }
+            >
+              <option value="">Choose a reason…</option>
+              {ZERO_VALUE_REASONS.map((reason) => (
+                <option key={reason.code} value={reason.code}>
+                  {reason.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-[13px] text-steel">
+            {line.zeroValueReasonCode === "OTHER" ? "Specific details" : "Additional explanation"}
+            <textarea
+              className={cn(salesOrderControlClass, "mt-1 w-full")}
+              aria-label={`Zero value details for ${line.sku}`}
+              value={line.zeroValueReasonDetail ?? ""}
+              onChange={(event) =>
+                onZeroValueReason?.(line.variantId, line.zeroValueReasonCode ?? "", event.target.value)
+              }
+            />
+          </label>
+        </div>
       ) : null}
     </div>
   );
@@ -388,6 +429,7 @@ export function SalesOrderLines({
   onPriceDraftChange,
   onPriceOverride,
   onClearPriceDraft,
+  onZeroValueReason,
   onRemove,
 }: {
   lines: SalesOrderDraftLineInput[];
@@ -398,6 +440,7 @@ export function SalesOrderLines({
   onPriceDraftChange: (variantId: string, raw: string) => void;
   onPriceOverride: (variantId: string, override: string | null) => void;
   onClearPriceDraft: (variantId: string) => void;
+  onZeroValueReason?: (variantId: string, code: string, detail: string) => void;
   onRemove: (variantId: string) => void;
 }) {
   return (
@@ -427,6 +470,7 @@ export function SalesOrderLines({
                   draft={priceDrafts[line.variantId]}
                   onPriceDraftChange={onPriceDraftChange}
                   onPriceOverride={onPriceOverride}
+                  onZeroValueReason={onZeroValueReason}
                   onClearPriceDraft={onClearPriceDraft}
                 />
                 <LineStock priced={priced} qty={line.qty} />
@@ -483,6 +527,7 @@ export function SalesOrderLines({
                       draft={priceDrafts[line.variantId]}
                       onPriceDraftChange={onPriceDraftChange}
                       onPriceOverride={onPriceOverride}
+                  onZeroValueReason={onZeroValueReason}
                       onClearPriceDraft={onClearPriceDraft}
                     />
                   </td>
@@ -630,7 +675,6 @@ export function SalesOrderReviewPanel({
   totalsChanged,
   previousGrandTotal,
   acceptedPrices,
-  authorised,
   placing,
   placeDisabled,
   placeLabel,
@@ -642,7 +686,6 @@ export function SalesOrderReviewPanel({
   holdLocked = false,
   holdOnExistingOrder = false,
   onAcceptPrices,
-  onAuthorised,
   onBackorderAcknowledged,
   onHoldUntilComplete,
   onPlace,
@@ -659,7 +702,6 @@ export function SalesOrderReviewPanel({
   totalsChanged: boolean;
   previousGrandTotal: string | null;
   acceptedPrices: boolean;
-  authorised: boolean;
   placing: boolean;
   placeDisabled: boolean;
   placeLabel: string;
@@ -673,7 +715,6 @@ export function SalesOrderReviewPanel({
   /** This review saves an existing order rather than creating one. */
   holdOnExistingOrder?: boolean;
   onAcceptPrices: (checked: boolean) => void;
-  onAuthorised: (checked: boolean) => void;
   onBackorderAcknowledged: (checked: boolean) => void;
   onHoldUntilComplete: (checked: boolean) => void;
   onPlace: () => void;
@@ -763,15 +804,6 @@ export function SalesOrderReviewPanel({
           </label>
         </div>
       ) : null}
-      <label className="flex min-h-11 items-center gap-3">
-        <input
-          type="checkbox"
-          checked={authorised}
-          onChange={(event) => onAuthorised(event.target.checked)}
-          className="size-5"
-        />
-        <span>I am authorised to submit this order on the customer’s behalf.</span>
-      </label>
       <button
         type="button"
         disabled={placeDisabled}

@@ -95,7 +95,13 @@ function orderFingerprint(input: {
   poNumber: string;
   instructions: string;
   quoteId: string;
-  lines: Array<{ variantId: string; qty: number | null; unitPriceOverride?: string | null }>;
+  lines: Array<{
+    variantId: string;
+    qty: number | null;
+    unitPriceOverride?: string | null;
+    zeroValueReasonCode?: string | null;
+    zeroValueReasonDetail?: string | null;
+  }>;
 }) {
   return JSON.stringify({
     companyId: input.companyId,
@@ -111,6 +117,8 @@ function orderFingerprint(input: {
       variantId: line.variantId,
       qty: line.qty,
       unitPriceOverride: line.unitPriceOverride ?? null,
+      zeroValueReasonCode: line.zeroValueReasonCode ?? null,
+      zeroValueReasonDetail: line.zeroValueReasonDetail ?? null,
     })),
   });
 }
@@ -146,7 +154,6 @@ function NewSalesOrder() {
     linesRef.current = next;
     setLines(next);
   }
-  const [authorised, setAuthorised] = useState(false);
   const [placing, setPlacing] = useState(false);
   const [placed, setPlaced] = useState<{
     orderNumber: string;
@@ -220,6 +227,8 @@ function NewSalesOrder() {
       sku: line.sku,
       name: line.name,
       unitPriceOverride: line.unitPriceOverride,
+      zeroValueReasonCode: line.zeroValueReasonCode,
+      zeroValueReasonDetail: line.zeroValueReasonDetail,
     }));
     setWorkspace(data);
     setSource(nextSource);
@@ -238,7 +247,6 @@ function NewSalesOrder() {
     setInternalNote(data.draft.internalNote ?? "");
     linesRef.current = nextLines;
     setLines(nextLines);
-    setAuthorised(false);
     setPriceChanges([]);
     setTotalsChanged(false);
     setPreviousTotals(null);
@@ -346,6 +354,8 @@ function NewSalesOrder() {
         variantId: line.variantId,
         qty: line.qty,
         unitPriceOverride: line.unitPriceOverride,
+        zeroValueReasonCode: line.zeroValueReasonCode ?? null,
+        zeroValueReasonDetail: line.zeroValueReasonDetail ?? null,
       })),
     };
   }
@@ -386,7 +396,6 @@ function NewSalesOrder() {
     if (!decision.accepted) return;
     addingRef.current = true;
     setAddingProduct(true);
-    setAuthorised(false);
     commitLines(decision.lines);
     if (decision.clearSearch) {
       setProducts([]);
@@ -411,7 +420,6 @@ function NewSalesOrder() {
     const next = linesRef.current.map((item) =>
       item.variantId === variantId ? { ...item, ...patch } : item,
     );
-    setAuthorised(false);
     commitLines(next);
     if (persistNow) void persist(next);
   }
@@ -435,12 +443,7 @@ function NewSalesOrder() {
 
   async function place() {
     if (!workspace || placing) return;
-    if (!authorised) {
-      toast.error("Confirm you are authorised to place this order");
-      return;
-    }
     if (!quoteId && (!reviewed || reviewed.fingerprint !== currentFingerprint())) {
-      setAuthorised(false);
       toast.error("Save and review the prices before placing this order.");
       return;
     }
@@ -469,7 +472,6 @@ function NewSalesOrder() {
       return;
     }
     if (!quoteId && !reviewed) {
-      setAuthorised(false);
       toast.error("Save and review the prices, VAT, and delivery total before placing this order.");
       return;
     }
@@ -477,7 +479,6 @@ function NewSalesOrder() {
     const result = await placeSalesOrderFn({
       data: {
         draftId: workspace.draft.id,
-        confirmAuthorised: true,
         idempotencyKey,
         source,
         fulfilmentChoice,
@@ -515,6 +516,8 @@ function NewSalesOrder() {
           variantId: line.variantId,
           qty: line.qty,
           unitPriceOverride: line.unitPriceOverride,
+          zeroValueReasonCode: line.zeroValueReasonCode ?? null,
+          zeroValueReasonDetail: line.zeroValueReasonDetail ?? null,
         })),
         expectedReview: quoteId ? null : reviewed?.expectedReview,
         quoteId: quoteId || null,
@@ -550,7 +553,6 @@ function NewSalesOrder() {
       setTotalsChanged(rejected.totalsChanged);
       setPreviousTotals(rejected.previousTotals ? { grandTotal: rejected.previousTotals.grandTotal } : null);
       setAcceptedPrices(false);
-      setAuthorised(false);
       setBackorderAcknowledged(false);
       const first = result.data.changes[0];
       toast.error(
@@ -683,7 +685,7 @@ function NewSalesOrder() {
               >
                 <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                   <Field label="Order source">
-                    <select className={salesOrderControlClass} value={source} onChange={(e) => { setSource(e.target.value); setAuthorised(false); }}>
+                    <select className={salesOrderControlClass} value={source} onChange={(e) => { setSource(e.target.value); }}>
                       {Object.entries(SALES_ORDER_SOURCE_LABEL).map(([key, label]) => (
                         <option key={key} value={key}>
                           {label}
@@ -692,7 +694,7 @@ function NewSalesOrder() {
                     </select>
                   </Field>
                   <Field label="Customer contact">
-                    <select className={salesOrderControlClass} value={contactId} onChange={(e) => { setContactId(e.target.value); setAuthorised(false); }}>
+                    <select className={salesOrderControlClass} value={contactId} onChange={(e) => { setContactId(e.target.value); }}>
                       <option value="">Select contact…</option>
                       {workspace.contacts.map((contact) => (
                         <option key={contact.id} value={contact.id}>
@@ -703,11 +705,11 @@ function NewSalesOrder() {
                     </select>
                   </Field>
                   <Field label="Customer PO / reference">
-                    <input className={salesOrderControlClass} value={poNumber} onChange={(e) => { setPoNumber(e.target.value); setAuthorised(false); }} />
+                    <input className={salesOrderControlClass} value={poNumber} onChange={(e) => { setPoNumber(e.target.value); }} />
                   </Field>
                   {workspace.quotes.length > 0 ? (
                     <Field label="Use an existing quotation">
-                      <select className={salesOrderControlClass} value={quoteId} onChange={(e) => { setQuoteId(e.target.value); setAuthorised(false); }}>
+                      <select className={salesOrderControlClass} value={quoteId} onChange={(e) => { setQuoteId(e.target.value); }}>
                         <option value="">New order — price products below</option>
                         {workspace.quotes.map((quote) => (
                           <option key={quote.id} value={quote.id}>
@@ -744,7 +746,6 @@ function NewSalesOrder() {
                           checked={fulfilmentChoice === choice}
                           onChange={() => {
                             setFulfilmentChoice(choice);
-                            setAuthorised(false);
                             setBackorderAcknowledged(false);
                             void persist(undefined, choice);
                           }}
@@ -758,17 +759,17 @@ function NewSalesOrder() {
                   ) : null}
                   {fulfilmentChoice === "DELIVERY" ? (
                   <label className="mb-2 flex min-h-11 items-center gap-3 text-[16px]">
-                    <input type="checkbox" className="size-5" checked={useOneOff} onChange={(e) => { setUseOneOff(e.target.checked); setAuthorised(false); }} />
+                    <input type="checkbox" className="size-5" checked={useOneOff} onChange={(e) => { setUseOneOff(e.target.checked); }} />
                     One off delivery address
                   </label>
                   ) : null}
                   {fulfilmentChoice === "DELIVERY" && useOneOff ? (
                     <div className="grid min-w-0 gap-2 sm:grid-cols-2">
-                      <input className={salesOrderControlClass} placeholder="Address line 1" value={oneOff.line1} onChange={(e) => { setOneOff({ ...oneOff, line1: e.target.value }); setAuthorised(false); }} />
-                      <input className={salesOrderControlClass} placeholder="Address line 2" value={oneOff.line2} onChange={(e) => { setOneOff({ ...oneOff, line2: e.target.value }); setAuthorised(false); }} />
-                      <input className={salesOrderControlClass} placeholder="Town" value={oneOff.town} onChange={(e) => { setOneOff({ ...oneOff, town: e.target.value }); setAuthorised(false); }} />
-                      <input className={salesOrderControlClass} placeholder="County" value={oneOff.county} onChange={(e) => { setOneOff({ ...oneOff, county: e.target.value }); setAuthorised(false); }} />
-                      <input className={salesOrderControlClass} placeholder="Postcode" value={oneOff.postcode} onChange={(e) => { setOneOff({ ...oneOff, postcode: e.target.value }); setAuthorised(false); }} />
+                      <input className={salesOrderControlClass} placeholder="Address line 1" value={oneOff.line1} onChange={(e) => { setOneOff({ ...oneOff, line1: e.target.value }); }} />
+                      <input className={salesOrderControlClass} placeholder="Address line 2" value={oneOff.line2} onChange={(e) => { setOneOff({ ...oneOff, line2: e.target.value }); }} />
+                      <input className={salesOrderControlClass} placeholder="Town" value={oneOff.town} onChange={(e) => { setOneOff({ ...oneOff, town: e.target.value }); }} />
+                      <input className={salesOrderControlClass} placeholder="County" value={oneOff.county} onChange={(e) => { setOneOff({ ...oneOff, county: e.target.value }); }} />
+                      <input className={salesOrderControlClass} placeholder="Postcode" value={oneOff.postcode} onChange={(e) => { setOneOff({ ...oneOff, postcode: e.target.value }); }} />
                       {workspace.canSaveCustomerAddress ? (
                         <>
                           <label className="col-span-full flex min-h-11 items-center gap-3 text-[15px]">
@@ -805,7 +806,7 @@ function NewSalesOrder() {
                       )}
                     </div>
                   ) : fulfilmentChoice === "DELIVERY" ? (
-                    <select className={salesOrderControlClass} value={addressId} onChange={(e) => { setAddressId(e.target.value); setAuthorised(false); }}>
+                    <select className={salesOrderControlClass} value={addressId} onChange={(e) => { setAddressId(e.target.value); }}>
                       <option value="">Select address…</option>
                       {workspace.addresses.map((address) => (
                         <option key={address.id} value={address.id}>
@@ -817,7 +818,7 @@ function NewSalesOrder() {
                   ) : null}
                 </Field>
                 <Field label="Delivery instructions">
-                  <input className={salesOrderControlClass} value={instructions} onChange={(e) => { setInstructions(e.target.value); setAuthorised(false); }} />
+                  <input className={salesOrderControlClass} value={instructions} onChange={(e) => { setInstructions(e.target.value); }} />
                 </Field>
                 <Field label="Internal note (not sent to the customer)">
                   <textarea className={cn(salesOrderControlClass, "h-auto min-h-24 py-2")} rows={3} value={internalNote} onChange={(e) => setInternalNote(e.target.value)} />
@@ -875,9 +876,15 @@ function NewSalesOrder() {
                       })
                     }
                     onPriceOverride={(variantId, override) => updateLine(variantId, { unitPriceOverride: override }, true)}
+                    onZeroValueReason={(variantId, code, detail) =>
+                      updateLine(
+                        variantId,
+                        { zeroValueReasonCode: code || null, zeroValueReasonDetail: detail || null },
+                        true,
+                      )
+                    }
                     onRemove={(variantId) => {
                       const next = linesRef.current.filter((item) => item.variantId !== variantId);
-                      setAuthorised(false);
                       commitLines(next);
                       void persist(next);
                     }}
@@ -903,12 +910,10 @@ function NewSalesOrder() {
           totalsChanged={totalsChanged}
           previousGrandTotal={previousTotals?.grandTotal ?? null}
           acceptedPrices={acceptedPrices}
-          authorised={authorised}
           placing={placing}
           placeDisabled={
             placing ||
             !workspace ||
-            !authorised ||
             (priceChanges.length > 0 && !acceptedPrices) ||
             (!quoteId && lines.some((line) => line.qty == null)) ||
             (!quoteId &&
@@ -940,7 +945,6 @@ function NewSalesOrder() {
           onHoldUntilComplete={setHoldUntilComplete}
           onAcceptPrices={(checked) => {
             setAcceptedPrices(checked);
-            setAuthorised(false);
             if (checked && workspace?.review) {
               setReviewed({
                 fingerprint: currentFingerprint(),
@@ -961,7 +965,6 @@ function NewSalesOrder() {
               });
             }
           }}
-          onAuthorised={setAuthorised}
           onPlace={() => void place()}
         />
       </div>
