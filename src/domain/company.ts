@@ -75,6 +75,7 @@ export const companySetupAddressSchema = z
     county: z.string().trim().max(120).optional().nullable(),
     postcode: z.string().trim().min(1).max(20),
     country: z.string().trim().length(2).default("GB"),
+    companyName: z.string().trim().max(200).optional().nullable(),
   })
   .optional()
   .nullable();
@@ -231,6 +232,7 @@ export const addressSchema = z.object({
   isDefaultDelivery: z.boolean().default(false),
   contactName: z.string().trim().max(160).optional().nullable(),
   contactPhone: z.string().trim().max(40).optional().nullable(),
+  companyName: z.string().trim().max(200).optional().nullable(),
 });
 
 export const addressUpdateSchema = addressSchema.partial().extend({

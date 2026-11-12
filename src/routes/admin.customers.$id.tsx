@@ -107,6 +107,7 @@ function CustomerWorkspace() {
     country?: string;
     contactName?: string | null;
     contactPhone?: string | null;
+    companyName?: string | null;
     isDefaultBilling: boolean;
     isDefaultDelivery: boolean;
   } | null>(null);
@@ -539,12 +540,18 @@ function CustomerWorkspace() {
               country?: string;
               contactName?: string | null;
               contactPhone?: string | null;
+              companyName?: string | null;
               isDefaultBilling: boolean;
               isDefaultDelivery: boolean;
             }) => (
               <li key={a.id} className="border border-border bg-surface/40 p-4 text-[13px]">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="font-semibold">{a.label ?? a.type}</div>
+                  <div>
+                    <div className="font-semibold">{a.companyName || a.label || a.type}</div>
+                    {a.companyName && a.label && a.label !== a.companyName ? (
+                      <div className="text-steel">{a.label}</div>
+                    ) : null}
+                  </div>
                   {permissions.canEdit ? (
                     <button
                       type="button"
@@ -678,6 +685,7 @@ function CustomerWorkspace() {
       {addressOpen ? (
         <AddressDrawer
           companyId={company.id}
+          defaultCompanyName={company.name}
           address={editingAddress}
           onClose={() => {
             setAddressOpen(false);
@@ -1648,11 +1656,13 @@ function PortalUserDrawer({
 
 function AddressDrawer({
   companyId,
+  defaultCompanyName,
   address,
   onClose,
   onSaved,
 }: {
   companyId: string;
+  defaultCompanyName: string;
   address?: {
     id: string;
     label: string | null;
@@ -1665,6 +1675,7 @@ function AddressDrawer({
     country?: string;
     contactName?: string | null;
     contactPhone?: string | null;
+    companyName?: string | null;
     isDefaultBilling: boolean;
     isDefaultDelivery: boolean;
   } | null;
@@ -1672,6 +1683,9 @@ function AddressDrawer({
   onSaved: () => Promise<void>;
 }) {
   const editing = Boolean(address?.id);
+  const [companyName, setCompanyName] = useState(
+    address ? (address.companyName ?? "") : defaultCompanyName,
+  );
   const [label, setLabel] = useState(address?.label ?? "");
   const [line1, setLine1] = useState(address?.line1 ?? "");
   const [line2, setLine2] = useState(address?.line2 ?? "");
@@ -1706,6 +1720,7 @@ function AddressDrawer({
               country: country || "GB",
               contactName: contactName || null,
               contactPhone: contactPhone || null,
+              companyName: companyName || null,
               isDefaultBilling,
               isDefaultDelivery,
             };
@@ -1732,6 +1747,12 @@ function AddressDrawer({
             <option value="TRADING">Trading</option>
           </select>
         </Field>
+        <Field label="Company name">
+          <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} className={inputClass} />
+        </Field>
+        <p className="text-[12px] text-steel">
+          Prefilled from the customer for a new address. A saved branch or warehouse name is not replaced by the customer name.
+        </p>
         <Field label="Contact name">
           <input value={contactName} onChange={(e) => setContactName(e.target.value)} className={inputClass} />
         </Field>

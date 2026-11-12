@@ -90,7 +90,14 @@ function orderFingerprint(input: {
   contactId: string;
   addressId: string;
   useOneOff: boolean;
-  oneOff: { line1: string; line2: string; town: string; county: string; postcode: string };
+  oneOff: {
+    companyName: string;
+    line1: string;
+    line2: string;
+    town: string;
+    county: string;
+    postcode: string;
+  };
   fulfilmentChoice: OrderFulfilmentChoice;
   poNumber: string;
   instructions: string;
@@ -142,7 +149,14 @@ function NewSalesOrder() {
   const [fulfilmentChoice, setFulfilmentChoice] = useState<OrderFulfilmentChoice>("DELIVERY");
   const [backorderAcknowledged, setBackorderAcknowledged] = useState(false);
   const [holdUntilComplete, setHoldUntilComplete] = useState(false);
-  const [oneOff, setOneOff] = useState({ line1: "", line2: "", town: "", county: "", postcode: "" });
+  const [oneOff, setOneOff] = useState({
+    companyName: "",
+    line1: "",
+    line2: "",
+    town: "",
+    county: "",
+    postcode: "",
+  });
   const [poNumber, setPoNumber] = useState("");
   const [instructions, setInstructions] = useState("");
   const [internalNote, setInternalNote] = useState("");
@@ -203,6 +217,7 @@ function NewSalesOrder() {
     const nextFulfilment = data.draft.fulfilmentChoice ?? "DELIVERY";
     const nextOneOffFlag = Boolean(data.draft.oneOffAddress);
     const saved = data.draft.oneOffAddress as {
+      companyName?: string;
       line1?: string;
       line2?: string;
       town?: string;
@@ -212,13 +227,21 @@ function NewSalesOrder() {
     const nextOneOff =
       saved && typeof saved === "object"
         ? {
+            companyName: saved.companyName ?? data.draft.companyName ?? "",
             line1: saved.line1 ?? "",
             line2: saved.line2 ?? "",
             town: saved.town ?? "",
             county: saved.county ?? "",
             postcode: saved.postcode ?? "",
           }
-        : { line1: "", line2: "", town: "", county: "", postcode: "" };
+        : {
+            companyName: "",
+            line1: "",
+            line2: "",
+            town: "",
+            county: "",
+            postcode: "",
+          };
     const nextPo = data.draft.poNumber ?? "";
     const nextInstructions = data.draft.deliveryInstructions ?? "";
     const nextLines = data.draft.lines.map((line) => ({
@@ -339,6 +362,7 @@ function NewSalesOrder() {
       addressId: useOneOff ? null : addressId || null,
       oneOffAddress: useOneOff
         ? {
+            companyName: oneOff.companyName || null,
             line1: oneOff.line1,
             line2: oneOff.line2 || null,
             town: oneOff.town,
@@ -489,6 +513,7 @@ function NewSalesOrder() {
         oneOffAddress: fulfilmentChoice === "COLLECTION" || !useOneOff
           ? null
           : {
+              companyName: oneOff.companyName || null,
               line1: oneOff.line1,
               line2: oneOff.line2 || null,
               town: oneOff.town,
@@ -759,12 +784,28 @@ function NewSalesOrder() {
                   ) : null}
                   {fulfilmentChoice === "DELIVERY" ? (
                   <label className="mb-2 flex min-h-11 items-center gap-3 text-[16px]">
-                    <input type="checkbox" className="size-5" checked={useOneOff} onChange={(e) => { setUseOneOff(e.target.checked); }} />
+                    <input
+                      type="checkbox"
+                      className="size-5"
+                      checked={useOneOff}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setUseOneOff(checked);
+                        if (checked) {
+                          setOneOff((current) =>
+                            current.companyName.trim()
+                              ? current
+                              : { ...current, companyName: workspace?.draft.companyName ?? "" },
+                          );
+                        }
+                      }}
+                    />
                     One off delivery address
                   </label>
                   ) : null}
                   {fulfilmentChoice === "DELIVERY" && useOneOff ? (
                     <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+                      <input className={cn(salesOrderControlClass, "sm:col-span-2")} placeholder="Company name" value={oneOff.companyName} onChange={(e) => { setOneOff({ ...oneOff, companyName: e.target.value }); }} />
                       <input className={salesOrderControlClass} placeholder="Address line 1" value={oneOff.line1} onChange={(e) => { setOneOff({ ...oneOff, line1: e.target.value }); }} />
                       <input className={salesOrderControlClass} placeholder="Address line 2" value={oneOff.line2} onChange={(e) => { setOneOff({ ...oneOff, line2: e.target.value }); }} />
                       <input className={salesOrderControlClass} placeholder="Town" value={oneOff.town} onChange={(e) => { setOneOff({ ...oneOff, town: e.target.value }); }} />
@@ -808,12 +849,19 @@ function NewSalesOrder() {
                   ) : fulfilmentChoice === "DELIVERY" ? (
                     <select className={salesOrderControlClass} value={addressId} onChange={(e) => { setAddressId(e.target.value); }}>
                       <option value="">Select address…</option>
-                      {workspace.addresses.map((address) => (
-                        <option key={address.id} value={address.id}>
-                          {address.label ? `${address.label} — ` : ""}
-                          {address.line1}, {address.town}, {address.postcode}
-                        </option>
-                      ))}
+                      {workspace.addresses.map((address) => {
+                        const company = address.companyName?.trim() || workspace.draft.companyName;
+                        const place = [address.line1, address.town, address.postcode].filter(Boolean).join(", ");
+                        const label =
+                          address.label && address.label.trim().toLowerCase() !== company.trim().toLowerCase()
+                            ? address.label
+                            : "";
+                        return (
+                          <option key={address.id} value={address.id}>
+                            {[company, label, place].filter(Boolean).join(" — ")}
+                          </option>
+                        );
+                      })}
                     </select>
                   ) : null}
                 </Field>

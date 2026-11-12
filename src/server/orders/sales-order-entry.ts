@@ -125,6 +125,7 @@ export type SalesOrderWorkspace = {
     postcode: string;
     country: string;
     isDefaultDelivery: boolean;
+    companyName: string | null;
   }>;
   quotes: Array<{
     id: string;
@@ -437,6 +438,7 @@ async function loadCustomerChoices(companyId: string, includeQuotes: boolean) {
         postcode: true,
         country: true,
         isDefaultDelivery: true,
+        companyName: true,
       },
     }),
     includeQuotes
@@ -1837,6 +1839,7 @@ async function saveOneOffAddressToCompanyProfile(input: {
     country?: string | null;
     contactName?: string | null;
     contactPhone?: string | null;
+    companyName?: string | null;
   };
   asDefaultDelivery: boolean;
 }): Promise<string> {
@@ -1870,7 +1873,7 @@ async function saveOneOffAddressToCompanyProfile(input: {
   const normLine1 = input.oneOff.line1.trim().toLowerCase();
   const existing = await prisma.address.findMany({
     where: { companyId: input.companyId },
-    select: { id: true, line1: true, postcode: true, isDefaultDelivery: true },
+    select: { id: true, line1: true, postcode: true, isDefaultDelivery: true, companyName: true },
   });
   const duplicate = existing.find(
     (row) =>
@@ -1881,11 +1884,16 @@ async function saveOneOffAddressToCompanyProfile(input: {
   let addressId: string;
   if (duplicate) {
     addressId = duplicate.id;
-    if (input.asDefaultDelivery && !duplicate.isDefaultDelivery) {
+    const incomingCompany = input.oneOff.companyName?.trim() || null;
+    const fillCompany = Boolean(incomingCompany && !duplicate.companyName?.trim());
+    if ((input.asDefaultDelivery && !duplicate.isDefaultDelivery) || fillCompany) {
       await updateAddress(input.actorUserId, {
         id: duplicate.id,
         companyId: input.companyId,
-        isDefaultDelivery: true,
+        ...(input.asDefaultDelivery && !duplicate.isDefaultDelivery
+          ? { isDefaultDelivery: true }
+          : {}),
+        ...(fillCompany ? { companyName: incomingCompany } : {}),
       });
     }
   } else {
@@ -1901,6 +1909,7 @@ async function saveOneOffAddressToCompanyProfile(input: {
       country: input.oneOff.country ?? "GB",
       contactName: input.oneOff.contactName ?? null,
       contactPhone: input.oneOff.contactPhone ?? null,
+      companyName: input.oneOff.companyName ?? null,
       isDefaultBilling: false,
       isDefaultDelivery: input.asDefaultDelivery,
     });

@@ -228,6 +228,7 @@ export const customerCreationDetailsSchema = z
         county: optionalText(120),
         postcode: optionalText(20),
         country: z.string().trim().max(2).optional().nullable().or(z.literal("")),
+        companyName: optionalText(200),
       })
       .optional()
       .nullable(),

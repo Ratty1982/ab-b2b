@@ -684,6 +684,7 @@ export async function createQuote(actorUserId: string, raw: unknown) {
       country: addr.country,
       contactName: addr.contactName,
       contactPhone: addr.contactPhone,
+      companyName: addr.companyName,
     };
   } else {
     const addr = await prisma.address.findFirst({
@@ -700,6 +701,7 @@ export async function createQuote(actorUserId: string, raw: unknown) {
         country: addr.country,
         contactName: addr.contactName,
         contactPhone: addr.contactPhone,
+        companyName: addr.companyName,
       };
     }
   }
@@ -911,6 +913,7 @@ export async function updateQuoteDraft(actorUserId: string, raw: unknown) {
             country: addr.country,
             contactName: addr.contactName,
             contactPhone: addr.contactPhone,
+            companyName: addr.companyName,
           },
         },
       });

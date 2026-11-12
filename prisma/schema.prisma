@@ -1136,6 +1136,9 @@ model Address {
   isDefaultDelivery Boolean    @default(false)
   contactName      String?
   contactPhone     String?
+  /// Branch, warehouse, or trading name printed for this address.
+  /// Null leaves historical rows unchanged and export uses the customer name.
+  companyName      String?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 

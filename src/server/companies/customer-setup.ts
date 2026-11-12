@@ -49,6 +49,7 @@ const addressDraftSchema = z.object({
   isDefaultDelivery: z.boolean().optional().default(false),
   contactName: optionalText(80),
   contactPhone: optionalText(40),
+  companyName: optionalText(200),
 });
 
 const saveSetupSchema = z.object({
@@ -521,6 +522,9 @@ export async function saveCustomerSetupAndEnableOrdering(actorUserId: string, ra
             isDefault: address.isDefaultBilling || address.isDefaultDelivery,
             contactName: blankToNull(address.contactName),
             contactPhone: blankToNull(address.contactPhone),
+            ...(address.companyName !== undefined
+              ? { companyName: blankToNull(address.companyName) }
+              : {}),
           },
         });
         knownAddressKeys.set(addressKey(address), resolvedId);
@@ -547,6 +551,7 @@ export async function saveCustomerSetupAndEnableOrdering(actorUserId: string, ra
           isDefault: address.isDefaultBilling || address.isDefaultDelivery,
           contactName: blankToNull(address.contactName),
           contactPhone: blankToNull(address.contactPhone),
+          companyName: blankToNull(address.companyName),
         },
       });
       knownAddressKeys.set(addressKey(address), created.id);

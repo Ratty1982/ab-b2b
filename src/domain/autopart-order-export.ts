@@ -64,6 +64,8 @@ export type AutopartExportDeliverySnapshot = {
   contactName?: string | null;
   contactPhone?: string | null;
   label?: string | null;
+  /** Company name saved on this delivery address. Absent on historical snapshots. */
+  companyName?: string | null;
 };
 
 export type AutopartExportContactSnapshot = {
@@ -97,6 +99,11 @@ export type AutopartExportOrderInput = {
   items: AutopartExportOrderItem[];
   /** Customer collection has no shipping address. The CSV shows Customer Collection instead. */
   fulfilmentChoice?: "DELIVERY" | "COLLECTION";
+  /**
+   * Already exported orders with no saved address company name keep the
+   * historical contact-first Shipping Name. New exports use the company name.
+   */
+  shippingNamePolicy?: "company" | "legacy-contact";
 };
 
 export type AutopartCsvLineFinancials = {
@@ -252,12 +259,51 @@ export function resolveShippingName(
   delivery: AutopartExportDeliverySnapshot | null,
   contact: AutopartExportContactSnapshot | null,
   companyName: string,
+  policy: "company" | "legacy-contact" = "company",
 ): string {
-  const fromAddr = delivery?.contactName?.trim();
-  if (fromAddr) return fromAddr;
-  const fromContact = contact?.name?.trim();
-  if (fromContact) return fromContact;
-  return companyName.trim();
+  if (policy === "legacy-contact") {
+    const fromAddr = delivery?.contactName?.trim();
+    if (fromAddr) return fromAddr;
+    const fromContact = contact?.name?.trim();
+    if (fromContact) return fromContact;
+    return companyName.trim();
+  }
+  const specific = delivery?.companyName?.trim();
+  if (specific) return specific;
+  const registered = companyName.trim();
+  if (registered) return registered;
+  return delivery?.contactName?.trim() || contact?.name?.trim() || "";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Drop a company name that was typed into a street line, so export does not repeat it. */
+export function autopartStreetLines(input: {
+  companyName: string;
+  line1?: string | null | undefined;
+  line2?: string | null | undefined;
+}): { address1: string; address2: string } {
+  const company = input.companyName.trim();
+  let line1 = (input.line1 ?? "").trim();
+  let line2 = (input.line2 ?? "").trim();
+  if (company) {
+    line1 = stripLeadingCompany(line1, company);
+    line2 = stripLeadingCompany(line2, company);
+  }
+  if (!line1 && line2) {
+    line1 = line2;
+    line2 = "";
+  }
+  return { address1: line1, address2: line2 };
+}
+
+function stripLeadingCompany(line: string, company: string): string {
+  if (!line) return "";
+  if (line.toLowerCase() === company.toLowerCase()) return "";
+  const prefixed = new RegExp(`^${escapeRegExp(company)}\\s*[,\\-|–—]\\s+`, "i");
+  return line.replace(prefixed, "").trim();
 }
 
 /**
@@ -302,7 +348,19 @@ export function countAutopartCsvLinesForOrder(order: AutopartExportOrderInput): 
 export function buildAutopartCsvRowsForOrder(order: AutopartExportOrderInput): AutopartCsvRow[] {
   const delivery = order.deliveryAddress;
   const contact = order.contact;
-  const shippingName = resolveShippingName(delivery, contact, order.companyName);
+  const policy = order.shippingNamePolicy ?? "company";
+  const shippingName = resolveShippingName(delivery, contact, order.companyName, policy);
+  const streets =
+    policy === "company"
+      ? autopartStreetLines({
+          companyName: shippingName,
+          line1: delivery?.line1,
+          line2: delivery?.line2,
+        })
+      : {
+          address1: delivery?.line1?.trim() ?? "",
+          address2: delivery?.line2?.trim() ?? "",
+        };
   const email = contact?.email?.trim() ?? "";
   const phone =
     contact?.phone?.trim() ||
@@ -327,8 +385,8 @@ export function buildAutopartCsvRowsForOrder(order: AutopartExportOrderInput): A
     "External Reference": order.orderNumber,
     "Order Date": orderDate,
     "Shipping Name": shippingName,
-    "Shipping Address 1": collection ? "Customer Collection" : (delivery?.line1?.trim() ?? ""),
-    "Shipping Address 2": collection ? "" : (delivery?.line2?.trim() ?? ""),
+    "Shipping Address 1": collection ? "Customer Collection" : streets.address1,
+    "Shipping Address 2": collection ? "" : streets.address2,
     "Shipping City": collection ? "" : ((delivery?.town ?? delivery?.city)?.trim() ?? ""),
     "Shipping County": collection ? "" : (delivery?.county?.trim() ?? ""),
     "Shipping Postcode": collection ? "" : (delivery?.postcode?.trim() ?? ""),

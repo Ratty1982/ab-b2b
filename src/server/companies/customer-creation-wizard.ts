@@ -72,6 +72,7 @@ function readyAddress(
         county?: string | null | undefined;
         postcode?: string | null | undefined;
         country?: string | null | undefined;
+        companyName?: string | null | undefined;
       }
     | null
     | undefined,
@@ -85,6 +86,7 @@ function readyAddress(
     county: blankToNull(address.county),
     postcode: address.postcode.trim(),
     country,
+    companyName: blankToNull(address.companyName),
   };
 }
 
