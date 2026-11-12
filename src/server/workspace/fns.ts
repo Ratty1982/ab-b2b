@@ -5,6 +5,7 @@ import { formatZodError } from "@/domain/cms";
 import { AuthError } from "@/server/rbac/guards";
 import { updateCompanyMembership } from "@/server/companies/service";
 import {
+  getInvoiceRecord,
   listCompanyDocuments,
   listCompanyInvoices,
   listCompanyOrders,
@@ -85,6 +86,17 @@ export const listCompanyDocumentsFn = createServerFn({ method: "POST" })
     try {
       const userId = await requireUserId();
       return { ok: true as const, data: await listCompanyDocuments(userId, data) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const getInvoiceRecordFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await getInvoiceRecord(userId, data) };
     } catch (error) {
       return toError(error);
     }

@@ -288,6 +288,7 @@ export function InvoiceRows({
     orderId: string | null;
     orderNumber: string | null;
     status: string | null;
+    recordOrigin?: "B2B" | "AUTOPART";
   }>;
   portal: boolean;
 }) {
@@ -322,7 +323,16 @@ export function InvoiceRows({
               )}
             </td>
             <td className="px-3 py-2">{row.status ? String(row.status) : "—"}</td>
-            <td className="px-3 py-2 text-steel">View record</td>
+            <td className="px-3 py-2">
+              <Link
+                to={portal ? "/portal/invoices/$invoiceId" : "/admin/invoices/$invoiceId"}
+                params={{ invoiceId: row.id }}
+                search={{ origin: row.recordOrigin === "AUTOPART" ? "autopart" : "b2b" }}
+                className="font-semibold text-primary hover:underline"
+              >
+                View record
+              </Link>
+            </td>
           </tr>
         ))}
       </tbody>
@@ -356,8 +366,17 @@ function DocumentRows({ rows }: { rows: Array<{ id: string; recordKind: string; 
                 <Link to="/admin/orders/$orderId" params={{ orderId: String(row.id) }} className="font-semibold text-primary hover:underline">
                   View record
                 </Link>
+              ) : row.recordKind === "INVOICE" || row.recordKind === "AUTOPART" ? (
+                <Link
+                  to="/admin/invoices/$invoiceId"
+                  params={{ invoiceId: row.id }}
+                  search={{ origin: row.recordKind === "AUTOPART" ? "autopart" : "b2b" }}
+                  className="font-semibold text-primary hover:underline"
+                >
+                  View record
+                </Link>
               ) : (
-                <span className="text-steel">View record</span>
+                <span className="text-steel">No file stored</span>
               )}
             </td>
           </tr>
