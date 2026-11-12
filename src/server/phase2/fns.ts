@@ -4556,6 +4556,30 @@ export const deleteStaffQuoteFn = createServerFn({ method: "POST" })
     }
   });
 
+export const downloadQuotePdfFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const copy = await import("@/server/quotes/quote-copy");
+      return { ok: true as const, data: await copy.downloadQuotePdf(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const emailQuoteToSelfFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const copy = await import("@/server/quotes/quote-copy");
+      return { ok: true as const, data: await copy.emailQuoteCopyToSelf(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const acceptQuoteOnBehalfFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

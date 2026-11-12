@@ -3,6 +3,12 @@
  * Provider selection (Resend / SES / etc.) lands in Phase 2+.
  */
 
+export interface EmailAttachment {
+  filename: string;
+  contentType: string;
+  content: Uint8Array;
+}
+
 export interface EmailMessage {
   to: string;
   subject: string;
@@ -10,6 +16,8 @@ export interface EmailMessage {
   html?: string;
   /** Optional tags for provider metadata — never secrets */
   tags?: Record<string, string>;
+  /** In-memory attachments. Never a public URL. */
+  attachments?: EmailAttachment[];
 }
 
 export interface EmailSendResult {
