@@ -140,9 +140,8 @@ function QuoteWorkspace() {
     setLines((prev) => {
       const existing = prev.find((l) => l.variantId === hit.variantId);
       if (existing) {
-        const step = hit.caseQty && hit.caseQty > 1 ? hit.caseQty : 1;
         return prev.map((l) =>
-          l.variantId === hit.variantId ? { ...l, qty: l.qty + step } : l,
+          l.variantId === hit.variantId ? { ...l, qty: l.qty + 1 } : l,
         );
       }
       return [
@@ -151,7 +150,7 @@ function QuoteWorkspace() {
           variantId: hit.variantId,
           sku: hit.sku,
           name: hit.name,
-          qty: hit.caseQty && hit.caseQty > 1 ? hit.caseQty : 1,
+          qty: 1,
           caseQty: hit.caseQty,
           normalUnitPrice: hit.unitPrice ?? "0.0000",
           quotedUnitPrice: hit.unitPrice ?? "0.0000",
@@ -561,18 +560,26 @@ function QuoteWorkspace() {
                         </td>
                         <td className="py-2 pr-2">
                           {draft ? (
-                            <input
-                              type="number"
-                              min={1}
-                              className={`${inputClass} w-20`}
-                              value={draft.qty}
-                              onChange={(e) => {
-                                const v = Number(e.target.value);
-                                setLines((prev) =>
-                                  prev.map((l, i) => (i === idx ? { ...l, qty: v } : l)),
-                                );
-                              }}
-                            />
+                            <>
+                              <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                className={`${inputClass} w-20`}
+                                value={draft.qty}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  setLines((prev) =>
+                                    prev.map((l, i) => (i === idx ? { ...l, qty: v } : l)),
+                                  );
+                                }}
+                              />
+                              {draft.caseQty && draft.caseQty > 1 ? (
+                                <div className="mt-1 max-w-24 text-[10px] leading-tight text-steel">
+                                  Case {draft.caseQty}. Any whole quantity can be quoted.
+                                </div>
+                              ) : null}
+                            </>
                           ) : (
                             (item?.qty as number)
                           )}

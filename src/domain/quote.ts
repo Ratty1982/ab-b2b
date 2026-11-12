@@ -67,7 +67,16 @@ export const quoteCreateSchema = z.object({
 
 export const quoteLineInputSchema = z.object({
   variantId: z.string().cuid(),
-  qty: z.number().int().min(1).max(999_999),
+  qty: z
+    .number()
+    .int(
+      "Enter a whole quantity from 1 to 999999. The quantity is saved exactly as entered and is not rounded to a case.",
+    )
+    .min(
+      1,
+      "Enter a whole quantity from 1 to 999999. The quantity is saved exactly as entered and is not rounded to a case.",
+    )
+    .max(999_999),
   /** Optional quote-specific override (ex VAT). Requires quotes.override_price. */
   quotedUnitPrice: moneyString.optional().nullable(),
 });
@@ -110,6 +119,11 @@ export const quoteAcceptSchema = z.object({
   id: z.string().cuid(),
   idempotencyKey: z.string().trim().min(8).max(120),
   note: z.string().trim().max(2000).optional().nullable(),
+  /**
+   * Customer orders must be full cases. Set after the buyer confirms the
+   * proposed order quantities. The saved quotation quantity is not changed.
+   */
+  confirmOrderQuantityChanges: z.boolean().optional(),
 });
 
 export const quoteAcceptOnBehalfSchema = quoteAcceptSchema.extend({
@@ -125,6 +139,65 @@ export const quoteListQuerySchema = z.object({
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(25),
 });
+
+/**
+ * Quotes store the quantity the salesperson entered.
+ * Case size and minimum order quantity are customer-order rules, not quote rules.
+ */
+export function quoteQuantityMessage(quantity: number): string | null {
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999_999) {
+    return "Enter a whole quantity from 1 to 999999. The quantity is saved exactly as entered and is not rounded to a case.";
+  }
+  return null;
+}
+
+export type QuoteOrderQuantityProposal = {
+  quotedQty: number;
+  orderQty: number;
+  changed: boolean;
+  reason: string | null;
+};
+
+/**
+ * Customer checkout requires a full case. This proposes the next valid case
+ * quantity and does not apply it until the buyer confirms.
+ * A missing or single-unit case size accepts the quoted quantity.
+ */
+export function proposeCustomerOrderQuantity(input: {
+  quotedQty: number;
+  caseQty: number | null | undefined;
+  minimumOrderQty?: number | null;
+}): QuoteOrderQuantityProposal {
+  const caseQty =
+    input.caseQty != null && Number.isInteger(input.caseQty) && input.caseQty > 1
+      ? input.caseQty
+      : 1;
+  const minimum =
+    input.minimumOrderQty != null &&
+    Number.isInteger(input.minimumOrderQty) &&
+    input.minimumOrderQty > 1
+      ? input.minimumOrderQty
+      : caseQty;
+  const floor = Math.max(minimum, caseQty);
+  const alreadyValid =
+    input.quotedQty >= floor && (caseQty <= 1 || input.quotedQty % caseQty === 0);
+  if (alreadyValid) {
+    return {
+      quotedQty: input.quotedQty,
+      orderQty: input.quotedQty,
+      changed: false,
+      reason: null,
+    };
+  }
+  const target = Math.max(input.quotedQty, floor);
+  const orderQty = Math.ceil(target / caseQty) * caseQty;
+  return {
+    quotedQty: input.quotedQty,
+    orderQty,
+    changed: true,
+    reason: `Quoted quantity ${input.quotedQty} is not a full case of ${caseQty}. Confirm to place the order for ${orderQty}. The quotation keeps ${input.quotedQty}.`,
+  };
+}
 
 /** UTC noon for a YYYY-MM-DD calendar date — avoids timezone day-shift. */
 export function validUntilFromDateOnly(dateOnly: string): Date {

@@ -36,6 +36,8 @@ import {
   quoteListQuerySchema,
   quoteSendSchema,
   quoteUpdateDraftSchema,
+  proposeCustomerOrderQuantity,
+  quoteQuantityMessage,
   validUntilFromDateOnly,
   type QuoteStatusKey,
 } from "@/domain/quote";
@@ -55,9 +57,9 @@ import {
 } from "@/domain/trade-delivery";
 import {
   assessBasketLineQuantity,
+  assessStaffUnitOrderQuantity,
   basketLineIssueMessage,
   isOrderableByStockPolicy,
-  resolveCustomerOrdering,
 } from "@/domain/ordering";
 import type { VariantStock } from "@/domain/stock";
 
@@ -226,7 +228,6 @@ async function buildQuoteLines(
     },
   });
   const byId = new Map(variants.map((v) => [v.id, v]));
-  const stockMap = await loadStockByVariantIds(variantIds);
 
   const built: BuiltLine[] = [];
   let sortOrder = 0;
@@ -252,46 +253,12 @@ async function buildQuoteLines(
       throw new AuthError(`No trade price for ${variant.sku}`, "NO_PRICE", 400);
     }
 
-    const stock = stockMap.get(variant.id) ?? null;
-    const globalBackorderPolicy = await getGlobalBackorderPolicy();
-    const backorderPolicy = resolveBackorderPolicy({
-      globalPolicy: globalBackorderPolicy,
-      variantPolicy: variant.backorderPolicy,
-    });
-    const sellable = trustedSellableForOrdering({
-      sellableQty: stock?.sellableQty ?? 0,
-      stale: stock?.stale ?? true,
-    });
-    const orderableByStock = stock
-      ? isOrderableByStockPolicy(
-          { ...stock, stockConfirmed: stock.stockConfirmed !== false },
-          backorderPolicy,
-        )
-      : false;
-    const ordering = resolveCustomerOrdering({
-      caseQty: variant.caseQty,
-      minimumOrderQty: variant.minOrderQty,
-      sellableQty: sellable,
-      orderableByStockPolicy: orderableByStock,
-      backorderPolicy,
-    });
-    const qtyIssue = assessBasketLineQuantity({
-      quantity: input.qty,
-      caseQty: variant.caseQty,
-      minimumOrderQty: variant.minOrderQty,
-      sellableQty: sellable,
-      productActive: variant.product.isActive && variant.product.status === "ACTIVE",
-      tradeVisible: variant.product.isTradeVisible,
-      orderableByStockPolicy: orderableByStock,
-      hasTradePrice: true,
-      backorderPolicy,
-    });
-    if (qtyIssue !== "VALID") {
-      throw new AuthError(
-        basketLineIssueMessage(qtyIssue) ?? `Invalid quantity for ${variant.sku}`,
-        "INVALID_QTY",
-        400,
-      );
+    const qtyMessage = quoteQuantityMessage(input.qty);
+    if (qtyMessage) {
+      throw new AuthError(`${variant.sku}: ${qtyMessage}`, "INVALID_QTY", 400);
+    }
+    if (!variant.product.isTradeVisible) {
+      throw new AuthError(`${variant.sku} is not available to quote.`, "VARIANT_UNAVAILABLE", 400);
     }
 
     const normalCommercial = parseMoney(resolved.unitPriceExVat)!;
@@ -335,7 +302,7 @@ async function buildQuoteLines(
       lineVat: moneyToString(vatMoney, 2),
       lineGross: moneyToString(gross, 2),
       caseQty: variant.caseQty,
-      orderingMode: ordering.mode,
+      orderingMode: "PROPOSED",
       priceSource: resolved.source,
       quantityBreakId: resolved.quantityBreakApplied?.id ?? null,
       promotionId: resolved.promotionApplied?.id ?? null,
@@ -351,6 +318,38 @@ async function buildQuoteLines(
 
 function sellableFromStock(stock: VariantStock | undefined): number {
   return stock?.sellableQty ?? 0;
+}
+
+function commercialForOrderQty(
+  item: {
+    qty: number;
+    unitPrice: Prisma.Decimal | string;
+    vatRate: Prisma.Decimal | string;
+    lineTotal: Prisma.Decimal | string;
+    lineVat: Prisma.Decimal | string;
+    lineGross: Prisma.Decimal | string;
+  },
+  orderQty: number,
+) {
+  if (orderQty === item.qty) {
+    return {
+      qty: item.qty,
+      lineTotal: item.lineTotal,
+      lineVat: item.lineVat,
+      lineGross: item.lineGross,
+    };
+  }
+  const unit = parseMoney(String(item.unitPrice)) ?? moneyZero();
+  const net = customerLineNetExVat(unit, orderQty);
+  const percent = Number(item.vatRate);
+  const rate = parseMoney((Number.isFinite(percent) ? percent / 100 : 0).toFixed(4)) ?? moneyZero();
+  const gross = applyVatInc(net, rate);
+  return {
+    qty: orderQty,
+    lineTotal: moneyToString(net, 2),
+    lineVat: moneyToString({ minor: gross.minor - net.minor }, 2),
+    lineGross: moneyToString(gross, 2),
+  };
 }
 
 function totalsFromBuiltLines(
@@ -1247,6 +1246,8 @@ async function convertQuoteToOrder(input: {
   idempotencyKey: string;
   staffAcceptance: boolean;
   acceptanceNote?: string | null;
+  /** Customer confirmed a full-case order quantity that differs from the quotation. */
+  confirmOrderQuantityChanges?: boolean;
   /** Set only by sales order entry. Written on the new order. A repeat conversion does not change it. */
   salesOrderAttribution?: {
     entrySource: "TELEPHONE" | "EMAIL" | "CUSTOMER_VISIT";
@@ -1306,7 +1307,8 @@ async function convertQuoteToOrder(input: {
   }
 
   // Stock/backorder uses CURRENT live availability. Commercial prices stay on the quote snapshot.
-  // Case pack: honour the quoted quantity (valid when sent); do not rewrite for live caseQty changes.
+  // The quotation quantity is never rewritten. Customer orders that are not full cases
+  // need an explicit confirmation before a different order quantity is used.
   const variantIds = quote.items.map((i) => i.variantId).filter(Boolean) as string[];
   const variants = await prisma.productVariant.findMany({
     where: { id: { in: variantIds } },
@@ -1318,8 +1320,14 @@ async function convertQuoteToOrder(input: {
   const stockIssues: Array<{ sku: string; name: string; qty: number; available: number }> = [];
   const allocations = new Map<
     string,
-    { availableQtyAtOrder: number; backorderQtyAtOrder: number; reserveQty: number }
+    {
+      orderQty: number;
+      availableQtyAtOrder: number;
+      backorderQtyAtOrder: number;
+      reserveQty: number;
+    }
   >();
+  const quantityConfirmations: string[] = [];
 
   for (const item of quote.items) {
     if (!item.variantId) {
@@ -1352,36 +1360,74 @@ async function convertQuoteToOrder(input: {
           backorderPolicy,
         )
       : false;
-    // Validate against snapshotted case qty — live catalogue case pack must not rewrite the quote.
-    const qtyIssue = assessBasketLineQuantity({
-      quantity: item.qty,
-      caseQty: item.caseQty ?? variant.caseQty,
-      minimumOrderQty: variant.minOrderQty,
-      sellableQty: sellable,
-      productActive: variant.product.isActive && variant.product.status === "ACTIVE",
-      tradeVisible: true,
-      orderableByStockPolicy: orderableByStock,
-      hasTradePrice: true,
-      backorderPolicy,
-    });
+    const caseQty = item.caseQty ?? variant.caseQty;
+    const assess = (quantity: number) =>
+      input.staffAcceptance
+        ? assessStaffUnitOrderQuantity({
+            quantity,
+            sellableQty: sellable,
+            productActive: variant.product.isActive && variant.product.status === "ACTIVE",
+            tradeVisible: true,
+            orderableByStockPolicy: orderableByStock,
+            hasTradePrice: true,
+            backorderPolicy,
+          })
+        : assessBasketLineQuantity({
+            quantity,
+            caseQty,
+            minimumOrderQty: variant.minOrderQty,
+            sellableQty: sellable,
+            productActive: variant.product.isActive && variant.product.status === "ACTIVE",
+            tradeVisible: true,
+            orderableByStockPolicy: orderableByStock,
+            hasTradePrice: true,
+            backorderPolicy,
+          });
+    let orderQty = item.qty;
+    const qtyIssue = assess(item.qty);
     if (qtyIssue !== "VALID") {
-      stockIssues.push({
-        sku: item.sku,
-        name: item.name,
-        qty: item.qty,
-        available: sellable,
-      });
-      continue;
+      const proposal = input.staffAcceptance
+        ? null
+        : proposeCustomerOrderQuantity({
+            quotedQty: item.qty,
+            caseQty,
+            minimumOrderQty: variant.minOrderQty,
+          });
+      if (proposal?.changed && assess(proposal.orderQty) === "VALID") {
+        if (!input.confirmOrderQuantityChanges) {
+          quantityConfirmations.push(`${item.sku}: ${proposal.reason}`);
+          continue;
+        }
+        orderQty = proposal.orderQty;
+      } else {
+        const why = basketLineIssueMessage(qtyIssue) ?? "Quantity cannot be ordered";
+        stockIssues.push({
+          sku: item.sku,
+          name: `${item.name} — ${why}`,
+          qty: item.qty,
+          available: sellable,
+        });
+        continue;
+      }
     }
     const split = allocateOrderLineQuantities({
-      orderedQty: item.qty,
+      orderedQty: orderQty,
       sellableQty: sellable,
     });
     allocations.set(item.id, {
+      orderQty,
       availableQtyAtOrder: split.availableQtyAtOrder,
       backorderQtyAtOrder: split.backorderQtyAtOrder,
       reserveQty: split.reserveQty,
     });
+  }
+
+  if (quantityConfirmations.length) {
+    throw new AuthError(
+      `This quotation includes quantities that are not full cases. Confirm to place the order with the quantities below. The quotation is not changed.\n${quantityConfirmations.join("\n")}`,
+      "QUOTE_QUANTITY_CONFIRMATION",
+      409,
+    );
   }
 
   if (stockIssues.length) {
@@ -1474,6 +1520,34 @@ async function convertQuoteToOrder(input: {
 
     const orderNumber = await allocateOrderNumber(tx);
     const placedAt = new Date();
+    const pricedLines = quote.items.map((item) => {
+      const alloc = allocations.get(item.id) ?? {
+        orderQty: item.qty,
+        availableQtyAtOrder: item.qty,
+        backorderQtyAtOrder: 0,
+        reserveQty: item.qty,
+      };
+      return { item, alloc, money: commercialForOrderQty(item, alloc.orderQty) };
+    });
+    const quantityChanged = pricedLines.some((line) => line.money.qty !== line.item.qty);
+    const headerTotals = quantityChanged
+      ? totalsFromBuiltLines(
+          pricedLines.map(
+            (line) =>
+              ({
+                lineTotal: String(line.money.lineTotal),
+                lineVat: String(line.money.lineVat),
+              }) as BuiltLine,
+          ),
+          quote.company.taxStatus,
+          quote.deliveryOverridden ? money2(quote.deliveryTotal) : null,
+        )
+      : {
+          subtotal: quote.subtotal,
+          vatTotal: quote.vatTotal,
+          deliveryTotal: quote.deliveryTotal,
+          grandTotal: quote.grandTotal,
+        };
     const order = await tx.order.create({
       data: {
         orderNumber,
@@ -1483,10 +1557,10 @@ async function convertQuoteToOrder(input: {
         orderedByUserId: input.actorUserId,
         onBehalfOfUserId: input.staffAcceptance ? input.actorUserId : null,
         currency: quote.currency,
-        subtotal: quote.subtotal,
-        vatTotal: quote.vatTotal,
-        deliveryTotal: quote.deliveryTotal,
-        grandTotal: quote.grandTotal,
+        subtotal: headerTotals.subtotal,
+        vatTotal: headerTotals.vatTotal,
+        deliveryTotal: headerTotals.deliveryTotal,
+        grandTotal: headerTotals.grandTotal,
         deliveryAddress: quote.deliveryAddress as Prisma.InputJsonValue,
         contactSnapshot,
         paymentTermsSnapshot: quote.paymentTermsSnapshot,
@@ -1510,26 +1584,21 @@ async function convertQuoteToOrder(input: {
             }
           : {}),
         items: {
-          create: quote.items.map((item) => {
-            const alloc = allocations.get(item.id) ?? {
-              availableQtyAtOrder: item.qty,
-              backorderQtyAtOrder: 0,
-              reserveQty: item.qty,
-            };
+          create: pricedLines.map(({ item, alloc, money }) => {
             return {
               variantId: item.variantId,
               productId: item.productId,
               sku: item.sku,
               name: item.name,
-              qty: item.qty,
+              qty: money.qty,
               unitPrice: item.unitPrice,
               customerUnitPrice: item.customerUnitPrice,
               discountPct: item.discountPct,
               vatRate: item.vatRate,
               vatCode: item.vatCode,
-              lineTotal: item.lineTotal,
-              lineVat: item.lineVat,
-              lineGross: item.lineGross,
+              lineTotal: money.lineTotal,
+              lineVat: money.lineVat,
+              lineGross: money.lineGross,
               caseQty: item.caseQty,
               orderingMode: item.orderingMode,
               priceSource: item.priceSource ?? "QUOTE",
@@ -1717,6 +1786,7 @@ export async function acceptQuoteAsCustomer(userId: string, raw: unknown) {
       idempotencyKey: input.idempotencyKey,
       staffAcceptance: false,
       acceptanceNote: input.note ?? null,
+      confirmOrderQuantityChanges: input.confirmOrderQuantityChanges === true,
     });
     const fresh = await prisma.quote.findUniqueOrThrow({
       where: { id: input.id },
@@ -1758,6 +1828,7 @@ export async function acceptQuoteOnBehalf(
     idempotencyKey: input.idempotencyKey,
     staffAcceptance: true,
     acceptanceNote: input.note,
+    confirmOrderQuantityChanges: input.confirmOrderQuantityChanges === true,
     salesOrderAttribution: salesOrderAttribution ?? null,
   });
   const fresh = await prisma.quote.findUniqueOrThrow({
