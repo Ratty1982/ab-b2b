@@ -267,7 +267,9 @@ function AdminOrderDetailPage() {
             >
               {order.statusLabel}
             </StatusBadge>
-            {order.stockHoldLabel ? (
+            {order.stockHoldState === "READY_TO_EXPORT" ? (
+              <StatusBadge tone="neutral">Previously held — stock released</StatusBadge>
+            ) : order.stockHoldLabel ? (
               <StatusBadge tone="warn">{order.stockHoldLabel}</StatusBadge>
             ) : null}
             {order.salesOrderEdit.allowed ? (
@@ -542,8 +544,10 @@ function AdminOrderDetailPage() {
             </div>
             {order.stockHoldLabel ? (
               <div className="flex justify-between gap-3">
-                <dt className="text-steel">Stock hold</dt>
-                <dd className="font-semibold text-warn">{order.stockHoldLabel}</dd>
+                <dt className="text-steel">Stock hold history</dt>
+                <dd className={order.stockHoldState === "WAITING_STOCK" ? "font-semibold text-warn" : "text-steel"}>
+                  {order.stockHoldState === "READY_TO_EXPORT" ? "Previously held — stock released" : order.stockHoldLabel}
+                </dd>
               </div>
             ) : null}
             {order.hasOutstandingBackorder ? (
@@ -558,9 +562,9 @@ function AdminOrderDetailPage() {
             ) : null}
           </dl>
           {order.stockHoldState !== "NONE" ? (
-            <div className="mt-4 space-y-3 rounded-md border border-amber-400/40 bg-amber-400/10 p-3 text-[13px]">
-              <p className="font-semibold text-amber-200">
-                {order.stockHoldLabel ?? order.stockHoldState}
+            <div className={cn("mt-4 space-y-3 rounded-md border p-3 text-[13px]", order.stockHoldState === "WAITING_STOCK" ? "border-amber-400/40 bg-amber-400/10" : "border-border bg-surface")}>
+              <p className={cn("font-semibold", order.stockHoldState === "WAITING_STOCK" ? "text-amber-200" : "text-steel")}>
+                {order.stockHoldState === "READY_TO_EXPORT" ? "Previously held — stock released" : (order.stockHoldLabel ?? order.stockHoldState)}
               </p>
               {stockHold?.blockingSkus?.length ? (
                 <ul className="space-y-1 text-steel">
