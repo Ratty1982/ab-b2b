@@ -9,6 +9,7 @@ function when(iso: string | null | undefined): string {
 
 export function OrderDiagnosticsPanel({ orderId }: { orderId: string }) {
   const [data, setData] = useState<Diagnostics | null>(null);
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const load = useCallback(async () => {
@@ -29,20 +30,28 @@ export function OrderDiagnosticsPanel({ orderId }: { orderId: string }) {
     }
   }, [orderId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (open && !data && !loading && !error) void load();
+  }, [open, data, loading, error, load]);
 
   return (
     <section className="rounded-lg border border-border p-5 lg:col-span-2" data-testid="order-diagnostics">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-display text-base font-semibold uppercase">Order diagnostics</h2>
-          <p className="mt-1 text-xs text-steel">Read-only evidence from B2B records. Nothing is retried or changed.</p>
-        </div>
-        <button type="button" onClick={() => void load()} disabled={loading}
+        <button type="button" aria-expanded={open} aria-controls="order-diagnostics-content"
+          onClick={() => setOpen((value) => !value)}
+          className="flex flex-1 items-center gap-2 text-left font-display text-base font-semibold uppercase">
+          <span aria-hidden="true">{open ? "▾" : "▸"}</span> Order diagnostics
+          <span className="font-sans text-xs font-normal normal-case text-steel">
+            {open ? "Hide details" : "Show read-only evidence"}
+          </span>
+        </button>
+        {open ? <button type="button" onClick={() => void load()} disabled={loading}
           className="rounded-md border border-border px-3 py-2 text-xs font-semibold disabled:opacity-50">
           {loading ? "Loading…" : "Refresh diagnostics"}
-        </button>
+        </button> : null}
       </div>
+      {open ? <div id="order-diagnostics-content">
+      <p className="mt-2 text-xs text-steel">Read-only evidence from B2B records. Nothing is retried or changed.</p>
       {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
       {data ? (
         <div className="mt-4 space-y-5 text-sm">
@@ -51,9 +60,12 @@ export function OrderDiagnosticsPanel({ orderId }: { orderId: string }) {
             <div><dt className="text-steel">Stock hold</dt><dd>{data.stockReleasePolicy} / {data.stockHoldState}</dd></div>
             <div><dt className="text-steel">Export</dt><dd>{data.exportStatus} · {data.exportCount} CSV generation(s)</dd></div>
             <div><dt className="text-steel">Export batch</dt><dd>{data.exportBatch?.reference ?? "Not recorded"}</dd></div>
-            <div><dt className="text-steel">Invoice evidence</dt><dd>{data.invoiceEvidence}</dd></div>
+            <div><dt className="text-steel">Invoice evidence classification</dt><dd>{data.invoiceEvidence}</dd></div>
             <div><dt className="text-steel">Last hold check</dt><dd>{when(data.stockHoldLastCheckedAt)}</dd></div>
           </dl>
+          {data.invoices.length > 0 && data.invoiceEvidence === "NOT_RECORDED" ? (
+            <p className="rounded border border-border p-3 text-xs text-steel">A linked invoice is recorded, but the separate order-level invoice-evidence classification is NOT_RECORDED. This does not mean the invoice is missing; the two records are not automatically equivalent.</p>
+          ) : null}
           <div>
             <h3 className="font-semibold">Stock-ready notification</h3>
             {data.emails.filter(e => e.purpose === "ORDER_STOCK_HOLD_READY_INTERNAL").length ? (
@@ -98,6 +110,7 @@ export function OrderDiagnosticsPanel({ orderId }: { orderId: string }) {
           </ul>
         </div>
       ) : !error ? <p className="mt-3 text-sm text-steel">Loading diagnostics…</p> : null}
+      </div> : null}
     </section>
   );
 }
