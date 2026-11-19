@@ -3765,6 +3765,18 @@ export const cancelOrderStockHoldFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getOrderDiagnosticsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const diagnostics = await import("@/server/orders/diagnostics");
+      return { ok: true as const, data: await diagnostics.getOrderDiagnostics(userId, data.orderId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listOrderEmailsFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { orderId: string })
   .handler(async ({ data }) => {
