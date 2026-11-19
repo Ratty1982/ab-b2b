@@ -502,11 +502,17 @@ function AdminOrdersPage() {
                         <StatusBadge tone={customerOrderStatusTone(o.status, { hasBackorderItems: o.containsBackorder })}>
                           {customerOrderStatusLabel(o.status, { hasBackorderItems: o.containsBackorder })}
                         </StatusBadge>
-                        {o.containsBackorder ? (
+                        {o.containsBackorder && !["DISPATCHED", "DELIVERED", "ADMINISTRATIVELY_CLOSED", "CANCELLED"].includes(o.status) ? (
                           <StatusBadge tone="warn">{o.fullyBackordered ? "Full backorder" : "Backorder"}</StatusBadge>
                         ) : null}
-                        {o.stockHoldLabel ? (
-                          <StatusBadge tone="warn">{o.stockHoldLabel}</StatusBadge>
+                        {o.stockHoldState === "WAITING_STOCK" ? (
+                          <StatusBadge tone="warn">Held — awaiting stock</StatusBadge>
+                        ) : o.stockHoldState === "READY_TO_EXPORT" ? (
+                          <StatusBadge tone={["DISPATCHED", "DELIVERED"].includes(o.status) ? "neutral" : "info"}>
+                            Previously held — stock released
+                          </StatusBadge>
+                        ) : o.stockHoldLabel ? (
+                          <StatusBadge tone="neutral">{o.stockHoldLabel}</StatusBadge>
                         ) : null}
                         {o.manualResolutionKind === "FULFILLED_MANUALLY" ? (
                           <StatusBadge tone="info">Fulfilled manually</StatusBadge>
