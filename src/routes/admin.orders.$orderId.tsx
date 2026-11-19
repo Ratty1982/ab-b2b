@@ -27,6 +27,7 @@ import { canOfferArchiveTestOrder, canOfferRestoreTestOrder } from "@/domain/arc
 import { DeleteDispatchedTestOrderDialog } from "@/components/orders/DeleteDispatchedTestOrderDialog";
 import { ArchiveTestOrderDialog, RestoreTestOrderDialog } from "@/components/orders/ArchiveTestOrderDialog";
 import { ManualOrderResolutionPanel } from "@/components/orders/ManualOrderResolutionPanel";
+import { OrderDiagnosticsPanel } from "@/components/orders/OrderDiagnosticsPanel";
 
 export const Route = createFileRoute("/admin/orders/$orderId")({
   head: () => ({ meta: [{ title: "Order — Automotive Brands Admin" }] }),
@@ -383,6 +384,7 @@ function AdminOrderDetailPage() {
         </p>
       ) : null}
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
+        <OrderDiagnosticsPanel orderId={order.id} />
         <ManualOrderResolutionPanel
           order={order}
           canEdit={canDeleteOrders}
