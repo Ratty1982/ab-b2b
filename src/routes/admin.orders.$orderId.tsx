@@ -267,7 +267,9 @@ function AdminOrderDetailPage() {
             >
               {order.statusLabel}
             </StatusBadge>
-            {order.stockHoldLabel ? (
+            {order.stockHoldState === "READY_TO_EXPORT" ? (
+              <StatusBadge tone="neutral">Previously held — stock released</StatusBadge>
+            ) : order.stockHoldLabel ? (
               <StatusBadge tone="warn">{order.stockHoldLabel}</StatusBadge>
             ) : null}
             {order.salesOrderEdit.allowed ? (
@@ -542,8 +544,10 @@ function AdminOrderDetailPage() {
             </div>
             {order.stockHoldLabel ? (
               <div className="flex justify-between gap-3">
-                <dt className="text-steel">Stock hold</dt>
-                <dd className="font-semibold text-warn">{order.stockHoldLabel}</dd>
+                <dt className="text-steel">Stock hold history</dt>
+                <dd className={order.stockHoldState === "WAITING_STOCK" ? "font-semibold text-warn" : "text-steel"}>
+                  {order.stockHoldState === "READY_TO_EXPORT" ? "Previously held — stock released" : order.stockHoldLabel}
+                </dd>
               </div>
             ) : null}
             {order.hasOutstandingBackorder ? (
