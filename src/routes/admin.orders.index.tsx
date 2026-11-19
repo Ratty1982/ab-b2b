@@ -507,12 +507,6 @@ function AdminOrdersPage() {
                         ) : null}
                         {o.stockHoldState === "WAITING_STOCK" ? (
                           <StatusBadge tone="warn">Held — awaiting stock</StatusBadge>
-                        ) : o.stockHoldState === "READY_TO_EXPORT" ? (
-                          <StatusBadge tone={["DISPATCHED", "DELIVERED"].includes(o.status) ? "neutral" : "info"}>
-                            Previously held — stock released
-                          </StatusBadge>
-                        ) : o.stockHoldLabel ? (
-                          <StatusBadge tone="neutral">{o.stockHoldLabel}</StatusBadge>
                         ) : null}
                         {o.manualResolutionKind === "FULFILLED_MANUALLY" ? (
                           <StatusBadge tone="info">Fulfilled manually</StatusBadge>
@@ -520,9 +514,7 @@ function AdminOrdersPage() {
                         {o.manualResolutionKind === "CLOSED_ADMINISTRATIVELY" ? (
                           <StatusBadge>Closed administratively</StatusBadge>
                         ) : null}
-                        {o.invoiceEvidence === "OUTSTANDING" || o.invoiceEvidence === "UNAVAILABLE" ? (
-                          <span className="text-[11px] text-steel">Invoice evidence {o.invoiceEvidence.toLowerCase().replaceAll("_", " ")}</span>
-                        ) : null}
+
                         {o.archivedAt ? (
                           <p className="mt-1 max-w-xs text-[11px] text-steel">
                             Archived {formatDateTime(o.archivedAt)} by {o.archivedByName || "—"}
