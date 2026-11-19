@@ -562,9 +562,9 @@ function AdminOrderDetailPage() {
             ) : null}
           </dl>
           {order.stockHoldState !== "NONE" ? (
-            <div className="mt-4 space-y-3 rounded-md border border-amber-400/40 bg-amber-400/10 p-3 text-[13px]">
-              <p className="font-semibold text-amber-200">
-                {order.stockHoldLabel ?? order.stockHoldState}
+            <div className={cn("mt-4 space-y-3 rounded-md border p-3 text-[13px]", order.stockHoldState === "WAITING_STOCK" ? "border-amber-400/40 bg-amber-400/10" : "border-border bg-surface")}>
+              <p className={cn("font-semibold", order.stockHoldState === "WAITING_STOCK" ? "text-amber-200" : "text-steel")}>
+                {order.stockHoldState === "READY_TO_EXPORT" ? "Previously held — stock released" : (order.stockHoldLabel ?? order.stockHoldState)}
               </p>
               {stockHold?.blockingSkus?.length ? (
                 <ul className="space-y-1 text-steel">
